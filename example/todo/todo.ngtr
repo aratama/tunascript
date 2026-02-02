@@ -1,0 +1,134 @@
+import { print, stringify, getArgs, length, dbOpen, dbSave } from "prelude";
+
+// TODOリスト CLIツール
+// 使い方:
+//   todo list           - 未完了のタスク一覧を表示
+//   todo list --all     - 完了済みも含めてタスク一覧を表示
+//   todo open <title>   - タスクを追加
+//   todo close <id>     - タスクを完了
+
+// テーブル定義
+// dbOpenで自動的にテーブルが作成・検証される
+create_table todos {
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  completed INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+}
+
+function listTodos(): void {
+  const todos = fetch_all {
+    SELECT id, title, created_at FROM todos WHERE completed = 0 ORDER BY id
+  };
+  print("ID\tTitle\tCreated");
+  print("--\t-----\t-------");
+  for (const row of todos) {
+    const { id, title, created_at } = row;
+    print(id + "\t" + title + "\t" + created_at);
+  }
+}
+
+function listAllTodos(): void {
+  const todos = fetch_all {
+    SELECT id, title, completed, created_at FROM todos ORDER BY id
+  };
+  print("ID\tStatus\tTitle\tCreated");
+  print("--\t------\t-----\t-------");
+  for (const row of todos) {
+    const { id, title, completed, created_at } = row;
+    const status = completed == "1" ? "[x]" : "[ ]";
+    print(id + "\t" + status + "\t" + title + "\t" + created_at);
+  }
+}
+
+function openTodo(title: string): void {
+  execute {
+    INSERT INTO todos (title) VALUES ({title})
+  };
+  const { id } = fetch_one {
+    SELECT last_insert_rowid() AS id
+  };
+  print("Task #" + id + " created: " + title);
+}
+
+function closeTodo(id: string): void {
+  execute {
+    UPDATE todos SET completed = 1 WHERE id = {id}
+  };
+  print("Task #" + id + " completed!");
+}
+
+function showUsage(): void {
+  print("TODOリスト CLIツール");
+  print("");
+  print("使い方:");
+  print("  todo list           - 未完了のタスク一覧を表示");
+  print("  todo list --all     - 完了済みも含めてタスク一覧を表示");
+  print("  todo open <title>   - タスクを追加");
+  print("  todo close <id>     - タスクを完了");
+  print("  todo help           - ヘルプを表示");
+  print("  todo version        - バージョンを表示");
+}
+
+function showVersion(): void {
+  print("todo version 1.0.0");
+}
+
+export function main(): void {
+  const args = getArgs();
+  const argc = args.length();
+
+  // データベースを開く（テーブル定義に基づいて自動作成・検証）
+  dbOpen("todo.sqlite3");
+
+  if (argc == 0) {
+    showUsage();
+    dbSave("todo.sqlite3");
+    return;
+  }
+
+  const cmd = args[0];
+
+  // switch式でコマンドを分岐
+  switch (cmd) {
+    case "list": {
+      if (argc >= 2) {
+        const opt = args[1];
+        if(opt == "--all") {
+          listAllTodos();
+        } else {
+          print("エラー: 不明なオプション: " + opt);
+          showUsage();
+        }
+      } else {
+        listTodos();
+      }
+    }
+    case "open": {
+      if (argc >= 2) {
+        openTodo(args[1]);
+      } else {
+        print("エラー: タイトルを指定してください");
+        showUsage();
+      }
+    }
+    case "close": {
+      if (argc >= 2) {
+        closeTodo(args[1]);
+      } else {
+        print("エラー: IDを指定してください");
+        showUsage();
+      }
+    }
+    case "help":
+      showUsage()
+    case "version":
+      showVersion()
+    default: {
+      print("エラー: 不明なコマンド: " + cmd);
+      showUsage();
+    }
+  };
+
+  dbSave("todo.sqlite3");
+}

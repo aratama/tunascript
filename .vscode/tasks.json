@@ -1,0 +1,55 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Compiler",
+      "type": "shell",
+      "command": "go build -o output/negitoro ./cmd/negitoro/",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "Build Server",
+      "type": "shell",
+      "command": "go run ./cmd/negitoro/ build example/server/server.ngtr -o example/server/server.wasm",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Server",
+      "type": "shell",
+      "command": "go run ./cmd/negitoro/ run example/server/server.ngtr -- example/server/todo.sqlite3",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": [],
+      "isBackground": true
+    },
+    {
+      "label": "Launch Server",
+      "type": "shell",
+      "command": "go run ./cmd/negitoro/ launch example/server/server.wasm -- example/server/todo.sqlite3",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": [],
+      "isBackground": true,
+      "dependsOn": "Build Server"
+    }
+  ]
+}

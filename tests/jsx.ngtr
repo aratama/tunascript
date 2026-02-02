@@ -1,0 +1,37 @@
+import { print, stringify } from "prelude";
+
+// Simple JSX
+function simpleJsx(): string {
+  return <div>Hello</div>;
+}
+
+// JSX with expression
+function jsxWithExpr(): string {
+  const name = "World";
+  return <h1>{name}</h1>;
+}
+
+// JSX with attributes
+function jsxWithAttrs(): string {
+  return <input type="text" placeholder="Enter name" />;
+}
+
+// JSX with dynamic attribute
+function jsxWithDynamicAttr(): string {
+  const className = "highlight";
+  return <div class={className}>Content</div>;
+}
+
+// Nested JSX
+function nestedJsx(): string {
+  const title = "Test";
+  return <html><head><title>{title}</title></head><body><h1>{title}</h1></body></html>;
+}
+
+export function main(): void {
+  print(simpleJsx());
+  print(jsxWithExpr());
+  print(jsxWithAttrs());
+  print(jsxWithDynamicAttr());
+  print(nestedJsx());
+}

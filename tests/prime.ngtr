@@ -1,0 +1,57 @@
+// expect: 2
+// expect: 3
+// expect: 5
+// expect: 7
+// expect: 11
+// expect: 13
+// expect: 17
+// expect: 19
+// expect: 23
+// expect: 29
+// expect: 31
+// expect: 37
+// expect: 41
+// expect: 43
+// expect: 47
+// expect: 53
+// expect: 59
+// expect: 61
+// expect: 67
+// expect: 71
+// expect: 73
+// expect: 79
+// expect: 83
+// expect: 89
+// expect: 97
+
+import { print, range, toString } from "prelude";
+
+function gcd(a: integer, b: integer): integer {
+  if (b == 0) {
+    return a;
+  }
+  return gcd(b, a % b);
+}
+
+function isPrime(n: integer, nums: integer[]): boolean {
+  if (n < 2) {
+    return false;
+  }
+  for (const d of nums) {
+    if (d < n) {
+      if (gcd(n, d) != 1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+export function main(): void {
+  const nums = range(2, 100);
+  for (const n of nums) {
+    if (isPrime(n, nums)) {
+      print(toString(n));
+    }
+  }
+}

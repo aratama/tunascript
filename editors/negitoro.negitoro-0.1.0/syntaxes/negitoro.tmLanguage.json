@@ -1,0 +1,349 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Negitoro",
+  "scopeName": "source.negitoro",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#sql-block" },
+    { "include": "#table-definition" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#functions" },
+    { "include": "#jsx-tag" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.negitoro",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.negitoro",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.negitoro",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.negitoro",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.negitoro",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.negitoro",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.negitoro",
+          "match": "\\b(if|else|for|of|return|switch|case|default)\\b"
+        },
+        {
+          "name": "keyword.declaration.negitoro",
+          "match": "\\b(const|function|export|import|from|create_table|type)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "Type name after 'type' keyword in import or after colon",
+          "match": "(?<=type\\s)([A-Z][a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.negitoro" }
+          }
+        },
+        {
+          "comment": "Type annotation after colon - capitalized type names",
+          "match": "(?<=:\\s*)([A-Z][a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.negitoro" }
+          }
+        },
+        {
+          "comment": "Type annotation after closing paren and colon - return types",
+          "match": "(?<=\\):\\s*)([A-Z][a-zA-Z0-9]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.negitoro" }
+          }
+        },
+        {
+          "name": "support.type.primitive.negitoro",
+          "match": "\\b(integer|float|boolean|string|void)\\b"
+        },
+        {
+          "name": "storage.type.negitoro",
+          "match": "\\b(INTEGER|TEXT|REAL|BLOB|PRIMARY|KEY|AUTOINCREMENT|NOT|NULL|DEFAULT|CURRENT_TIMESTAMP)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.negitoro",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "jsx-tag": {
+      "patterns": [
+        {
+          "comment": "Self-closing JSX tag: <tagname ... />",
+          "name": "meta.tag.jsx.negitoro",
+          "begin": "(<)([a-z][a-zA-Z0-9]*)(?=\\s|/?>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jsx.negitoro" },
+            "2": { "name": "entity.name.tag.jsx.negitoro" }
+          },
+          "end": "(/?>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.end.jsx.negitoro" }
+          },
+          "patterns": [{ "include": "#jsx-tag-attributes" }]
+        },
+        {
+          "comment": "Closing JSX tag: </tagname>",
+          "name": "meta.tag.jsx.negitoro",
+          "match": "(</?)([a-z][a-zA-Z0-9]*)(>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.jsx.negitoro" },
+            "2": { "name": "entity.name.tag.jsx.negitoro" },
+            "3": { "name": "punctuation.definition.tag.end.jsx.negitoro" }
+          }
+        },
+        {
+          "comment": "JSX expression in content: {expr}",
+          "name": "meta.embedded.expression.jsx.negitoro",
+          "begin": "(\\{)(?=[^}]*\\})",
+          "beginCaptures": {
+            "1": { "name": "punctuation.section.embedded.begin.jsx.negitoro" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.embedded.end.jsx.negitoro" }
+          },
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#constants" },
+            {
+              "name": "variable.other.readwrite.jsx.negitoro",
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+            }
+          ]
+        }
+      ]
+    },
+    "jsx-tag-attributes": {
+      "patterns": [
+        {
+          "comment": "Attribute with string value: attr=\"value\"",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_-]*)\\s*(=)\\s*(\"[^\"]*\"|'[^']*')",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.jsx.negitoro" },
+            "2": { "name": "punctuation.separator.key-value.jsx.negitoro" },
+            "3": { "name": "string.quoted.jsx.negitoro" }
+          }
+        },
+        {
+          "comment": "Attribute with expression: attr={expr}",
+          "begin": "\\b([a-zA-Z_][a-zA-Z0-9_-]*)\\s*(=)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "entity.other.attribute-name.jsx.negitoro" },
+            "2": { "name": "punctuation.separator.key-value.jsx.negitoro" },
+            "3": { "name": "punctuation.section.embedded.begin.jsx.negitoro" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.embedded.end.jsx.negitoro" }
+          },
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#constants" },
+            {
+              "name": "variable.other.readwrite.jsx.negitoro",
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+            }
+          ]
+        },
+        {
+          "comment": "Boolean attribute: attr",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_-]*)\\b(?!=)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.jsx.negitoro" }
+          }
+        }
+      ]
+    },
+    "sql-block": {
+      "patterns": [
+        {
+          "begin": "(execute|fetch_optional|fetch_one|fetch_all|fetch)(\\s*)(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.sql.negitoro" },
+            "2": { "name": "source.negitoro" },
+            "3": { "name": "punctuation.section.block.begin.sql.negitoro" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.block.end.sql.negitoro" }
+          },
+          "contentName": "meta.embedded.block.sql.negitoro",
+          "patterns": [
+            { "include": "#sql-interpolation" },
+            { "include": "#sql-keywords" },
+            { "include": "#strings" },
+            { "include": "#numbers" }
+          ]
+        }
+      ]
+    },
+    "sql-interpolation": {
+      "match": "(\\{)([a-zA-Z_][a-zA-Z0-9_]*)(\\})",
+      "captures": {
+        "1": { "name": "punctuation.section.interpolation.begin.negitoro" },
+        "2": { "name": "variable.other.negitoro" },
+        "3": { "name": "punctuation.section.interpolation.end.negitoro" }
+      }
+    },
+    "sql-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.dml.sql.negitoro",
+          "match": "\\b(SELECT|select|INSERT|insert|UPDATE|update|DELETE|delete|FROM|from|WHERE|where|INTO|into|VALUES|values|SET|set|ORDER|order|BY|by|GROUP|group|HAVING|having|LIMIT|limit|OFFSET|offset|JOIN|join|LEFT|left|RIGHT|right|INNER|inner|OUTER|outer|ON|on|AND|and|OR|or|AS|as|DISTINCT|distinct|ALL|all|CREATE|create|TABLE|table|DROP|drop|ALTER|alter|INDEX|index|PRIMARY|primary|KEY|key|FOREIGN|foreign|REFERENCES|references|AUTOINCREMENT|autoincrement|NOT|not|NULL|null|DEFAULT|default|CURRENT_TIMESTAMP|INTEGER|integer|TEXT|text|REAL|real|BLOB|blob|last_insert_rowid)\\b"
+        }
+      ]
+    },
+    "table-definition": {
+      "patterns": [
+        {
+          "name": "meta.table.negitoro",
+          "begin": "\\b(create_table)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\{",
+          "beginCaptures": {
+            "1": { "name": "keyword.declaration.negitoro" },
+            "2": { "name": "entity.name.type.table.negitoro" }
+          },
+          "end": "\\}",
+          "patterns": [
+            {
+              "name": "storage.type.negitoro",
+              "match": "\\b(INTEGER|TEXT|REAL|BLOB|PRIMARY|KEY|AUTOINCREMENT|NOT|NULL|DEFAULT|CURRENT_TIMESTAMP|FOREIGN|REFERENCES)\\b"
+            },
+            { "include": "#comments" },
+            {
+              "name": "variable.other.column.negitoro",
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+            },
+            { "include": "#punctuation" }
+          ]
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "meta.function.negitoro",
+          "match": "\\b(function)\\s+([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\(",
+          "captures": {
+            "1": { "name": "keyword.declaration.negitoro" },
+            "2": { "name": "entity.name.function.negitoro" }
+          }
+        },
+        {
+          "name": "entity.name.function.call.negitoro",
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.negitoro",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.negitoro",
+          "match": "(\\+|\\-|\\*|\\/|%)"
+        },
+        {
+          "name": "keyword.operator.logical.negitoro",
+          "match": "(&|\\|)"
+        },
+        {
+          "name": "keyword.operator.assignment.negitoro",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arrow.negitoro",
+          "match": "=>"
+        },
+        {
+          "name": "keyword.operator.spread.negitoro",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "keyword.operator.ternary.negitoro",
+          "match": "\\?"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.negitoro",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.statement.negitoro",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.separator.colon.negitoro",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.accessor.negitoro",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.definition.bracket.round.negitoro",
+          "match": "[()]"
+        },
+        {
+          "name": "punctuation.definition.bracket.square.negitoro",
+          "match": "[\\[\\]]"
+        },
+        {
+          "name": "punctuation.definition.bracket.curly.negitoro",
+          "match": "[{}]"
+        }
+      ]
+    }
+  }
+}
