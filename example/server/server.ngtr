@@ -142,6 +142,19 @@ function renderStyles(): JSX {
   </style>;
 }
 
+function renderTodoRow(row: todos): JSX {
+  const isCompleted = row.completed == "1";
+  const itemClass = isCompleted ? "todo-item completed" : "todo-item";
+  return <li class={itemClass}>
+    <form method="POST" action="/toggle" style="display:contents;">
+      <input type="hidden" name="id" value={row.id} />
+      <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
+    </form>
+    <span class="todo-title">{row.title}</span>
+    <span class="todo-date">{row.created_at}</span>
+  </li>;
+}
+
 function renderActiveTodos(): JSX {
   const todos = fetch_all {
     SELECT id, title, completed, created_at FROM todos WHERE completed = 0 ORDER BY id DESC
@@ -149,18 +162,7 @@ function renderActiveTodos(): JSX {
   if (todos.length() == 0) {
     return <p class="empty-message">タスクがありません</p>;
   }
-  return <ul class="todo-list">{todos.map(function (row: todos): JSX {
-    const isCompleted = row.completed == "1";
-    const itemClass = isCompleted ? "todo-item completed" : "todo-item";
-    return <li class={itemClass}>
-      <form method="POST" action="/toggle" style="display:contents;">
-        <input type="hidden" name="id" value={row.id} />
-        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
-      </form>
-      <span class="todo-title">{row.title}</span>
-      <span class="todo-date">{row.created_at}</span>
-    </li>;
-  })}</ul>;
+  return <ul class="todo-list">{todos.map(renderTodoRow)}</ul>;
 }
 
 function renderAllTodos(): JSX {
@@ -170,18 +172,7 @@ function renderAllTodos(): JSX {
   if (todos.length() == 0) {
     return <p class="empty-message">タスクがありません</p>;
   }
-  return <ul class="todo-list">{todos.map(function (row: todos): JSX {
-    const isCompleted = row.completed == "1";
-    const itemClass = isCompleted ? "todo-item completed" : "todo-item";
-    return <li class={itemClass}>
-      <form method="POST" action="/toggle" style="display:contents;">
-        <input type="hidden" name="id" value={row.id} />
-        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
-      </form>
-      <span class="todo-title">{row.title}</span>
-      <span class="todo-date">{row.created_at}</span>
-    </li>;
-  })}</ul>;
+  return <ul class="todo-list">{todos.map(renderTodoRow)}</ul>;
 }
 
 function renderCompletedTodos(): JSX {
@@ -191,18 +182,7 @@ function renderCompletedTodos(): JSX {
   if (todos.length() == 0) {
     return <p class="empty-message">タスクがありません</p>;
   }
-  return <ul class="todo-list">{todos.map(function (row: todos): JSX {
-    const isCompleted = row.completed == "1";
-    const itemClass = isCompleted ? "todo-item completed" : "todo-item";
-    return <li class={itemClass}>
-      <form method="POST" action="/toggle" style="display:contents;">
-        <input type="hidden" name="id" value={row.id} />
-        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
-      </form>
-      <span class="todo-title">{row.title}</span>
-      <span class="todo-date">{row.created_at}</span>
-    </li>;
-  })}</ul>;
+  return <ul class="todo-list">{todos.map(renderTodoRow)}</ul>;
 }
 
 function fetchTotalCount(): string {

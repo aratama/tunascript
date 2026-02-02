@@ -7,20 +7,24 @@ import (
 	"negitoro/internal/parser"
 )
 
-func TestMapInferenceFromAnyReceiver(t *testing.T) {
+func TestMapInferenceFromArrayLiteral(t *testing.T) {
 	const src = `
-import { map, range } from "prelude";
+import { map } from "prelude";
 
-const nums: any = range(1, 3);
-const doubled: integer[] = nums.map(function (value: integer): integer {
+function double(value: integer): integer {
   return value * 2;
-});
-const tripled: integer[] = map(nums, function (value: integer): integer {
+}
+
+function triple(value: integer): integer {
   return value * 3;
-});
+}
+
+const nums: integer[] = [1, 2, 3];
+const doubled: integer[] = nums.map(double);
+const tripled: integer[] = map(nums, triple);
 `
 
-	mod := mustParseModule(t, "map_any.ngtr", src)
+	mod := mustParseModule(t, "map_array_literal.ngtr", src)
 	checker := runChecker(t, mod)
 
 	doubled := findConstDecl(t, mod, "doubled")
@@ -34,18 +38,21 @@ func TestMapInferenceHandlesObjectAndStringResults(t *testing.T) {
 	const src = `
 import { map, toString } from "prelude";
 
-const raw: any = [
+function wrap(item: { "value": integer }): { "value": integer } {
+  return { "value": item.value };
+}
+
+function label(item: { "value": integer }): string {
+  return toString(item.value);
+}
+
+const raw: { "value": integer }[] = [
   { "value": 1 },
   { "value": 2 }
 ];
 
-const wrapped: { "value": integer }[] = map(raw, function (item: { "value": integer }): { "value": integer } {
-  return { "value": item.value };
-});
-
-const labels: string[] = raw.map(function (item: { "value": integer }): string {
-  return toString(item.value);
-});
+const wrapped: { "value": integer }[] = map(raw, wrap);
+const labels: string[] = raw.map(label);
 `
 
 	mod := mustParseModule(t, "map_object.ngtr", src)
@@ -56,6 +63,52 @@ const labels: string[] = raw.map(function (item: { "value": integer }): string {
 
 	labels := findConstDecl(t, mod, "labels")
 	assertArrayElemKind(t, checker.ExprTypes[labels.Init], KindString, "labels")
+}
+
+func TestReduceInferenceFromRange(t *testing.T) {
+	const src = `
+import { reduce, range } from "prelude";
+
+function sumValues(acc: integer, value: integer): integer {
+  return acc + value;
+}
+
+const nums: integer[] = range(1, 5);
+const sum: integer = nums.reduce(sumValues, 0);
+const sum2: integer = reduce(nums, sumValues, 0);
+`
+
+	mod := mustParseModule(t, "reduce_infer.ngtr", src)
+	checker := runChecker(t, mod)
+
+	sum := findConstDecl(t, mod, "sum")
+	assertTypeKind(t, checker.ExprTypes[sum.Init], KindI64, "sum")
+
+	sum2 := findConstDecl(t, mod, "sum2")
+	assertTypeKind(t, checker.ExprTypes[sum2.Init], KindI64, "sum2")
+}
+
+func TestFilterInferenceFromRange(t *testing.T) {
+	const src = `
+import { filter, range } from "prelude";
+
+function isEven(value: integer): boolean {
+  return value % 2 == 0;
+}
+
+const nums: integer[] = range(1, 6);
+const evens: integer[] = nums.filter(isEven);
+const evens2: integer[] = filter(nums, isEven);
+`
+
+	mod := mustParseModule(t, "filter_infer.ngtr", src)
+	checker := runChecker(t, mod)
+
+	evens := findConstDecl(t, mod, "evens")
+	assertArrayElemKind(t, checker.ExprTypes[evens.Init], KindI64, "evens")
+
+	evens2 := findConstDecl(t, mod, "evens2")
+	assertArrayElemKind(t, checker.ExprTypes[evens2.Init], KindI64, "evens2")
 }
 
 func mustParseModule(t *testing.T, path, src string) *ast.Module {
@@ -102,5 +155,15 @@ func assertArrayElemKind(t *testing.T, typ *Type, elem Kind, label string) {
 	}
 	if typ.Elem.Kind != elem {
 		t.Fatalf("%s expected element kind %v, got %v", label, elem, typ.Elem.Kind)
+	}
+}
+
+func assertTypeKind(t *testing.T, typ *Type, kind Kind, label string) {
+	t.Helper()
+	if typ == nil {
+		t.Fatalf("%s has no inferred type", label)
+	}
+	if typ.Kind != kind {
+		t.Fatalf("%s expected kind %v, got %v", label, kind, typ.Kind)
 	}
 }

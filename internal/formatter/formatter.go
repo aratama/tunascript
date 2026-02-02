@@ -704,11 +704,16 @@ func (f *Formatter) formatArrowFunc(e *ast.ArrowFunc) {
 			f.buf.WriteString(", ")
 		}
 		f.buf.WriteString(param.Name)
-		f.buf.WriteString(": ")
-		f.formatType(param.Type)
+		if param.Type != nil {
+			f.buf.WriteString(": ")
+			f.formatType(param.Type)
+		}
 	}
-	f.buf.WriteString("): ")
-	f.formatType(e.Ret)
+	f.buf.WriteString(")")
+	if e.Ret != nil {
+		f.buf.WriteString(": ")
+		f.formatType(e.Ret)
+	}
 	if e.Body != nil {
 		f.buf.WriteString(" ")
 		f.formatBlockStmt(e.Body)

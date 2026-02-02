@@ -15,7 +15,6 @@ const (
 	KindArray
 	KindTuple
 	KindObject
-	KindAny
 )
 
 type Type struct {
@@ -25,6 +24,7 @@ type Type struct {
 	Elem   *Type
 	Tuple  []*Type
 	Props  []Prop
+	Index  *Type
 	propIx map[string]*Type
 }
 
@@ -36,9 +36,6 @@ type Prop struct {
 func (t *Type) Equals(o *Type) bool {
 	if t == nil || o == nil {
 		return t == o
-	}
-	if t.Kind == KindAny || o.Kind == KindAny {
-		return true
 	}
 	if t.Kind != o.Kind {
 		// string型エイリアス(JSX等)もKindStringなら必ず等価とみなす
@@ -76,6 +73,12 @@ func (t *Type) Equals(o *Type) bool {
 		if len(t.Props) != len(o.Props) {
 			return false
 		}
+		if (t.Index == nil) != (o.Index == nil) {
+			return false
+		}
+		if t.Index != nil && !t.Index.Equals(o.Index) {
+			return false
+		}
 		for i := range t.Props {
 			if t.Props[i].Name != o.Props[i].Name {
 				return false
@@ -91,13 +94,22 @@ func (t *Type) Equals(o *Type) bool {
 }
 
 func (t *Type) PropType(name string) *Type {
-	if t.propIx == nil {
-		return nil
+	if t.propIx != nil {
+		if propType, ok := t.propIx[name]; ok {
+			return propType
+		}
 	}
-	return t.propIx[name]
+	if t.Index != nil {
+		return t.Index
+	}
+	return nil
 }
 
 func NewObject(props []Prop) *Type {
+	return NewObjectWithIndex(props, nil)
+}
+
+func NewObjectWithIndex(props []Prop, index *Type) *Type {
 	sorted := make([]Prop, len(props))
 	copy(sorted, props)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
@@ -105,7 +117,7 @@ func NewObject(props []Prop) *Type {
 	for _, p := range sorted {
 		propIx[p.Name] = p.Type
 	}
-	return &Type{Kind: KindObject, Props: sorted, propIx: propIx}
+	return &Type{Kind: KindObject, Props: sorted, Index: index, propIx: propIx}
 }
 
 func NewArray(elem *Type) *Type {
@@ -121,7 +133,6 @@ func NewTuple(elems []*Type) *Type {
 }
 
 var (
-	anyType    = &Type{Kind: KindAny}
 	i64Type    = &Type{Kind: KindI64}
 	f64Type    = &Type{Kind: KindF64}
 	boolType   = &Type{Kind: KindBool}
@@ -129,7 +140,6 @@ var (
 	voidType   = &Type{Kind: KindVoid}
 )
 
-func Any() *Type    { return anyType }
 func I64() *Type    { return i64Type }
 func F64() *Type    { return f64Type }
 func Bool() *Type   { return boolType }

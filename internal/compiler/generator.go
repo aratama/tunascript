@@ -403,7 +403,7 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 		// Check if this is an addRoute call (regular or method-style)
 		var isAddRoute bool
 		var handlerArg ast.Expr
-		
+
 		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "addRoute" {
 			isAddRoute = true
 			if len(e.Args) >= 3 {
@@ -418,7 +418,7 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 			// Also recurse into the object
 			g.collectFunctionNamesExpr(member.Object)
 		}
-		
+
 		if isAddRoute && handlerArg != nil {
 			if handlerIdent, ok := handlerArg.(*ast.IdentExpr); ok {
 				sym := g.checker.IdentSymbols[handlerIdent]
@@ -435,7 +435,7 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 				g.httpHandlerLambdas[arrow] = true
 			}
 		}
-		
+
 		// Recurse into arguments
 		for _, arg := range e.Args {
 			g.collectFunctionNamesExpr(arg)
@@ -858,13 +858,13 @@ func (g *Generator) emitFuncDecl(w *watBuilder, sym *types.Symbol, fn *ast.FuncD
 
 func (g *Generator) emitFuncBody(w *watBuilder, sym *types.Symbol, params []ast.Param, funcType *types.Type, body *ast.BlockStmt, isEntry bool) {
 	implName := g.funcImplName(sym)
-	
+
 	// For HTTP handlers, use a different internal name to avoid recursion when the wrapper calls it
 	actualImplName := implName
 	if g.httpHandlerFuncs[sym] {
 		actualImplName = implName + "_inner"
 	}
-	
+
 	if isEntry && g.funcExports[sym] {
 		g.emitWrapper(w, sym, funcType)
 	}
@@ -899,7 +899,7 @@ func (g *Generator) emitHttpHandlerWrapper(w *watBuilder, sym *types.Symbol, fun
 	// Use a different internal name for the actual impl to avoid recursion
 	internalImplName := implName + "_inner"
 	exportName := implName // This is what's stored in the data section and looked up by runtime
-	
+
 	var params []string
 	for i, p := range funcType.Params {
 		params = append(params, fmt.Sprintf("(param $p%d %s)", i, wasmType(p)))
@@ -908,7 +908,7 @@ func (g *Generator) emitHttpHandlerWrapper(w *watBuilder, sym *types.Symbol, fun
 	if funcType.Ret.Kind != types.KindVoid {
 		result = fmt.Sprintf("(result %s)", wasmType(funcType.Ret))
 	}
-	
+
 	// Emit the exported wrapper that calls __ensure_init then the inner impl
 	w.line(fmt.Sprintf("(func %s %s %s", exportName, strings.Join(params, " "), result))
 	w.indent++
@@ -976,7 +976,7 @@ func (g *Generator) emitLambda(w *watBuilder, info *lambdaInfo) {
 func (g *Generator) emitHttpLambdaWrapper(w *watBuilder, info *lambdaInfo) {
 	funcType := info.typ
 	wrapperName := info.name + "_http"
-	
+
 	var params []string
 	for i, p := range funcType.Params {
 		params = append(params, fmt.Sprintf("(param $p%d %s)", i, wasmType(p)))
@@ -985,7 +985,7 @@ func (g *Generator) emitHttpLambdaWrapper(w *watBuilder, info *lambdaInfo) {
 	if funcType.Ret.Kind != types.KindVoid {
 		result = fmt.Sprintf("(result %s)", wasmType(funcType.Ret))
 	}
-	
+
 	w.line(fmt.Sprintf("(func %s %s %s", wrapperName, strings.Join(params, " "), result))
 	w.indent++
 	w.line("(call $__ensure_init)")
@@ -1199,12 +1199,12 @@ func (f *funcEmitter) emitStmt(stmt ast.Stmt) {
 
 func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
-	
+
 	// Store the array/tuple in a temporary local
 	arrLocal := f.addLocalRaw("i32")
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
-	
+
 	// Extract each element and bind to a local
 	for i, name := range s.Names {
 		// Get element type
@@ -1214,13 +1214,13 @@ func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 		} else if initType.Kind == types.KindTuple {
 			elemType = initType.Tuple[i]
 		}
-		
+
 		// Get element from array/tuple
 		f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
 		f.emit(fmt.Sprintf("(i32.const %d)", i))
 		f.emit("(call $prelude.arr_get)")
 		f.emitUnboxIfPrimitive(elemType)
-		
+
 		// Store in local variable
 		local := f.addLocal(name, elemType)
 		f.emit(fmt.Sprintf("(local.set %s)", local))
@@ -1230,23 +1230,23 @@ func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 
 func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
-	
+
 	// Store the object in a temporary local
 	objLocal := f.addLocalRaw("i32")
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", objLocal))
-	
+
 	// Extract each property and bind to a local
 	for _, key := range s.Keys {
 		// Get property type
 		propType := initType.PropType(key)
-		
+
 		// Get property from object
 		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(key)))
 		f.emit("(call $prelude.obj_get)")
 		f.emitUnboxIfPrimitive(propType)
-		
+
 		// Store in local variable
 		local := f.addLocal(key, propType)
 		f.emit(fmt.Sprintf("(local.set %s)", local))
@@ -1542,7 +1542,7 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		f.emitMethodCallExpr(call, member, t)
 		return
 	}
-	
+
 	ident, ok := call.Callee.(*ast.IdentExpr)
 	if !ok {
 		return
@@ -1564,7 +1564,7 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 // emitMethodCallExpr emits code for method-style calls: obj.func(args) => func(obj, args)
 func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberExpr, t *types.Type) {
 	funcName := member.Property
-	
+
 	if isPreludeName(funcName) {
 		// Create a synthetic call with object as first argument
 		allArgs := append([]ast.Expr{member.Object}, call.Args...)
@@ -1576,15 +1576,15 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 		f.emitPreludeCall(funcName, syntheticCall, t)
 		return
 	}
-	
+
 	// Emit object (first argument)
 	f.emitExpr(member.Object, f.g.checker.ExprTypes[member.Object])
-	
+
 	// Emit remaining arguments
 	for _, arg := range call.Args {
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 	}
-	
+
 	// Look up the function symbol
 	// We need to find the symbol for funcName
 	// Since checkMethodCall validated this, we can assume it exists
@@ -1643,6 +1643,8 @@ func (f *funcEmitter) emitPreludeCall(name string, call *ast.CallExpr, t *types.
 		f.emitLength(call)
 	case "map":
 		f.emitMap(call, t)
+	case "filter":
+		f.emitFilter(call, t)
 	case "reduce":
 		f.emitReduce(call, t)
 	case "dbSave":
@@ -1962,6 +1964,122 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	f.emit("i32.add")
 	f.emit(fmt.Sprintf("(local.set %s)", idxLocal))
 	f.emit("br $map_loop")
+	f.indent--
+	f.emit(")")
+	f.indent--
+	f.emit(")")
+	f.emit(fmt.Sprintf("(local.get %s)", resultLocal))
+}
+
+func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
+	arrExpr := call.Args[0]
+	fnExpr := call.Args[1]
+	arrType := f.g.checker.ExprTypes[arrExpr]
+	fnName, fnType := f.resolveFunctionExpr(fnExpr)
+	arrLocal := f.addLocalRaw("i32")
+	lenLocal := f.addLocalRaw("i32")
+	idxLocal := f.addLocalRaw("i32")
+	countLocal := f.addLocalRaw("i32")
+	resultLocal := f.addLocalRaw("i32")
+	outIdxLocal := f.addLocalRaw("i32")
+	valueLocal := f.addLocalRaw("i32")
+
+	f.emitExpr(arrExpr, arrType)
+	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
+	f.emit("(call $prelude.arr_len)")
+	f.emit(fmt.Sprintf("(local.set %s)", lenLocal))
+
+	f.emit("(i32.const 0)")
+	f.emit(fmt.Sprintf("(local.set %s)", countLocal))
+	f.emit("(i32.const 0)")
+	f.emit(fmt.Sprintf("(local.set %s)", idxLocal))
+
+	f.emit("(block $filter_count_end")
+	f.indent++
+	f.emit("(loop $filter_count_loop")
+	f.indent++
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", lenLocal))
+	f.emit("i32.ge_u")
+	f.emit("br_if $filter_count_end")
+	f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit("(call $prelude.arr_get)")
+	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	if len(fnType.Params) > 0 {
+		f.emitUnboxIfPrimitive(fnType.Params[0])
+	}
+	f.emit(fmt.Sprintf("(call %s)", fnName))
+	f.emit("(if")
+	f.indent++
+	f.emit("(then")
+	f.indent++
+	f.emit(fmt.Sprintf("(local.get %s)", countLocal))
+	f.emit("(i32.const 1)")
+	f.emit("i32.add")
+	f.emit(fmt.Sprintf("(local.set %s)", countLocal))
+	f.indent--
+	f.emit(")")
+	f.indent--
+	f.emit(")")
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit("(i32.const 1)")
+	f.emit("i32.add")
+	f.emit(fmt.Sprintf("(local.set %s)", idxLocal))
+	f.emit("br $filter_count_loop")
+	f.indent--
+	f.emit(")")
+	f.indent--
+	f.emit(")")
+
+	f.emit(fmt.Sprintf("(local.get %s)", countLocal))
+	f.emit("(call $prelude.arr_new)")
+	f.emit(fmt.Sprintf("(local.set %s)", resultLocal))
+	f.emit("(i32.const 0)")
+	f.emit(fmt.Sprintf("(local.set %s)", idxLocal))
+	f.emit("(i32.const 0)")
+	f.emit(fmt.Sprintf("(local.set %s)", outIdxLocal))
+
+	f.emit("(block $filter_end")
+	f.indent++
+	f.emit("(loop $filter_loop")
+	f.indent++
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", lenLocal))
+	f.emit("i32.ge_u")
+	f.emit("br_if $filter_end")
+	f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit("(call $prelude.arr_get)")
+	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	if len(fnType.Params) > 0 {
+		f.emitUnboxIfPrimitive(fnType.Params[0])
+	}
+	f.emit(fmt.Sprintf("(call %s)", fnName))
+	f.emit("(if")
+	f.indent++
+	f.emit("(then")
+	f.indent++
+	f.emit(fmt.Sprintf("(local.get %s)", resultLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", outIdxLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	f.emit("(call $prelude.arr_set)")
+	f.emit(fmt.Sprintf("(local.get %s)", outIdxLocal))
+	f.emit("(i32.const 1)")
+	f.emit("i32.add")
+	f.emit(fmt.Sprintf("(local.set %s)", outIdxLocal))
+	f.indent--
+	f.emit(")")
+	f.indent--
+	f.emit(")")
+	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+	f.emit("(i32.const 1)")
+	f.emit("i32.add")
+	f.emit(fmt.Sprintf("(local.set %s)", idxLocal))
+	f.emit("br $filter_loop")
 	f.indent--
 	f.emit(")")
 	f.indent--
@@ -2339,7 +2457,7 @@ func elemType(t *types.Type) *types.Type {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "print", "stringify", "parse", "toString", "range", "length", "map", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
+	case "print", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
 		"createServer", "listen", "addRoute", "responseText", "responseHtml", "responseJson", "responseRedirect", "getPath", "getMethod":
 		return true
 	default:
@@ -2359,14 +2477,14 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 	// Emit attributes
 	for _, attr := range e.Attributes {
 		attrType := f.g.checker.ExprTypes[attr.Value]
-		
+
 		// Handle boolean attributes (checked, disabled, etc.)
 		// For boolean type, only emit the attribute if the value is true
 		if attrType != nil && attrType.Kind == types.KindBool {
 			// We need to conditionally concatenate.
 			// Stack before: [str]
 			// We want: if (cond) { str + " attrName" } else { str }
-			// 
+			//
 			// Approach: Use a local to store the current string, evaluate condition,
 			// then conditionally concat
 			tempLocal := f.addLocalRaw("i32")
@@ -2384,7 +2502,7 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 			f.emit(")")
 			continue
 		}
-		
+
 		// Attribute name: " attrName=\""
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(" "+attr.Name+"=\"")))
 		f.emit("(call $prelude.str_concat)")

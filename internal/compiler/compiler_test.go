@@ -57,12 +57,12 @@ func compileExpectError(t *testing.T, src string) {
 func TestArithmeticAndString(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { print, toString } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const a: integer = 40 + 2;
   print(toString(a));
   const s: string = "ab" + "cd";
   print(s);
-};
+}
 `,
 	}, "main.ts")
 	want := "42\nabcd\n"
@@ -74,11 +74,11 @@ export const main: () => void = (): void => {
 func TestObjectSpreadAndStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { print, stringify } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const a: { "x": integer, "y": integer } = { "x": 1, "y": 2 };
   const b: { "x": integer, "y": integer } = { ...a, "x": 1 };
   print(stringify(b));
-};
+}
 `,
 	}, "main.ts")
 	want := "{\"x\":1,\"y\":2}\n"
@@ -90,12 +90,12 @@ export const main: () => void = (): void => {
 func TestArrayForOf(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { print, toString } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const xs: integer[] = [1, 2, 3];
   for (const x: integer of xs) {
     print(toString(x));
   }
-};
+}
 `,
 	}, "main.ts")
 	want := "1\n2\n3\n"
@@ -107,12 +107,12 @@ export const main: () => void = (): void => {
 func TestPreludeRange(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { range, print, toString } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const xs: integer[] = range(0, 4);
   for (const x: integer of xs) {
     print(toString(x));
   }
-};
+}
 `,
 	}, "main.ts")
 	want := "0\n1\n2\n3\n4\n"
@@ -161,10 +161,18 @@ export function main(): void {
 func TestPreludeMapReduceLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { map, reduce, length, print, toString } from "prelude";
+function double(n: integer): integer {
+  return n * 2;
+}
+
+function sumValues(acc: integer, v: integer): integer {
+  return acc + v;
+}
+
 export function main(): void {
   const xs: integer[] = [1, 2, 3];
-  const doubled: integer[] = map(xs, function (n: integer): integer { return n * 2; });
-  const total: integer = reduce(doubled, function (acc: integer, v: integer): integer { return acc + v; }, 0);
+  const doubled: integer[] = map(xs, double);
+  const total: integer = reduce(doubled, sumValues, 0);
   const size: integer = length(doubled);
   print(toString(total));
   print(toString(size));
@@ -180,11 +188,11 @@ export function main(): void {
 func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { print, toString } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const t: [integer, string] = [1, "a"];
   print(toString(t[0]));
   print(t[1]);
-};
+}
 `,
 	}, "main.ts")
 	want := "1\na\n"
@@ -196,10 +204,10 @@ export const main: () => void = (): void => {
 func TestParseStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { parse, stringify, print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const v: { "a": integer, "b": string } = parse("{\"a\":1,\"b\":\"x\"}");
   print(stringify(v));
-};
+}
 `,
 	}, "main.ts")
 	want := "{\"a\":1,\"b\":\"x\"}\n"
@@ -210,13 +218,13 @@ export const main: () => void = (): void => {
 
 func TestModuleImport(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"lib.ts": `export const add: (a: integer, b: integer) => integer = (a: integer, b: integer): integer => a + b;`,
+		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b; }`,
 		"main.ts": `import { add } from "./lib";
 import { print, toString } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const v: integer = add(20, 22);
   print(toString(v));
-};
+}
 `,
 	}, "main.ts")
 	want := "42\n"
@@ -227,40 +235,40 @@ export const main: () => void = (): void => {
 
 func TestTypeErrors(t *testing.T) {
 	compileExpectError(t, `import { print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const a: integer = 1;
   const b: float = 1.0;
   if (a == b) { print("x"); }
-};
+}
 `)
 
 	compileExpectError(t, `import { print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const a: integer = 1;
   const s: string = "a" + a;
   print(s);
-};
+}
 `)
 
 	compileExpectError(t, `import { parse, print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   print(parse("{\"a\":1}"));
-};
+}
 `)
 
 	compileExpectError(t, `import { print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const t: [integer, integer] = [1, 2];
   for (const x: integer of t) { }
   print("x");
-};
+}
 `)
 
 	compileExpectError(t, `import { print } from "prelude";
-export const main: () => void = (): void => {
+export function main(): void {
   const a: { "x": integer } = { x: 1 };
   print("x");
-};
+}
 `)
 }
 
@@ -315,4 +323,3 @@ export function main(): void {
 		t.Fatalf("output mismatch: got %q, want %q", out, want)
 	}
 }
-

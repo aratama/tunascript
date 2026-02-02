@@ -50,6 +50,16 @@
       "problemMatcher": [],
       "isBackground": true,
       "dependsOn": "Build Server"
+    },
+    {
+      "label": "Install VSIX Extension",
+      "type": "shell",
+      "command": "cd editors/negitoro.negitoro-0.1.0 && rm -f negitoro.vsix && npx @vscode/vsce package --allow-missing-repository -o negitoro.vsix && code --install-extension negitoro.vsix --force",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
     }
   ]
 }

@@ -228,7 +228,10 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 			c.errorf(d.Span, "function type annotation required")
 			return
 		}
-		c.checkArrowFunc(env, arrow, declType)
+		sig := c.checkFuncLiteral(env, arrow, declType)
+		if sig != nil {
+			c.ExprTypes[arrow] = sig
+		}
 		return
 	}
 	if declType.Kind == KindFunc {
@@ -243,55 +246,100 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 
 func (c *Checker) checkFuncDecl(env *Env, d *ast.FuncDecl) {
 	sig := c.funcTypeFromDecl(d, env.mod)
+	if sig == nil {
+		return
+	}
 	c.checkFuncBody(env, d.Params, d.Body, sig)
 }
 
-func (c *Checker) checkArrowFunc(env *Env, fn *ast.ArrowFunc, declType *Type) {
-	if declType.Kind != KindFunc {
+func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) *Type {
+	if expected != nil && expected.Kind != KindFunc {
 		c.errorf(fn.Span, "function type required")
-		return
+		return nil
 	}
+	var expectedParams []*Type
+	var expectedRet *Type
+	if expected != nil && expected.Kind == KindFunc {
+		if len(expected.Params) != len(fn.Params) {
+			c.errorf(fn.Span, "param count mismatch")
+			return nil
+		}
+		expectedParams = expected.Params
+		expectedRet = expected.Ret
+	}
+
 	params := make([]*Type, len(fn.Params))
 	for i, p := range fn.Params {
+		if p.Type == nil {
+			if expectedParams == nil || expectedParams[i] == nil {
+				c.errorf(p.Span, "param type required")
+				return nil
+			}
+			params[i] = expectedParams[i]
+			continue
+		}
 		params[i] = c.resolveType(p.Type, env.mod)
-	}
-	if len(params) != len(declType.Params) {
-		c.errorf(fn.Span, "param count mismatch")
-		return
-	}
-	for i := range params {
-		if !params[i].Equals(declType.Params[i]) {
-			c.errorf(fn.Span, "param type mismatch")
-			return
+		if params[i] == nil {
+			return nil
+		}
+		if expectedParams != nil && !params[i].Equals(expectedParams[i]) {
+			c.errorf(p.Span, "param type mismatch")
+			return nil
 		}
 	}
-	ret := c.resolveType(fn.Ret, env.mod)
-	if !ret.Equals(declType.Ret) {
-		c.errorf(fn.Span, "return type mismatch")
-		return
-	}
+
 	body := fn.Body
 	if body == nil && fn.Expr != nil {
 		body = &ast.BlockStmt{Stmts: []ast.Stmt{&ast.ReturnStmt{Value: fn.Expr, Span: fn.Expr.GetSpan()}}, Span: fn.Span}
 	}
-	c.checkFuncBody(env, fn.Params, body, declType)
+	if body == nil {
+		c.errorf(fn.Span, "function body required")
+		return nil
+	}
+
+	if fn.Ret != nil {
+		ret := c.resolveType(fn.Ret, env.mod)
+		if ret == nil {
+			return nil
+		}
+		if expectedRet != nil && !ret.Equals(expectedRet) {
+			c.errorf(fn.Span, "return type mismatch")
+			return nil
+		}
+		sig := NewFunc(params, ret)
+		c.checkFuncBody(env, fn.Params, body, sig)
+		return sig
+	}
+
+	if expectedRet != nil {
+		sig := NewFunc(params, expectedRet)
+		c.checkFuncBody(env, fn.Params, body, sig)
+		return sig
+	}
+
+	ret := c.checkFuncBodyInfer(env, fn.Params, body, params, nil)
+	if ret == nil {
+		return nil
+	}
+	return NewFunc(params, ret)
 }
 
 func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) *Type {
 	params := make([]*Type, len(d.Params))
 	for i, p := range d.Params {
+		if p.Type == nil {
+			c.errorf(p.Span, "param type required")
+			return nil
+		}
 		params[i] = c.resolveType(p.Type, mod)
+		if params[i] == nil {
+			return nil
+		}
 	}
 	ret := c.resolveType(d.Ret, mod)
-	return NewFunc(params, ret)
-}
-
-func (c *Checker) funcTypeFromArrow(fn *ast.ArrowFunc, mod *ModuleInfo) *Type {
-	params := make([]*Type, len(fn.Params))
-	for i, p := range fn.Params {
-		params[i] = c.resolveType(p.Type, mod)
+	if ret == nil {
+		return nil
 	}
-	ret := c.resolveType(fn.Ret, mod)
 	return NewFunc(params, ret)
 }
 
@@ -303,6 +351,195 @@ func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStm
 	c.checkBlock(fnEnv, body, sig.Ret)
 	if sig.Ret.Kind != KindVoid && !returns(body) {
 		c.errorf(body.Span, "return required")
+	}
+}
+
+type returnInfo struct {
+	expected *Type
+	inferred *Type
+}
+
+func (c *Checker) checkFuncBodyInfer(env *Env, params []ast.Param, body *ast.BlockStmt, paramTypes []*Type, expectedRet *Type) *Type {
+	fnEnv := env.child()
+	for i, p := range params {
+		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: paramTypes[i]}
+	}
+	info := &returnInfo{expected: expectedRet}
+	c.checkBlockInfer(fnEnv, body, info)
+
+	ret := expectedRet
+	if ret == nil {
+		if info.inferred == nil {
+			ret = Void()
+		} else {
+			ret = info.inferred
+		}
+	}
+	if ret.Kind != KindVoid && !returns(body) {
+		c.errorf(body.Span, "return required")
+	}
+	return ret
+}
+
+func (c *Checker) checkBlockInfer(env *Env, block *ast.BlockStmt, info *returnInfo) {
+	local := env.child()
+	for _, stmt := range block.Stmts {
+		c.checkStmtInfer(local, stmt, info)
+	}
+}
+
+func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
+	switch s := stmt.(type) {
+	case *ast.ConstStmt:
+		var declType *Type
+		if s.Type != nil {
+			declType = c.resolveType(s.Type, env.mod)
+			initType := c.checkExpr(env, s.Init, declType)
+			if initType != nil && !initType.Equals(declType) {
+				c.errorf(s.Span, "type mismatch")
+			}
+		} else {
+			initType := c.checkExpr(env, s.Init, nil)
+			if initType == nil {
+				c.errorf(s.Span, "cannot infer type")
+				return
+			}
+			declType = initType
+		}
+		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType}
+	case *ast.DestructureStmt:
+		initType := c.checkExpr(env, s.Init, nil)
+		if initType == nil {
+			return
+		}
+
+		var elemTypes []*Type
+		if initType.Kind == KindArray {
+			for range s.Names {
+				elemTypes = append(elemTypes, initType.Elem)
+			}
+		} else if initType.Kind == KindTuple {
+			if len(s.Names) > len(initType.Tuple) {
+				c.errorf(s.Span, "destructuring has more elements than tuple")
+				return
+			}
+			elemTypes = initType.Tuple[:len(s.Names)]
+		} else {
+			c.errorf(s.Span, "destructuring requires array or tuple")
+			return
+		}
+
+		for i, name := range s.Names {
+			var declType *Type
+			if s.Types[i] != nil {
+				declType = c.resolveType(s.Types[i], env.mod)
+				if declType != nil && !declType.Equals(elemTypes[i]) {
+					c.errorf(s.Span, "destructuring type mismatch for %s", name)
+				}
+			} else {
+				declType = elemTypes[i]
+			}
+			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType}
+		}
+	case *ast.ObjectDestructureStmt:
+		initType := c.checkExpr(env, s.Init, nil)
+		if initType == nil {
+			return
+		}
+		if initType.Kind != KindObject {
+			c.errorf(s.Span, "object destructuring requires object type")
+			return
+		}
+		for i, key := range s.Keys {
+			var declType *Type
+			propType := initType.PropType(key)
+			if propType == nil {
+				c.errorf(s.Span, "property '%s' not found in object", key)
+				continue
+			}
+			if s.Types[i] != nil {
+				declType = c.resolveType(s.Types[i], env.mod)
+				if declType != nil && !declType.Equals(propType) {
+					c.errorf(s.Span, "destructuring type mismatch for %s", key)
+				}
+			} else {
+				declType = propType
+			}
+			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType}
+		}
+	case *ast.ExprStmt:
+		c.checkExpr(env, s.Expr, nil)
+	case *ast.ReturnStmt:
+		c.checkReturnInfer(env, s, info)
+	case *ast.IfStmt:
+		condType := c.checkExpr(env, s.Cond, Bool())
+		if condType != nil && condType.Kind != KindBool {
+			c.errorf(s.Cond.GetSpan(), "boolean required")
+		}
+		c.checkBlockInfer(env, s.Then, info)
+		if s.Else != nil {
+			c.checkBlockInfer(env, s.Else, info)
+		}
+	case *ast.ForOfStmt:
+		iterType := c.checkExpr(env, s.Iter, nil)
+		if iterType == nil {
+			return
+		}
+		elemType := arrayElemType(iterType)
+		if elemType == nil {
+			c.errorf(s.Span, "for-of requires array")
+			return
+		}
+		var varType *Type
+		if s.VarType != nil {
+			varType = c.resolveType(s.VarType, env.mod)
+			if varType == nil {
+				return
+			}
+			if !elemType.Equals(varType) {
+				c.errorf(s.Span, "for-of element type mismatch")
+				return
+			}
+		} else {
+			varType = elemType
+		}
+		loopEnv := env.child()
+		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType}
+		c.checkBlockInfer(loopEnv, s.Body, info)
+	case *ast.BlockStmt:
+		c.checkBlockInfer(env, s, info)
+	}
+}
+
+func (c *Checker) checkReturnInfer(env *Env, s *ast.ReturnStmt, info *returnInfo) {
+	if s.Value == nil {
+		if info.expected != nil && info.expected.Kind != KindVoid {
+			c.errorf(s.Span, "return required")
+		}
+		if info.inferred == nil {
+			info.inferred = Void()
+		} else if info.inferred.Kind != KindVoid {
+			c.errorf(s.Span, "return type mismatch")
+		}
+		return
+	}
+
+	valType := c.checkExpr(env, s.Value, info.expected)
+	if valType == nil {
+		return
+	}
+	if info.expected != nil {
+		if !valType.Equals(info.expected) {
+			c.errorf(s.Span, "return type mismatch")
+		}
+		return
+	}
+	if info.inferred == nil {
+		info.inferred = valType
+		return
+	}
+	if !info.inferred.Equals(valType) {
+		c.errorf(s.Span, "return type mismatch")
 	}
 }
 
@@ -401,8 +638,8 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			return
 		}
 
-		// Must be an object type or any type
-		if initType.Kind != KindObject && initType.Kind != KindAny {
+		// Must be an object type
+		if initType.Kind != KindObject {
 			c.errorf(s.Span, "object destructuring requires object type")
 			return
 		}
@@ -411,31 +648,22 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 		for i, key := range s.Keys {
 			var declType *Type
 
-			if initType.Kind == KindAny {
-				// any型の場合、各プロパティもany型になる（明示的な型があればそれを使う）
-				if s.Types[i] != nil {
-					declType = c.resolveType(s.Types[i], env.mod)
-				} else {
-					declType = Any()
+			// Find the property type in the object
+			propType := initType.PropType(key)
+			if propType == nil {
+				c.errorf(s.Span, "property '%s' not found in object", key)
+				continue
+			}
+
+			if s.Types[i] != nil {
+				// Explicit type annotation
+				declType = c.resolveType(s.Types[i], env.mod)
+				if declType != nil && !declType.Equals(propType) {
+					c.errorf(s.Span, "destructuring type mismatch for %s", key)
 				}
 			} else {
-				// Find the property type in the object
-				propType := initType.PropType(key)
-				if propType == nil {
-					c.errorf(s.Span, "property '%s' not found in object", key)
-					continue
-				}
-
-				if s.Types[i] != nil {
-					// Explicit type annotation
-					declType = c.resolveType(s.Types[i], env.mod)
-					if declType != nil && !declType.Equals(propType) {
-						c.errorf(s.Span, "destructuring type mismatch for %s", key)
-					}
-				} else {
-					// Type inference from object property
-					declType = propType
-				}
+				// Type inference from object property
+				declType = propType
 			}
 			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType}
 		}
@@ -449,8 +677,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			return
 		}
 		valType := c.checkExpr(env, s.Value, retType)
-		// any型への代入は任意の型を許可
-		if valType != nil && retType.Kind != KindAny && !valType.Equals(retType) {
+		if valType != nil && !valType.Equals(retType) {
 			c.errorf(s.Span, "return type mismatch")
 		}
 	case *ast.IfStmt:
@@ -624,11 +851,6 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if objType == nil {
 			return nil
 		}
-		// any型のメンバーアクセスはany型を返す
-		if objType.Kind == KindAny {
-			c.ExprTypes[expr] = Any()
-			return Any()
-		}
 		if objType.Kind != KindObject {
 			c.errorf(e.Span, "object required")
 			return nil
@@ -674,13 +896,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		c.errorf(e.Span, "array required")
 		return nil
 	case *ast.ArrowFunc:
-		sig := c.funcTypeFromArrow(e, env.mod)
+		rootEnv := env.root()
+		moduleEnv := rootEnv.clone()
+		sig := c.checkFuncLiteral(moduleEnv, e, expected)
 		if sig == nil {
 			return nil
 		}
-		rootEnv := env.root()
-		moduleEnv := rootEnv.clone()
-		c.checkArrowFunc(moduleEnv, e, sig)
 		c.ExprTypes[expr] = sig
 		return sig
 	case *ast.BlockExpr:
@@ -698,9 +919,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			if paramType == nil {
 				continue
 			}
-			// Parameters must be primitive types (string, integer, float, bool) or any
+			// Parameters must be primitive types (string, integer, float, bool)
 			switch paramType.Kind {
-			case KindString, KindI64, KindF64, KindBool, KindAny:
+			case KindString, KindI64, KindF64, KindBool:
 				// OK
 			default:
 				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, integer, float, or bool)")
@@ -744,7 +965,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 				if attrType != nil {
 					c.ExprTypes[attr.Value] = attrType
 				}
-				if attrType != nil && attrType.Kind != KindString && attrType.Kind != KindI64 && attrType.Kind != KindF64 && attrType.Kind != KindBool && attrType.Kind != KindAny {
+				if attrType != nil && attrType.Kind != KindString && attrType.Kind != KindI64 && attrType.Kind != KindF64 && attrType.Kind != KindBool {
 					c.errorf(attr.Span, "JSX attribute value must be a primitive type")
 				}
 			}
@@ -778,7 +999,7 @@ func (c *Checker) checkJSXChild(env *Env, child *ast.JSXChild) {
 			c.checkExpr(env, child.Element, String())
 		}
 	case ast.JSXChildExpr:
-		// Expression must return a primitive type (string, number, bool), any, or array of strings
+		// Expression must return a primitive type (string, number, bool) or array of strings
 		if child.Expr != nil {
 			exprType := c.checkExpr(env, child.Expr, nil)
 			if exprType == nil {
@@ -790,7 +1011,7 @@ func (c *Checker) checkJSXChild(env *Env, child *ast.JSXChild) {
 					return // string[] is OK for JSX children
 				}
 			}
-			if exprType.Kind != KindString && exprType.Kind != KindI64 && exprType.Kind != KindF64 && exprType.Kind != KindBool && exprType.Kind != KindAny {
+			if exprType.Kind != KindString && exprType.Kind != KindI64 && exprType.Kind != KindF64 && exprType.Kind != KindBool {
 				c.errorf(child.Span, "JSX expression must return a primitive type (string, number, or bool)")
 			}
 		}
@@ -821,20 +1042,12 @@ func (c *Checker) checkBinary(e *ast.BinaryExpr, left, right *Type) *Type {
 		c.errorf(e.Span, "number required")
 		return nil
 	case "==", "!=":
-		// any型との比較は常に許可
-		if left.Kind == KindAny || right.Kind == KindAny {
-			return Bool()
-		}
 		if !left.Equals(right) {
 			c.errorf(e.Span, "type mismatch")
 			return nil
 		}
 		return Bool()
 	case "<", "<=", ">", ">=":
-		// any型との比較は許可
-		if left.Kind == KindAny || right.Kind == KindAny {
-			return Bool()
-		}
 		if left.Kind == KindI64 && right.Kind == KindI64 {
 			return Bool()
 		}
@@ -886,8 +1099,7 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 	}
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i])
-		// any型の引数は任意の型に変換可能
-		if argType != nil && argType.Kind != KindAny && !argType.Equals(sig.Params[i]) {
+		if argType != nil && !argType.Equals(sig.Params[i]) {
 			c.errorf(call.Span, "argument type mismatch")
 			return nil
 		}
@@ -913,14 +1125,6 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	}
 
 	if sym.Kind == SymBuiltin {
-		if objType.Kind == KindAny && funcName != "map" {
-			// any型のレシーバーは従来通りany型として扱う
-			for _, arg := range call.Args {
-				c.checkExpr(env, arg, nil)
-			}
-			c.ExprTypes[call] = Any()
-			return Any()
-		}
 		// For builtin calls, prepend the object as first argument
 		allArgs := append([]ast.Expr{member.Object}, call.Args...)
 		syntheticCall := &ast.CallExpr{
@@ -931,16 +1135,6 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 		result := c.checkBuiltinCall(env, funcName, syntheticCall, expected)
 		c.ExprTypes[call] = result
 		return result
-	}
-
-	// any型のメソッド呼び出しはany型を返す（型チェックをスキップ）
-	if objType.Kind == KindAny {
-		// 引数も一応チェックする
-		for _, arg := range call.Args {
-			c.checkExpr(env, arg, nil)
-		}
-		c.ExprTypes[call] = Any()
-		return Any()
 	}
 
 	if sym.Kind != SymFunc || sym.Type == nil || sym.Type.Kind != KindFunc {
@@ -1063,22 +1257,19 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		if arrType == nil {
 			return nil
 		}
-		fnType := c.checkExpr(env, call.Args[1], nil)
-		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 1 {
-			c.errorf(call.Span, "map expects function")
-			return nil
-		}
-
-		elemType := arrType.Elem
-		if arrType.Kind == KindAny {
-			// Infer array element type from callback parameter
-			elemType = fnType.Params[0]
-		} else if arrType.Kind != KindArray {
+		if arrType.Kind != KindArray {
 			c.errorf(call.Span, "map expects array")
 			return nil
 		}
+		elemType := arrType.Elem
 		if elemType == nil {
 			c.errorf(call.Span, "map element type required")
+			return nil
+		}
+		expectedFn := &Type{Kind: KindFunc, Params: []*Type{elemType}}
+		fnType := c.checkExpr(env, call.Args[1], expectedFn)
+		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 1 {
+			c.errorf(call.Span, "map expects function")
 			return nil
 		}
 		if !fnType.Params[0].Equals(elemType) {
@@ -1088,30 +1279,74 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		ret := NewArray(fnType.Ret)
 		c.ExprTypes[call] = ret
 		return ret
+	case "filter":
+		if len(call.Args) != 2 {
+			c.errorf(call.Span, "filter expects 2 args")
+			return nil
+		}
+		arrType := c.checkExpr(env, call.Args[0], nil)
+		if arrType == nil {
+			return nil
+		}
+		if arrType.Kind != KindArray {
+			c.errorf(call.Span, "filter expects array")
+			return nil
+		}
+		elemType := arrType.Elem
+		if elemType == nil {
+			c.errorf(call.Span, "filter element type required")
+			return nil
+		}
+		expectedFn := &Type{Kind: KindFunc, Params: []*Type{elemType}}
+		fnType := c.checkExpr(env, call.Args[1], expectedFn)
+		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 1 {
+			c.errorf(call.Span, "filter expects function")
+			return nil
+		}
+		if !fnType.Params[0].Equals(elemType) {
+			c.errorf(call.Span, "filter callback type mismatch")
+			return nil
+		}
+		if fnType.Ret == nil || fnType.Ret.Kind != KindBool {
+			c.errorf(call.Span, "filter expects boolean return")
+			return nil
+		}
+		ret := NewArray(elemType)
+		c.ExprTypes[call] = ret
+		return ret
 	case "reduce":
 		if len(call.Args) != 3 {
 			c.errorf(call.Span, "reduce expects 3 args")
 			return nil
 		}
 		arrType := c.checkExpr(env, call.Args[0], nil)
-		if arrType == nil || arrType.Kind != KindArray {
+		if arrType == nil {
+			return nil
+		}
+		if arrType.Kind != KindArray {
 			c.errorf(call.Span, "reduce expects array")
 			return nil
 		}
-		fnType := c.checkExpr(env, call.Args[1], nil)
-		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 2 {
-			c.errorf(call.Span, "reduce expects function")
+		elemType := arrType.Elem
+		if elemType == nil {
+			c.errorf(call.Span, "reduce element type required")
 			return nil
 		}
-		initType := c.checkExpr(env, call.Args[2], fnType.Params[0])
+		initType := c.checkExpr(env, call.Args[2], nil)
 		if initType == nil {
+			return nil
+		}
+		expectedFn := &Type{Kind: KindFunc, Params: []*Type{initType, elemType}}
+		fnType := c.checkExpr(env, call.Args[1], expectedFn)
+		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 2 {
+			c.errorf(call.Span, "reduce expects function")
 			return nil
 		}
 		if !fnType.Params[0].Equals(initType) || !fnType.Ret.Equals(fnType.Params[0]) {
 			c.errorf(call.Span, "reduce accumulator type mismatch")
 			return nil
 		}
-		if !fnType.Params[1].Equals(arrType.Elem) {
+		if !fnType.Params[1].Equals(elemType) {
 			c.errorf(call.Span, "reduce element type mismatch")
 			return nil
 		}
@@ -1295,7 +1530,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			return nil
 		}
 		urlType := c.checkExpr(env, call.Args[0], String())
-		if urlType == nil || (urlType.Kind != KindString && urlType.Kind != KindAny) {
+		if urlType == nil || urlType.Kind != KindString {
 			c.errorf(call.Span, "responseRedirect expects string")
 			return nil
 		}
@@ -1490,8 +1725,6 @@ func (c *Checker) resolveType(expr ast.TypeExpr, mod *ModuleInfo) *Type {
 			return String()
 		case "void":
 			return Void()
-		case "any":
-			return Any()
 		default:
 			// Check if it's a type alias in the current module
 			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
@@ -1827,7 +2060,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "print", "stringify", "parse", "toString", "range", "length", "map", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
+	case "print", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
 		"createServer", "listen", "addRoute", "responseText", "responseHtml", "responseJson", "responseRedirect", "getPath", "getMethod":
 		return true
 	default:
@@ -1839,13 +2072,14 @@ func isPreludeName(name string) bool {
 func getPreludeType(name string) *Type {
 	switch name {
 	case "Request":
-		// Request = { path: string, method: string, query: any, form: any }
-		// query and form are dynamic string-keyed objects (any型として扱う)
+		// Request = { path: string, method: string, query: { [key: string]: string }, form: { [key: string]: string } }
+		// query and form are dynamic string-keyed objects with string values
+		stringMap := NewObjectWithIndex(nil, String())
 		return NewObject([]Prop{
-			{Name: "form", Type: Any()},
+			{Name: "form", Type: stringMap},
 			{Name: "method", Type: String()},
 			{Name: "path", Type: String()},
-			{Name: "query", Type: Any()},
+			{Name: "query", Type: stringMap},
 		})
 	case "Response":
 		// Response = { "body": string, "contentType": string }

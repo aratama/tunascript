@@ -99,12 +99,7 @@ func (p *Parser) parseConstDecl(export bool) ast.Decl {
 	p.expect(lexer.TokenColon)
 	texpr := p.parseType()
 	p.expect(lexer.TokenEq)
-	var init ast.Expr
-	if p.curr.Kind == lexer.TokenLParen {
-		init = p.parseArrowFunc()
-	} else {
-		init = p.parseExpr(0)
-	}
+	init := p.parseExpr(0)
 	p.optional(lexer.TokenSemicolon)
 	end := p.curr.Pos
 	return &ast.ConstDecl{Name: nameTok.Text, Export: export, Type: texpr, Init: init, Span: spanFrom(start, end)}
@@ -227,17 +222,17 @@ func (p *Parser) parseStmt() ast.Stmt {
 func (p *Parser) parseConstStmt() ast.Stmt {
 	start := p.curr.Pos
 	p.expect(lexer.TokenConst)
-	
+
 	// Check for array destructuring: const [a, b, c] = expr
 	if p.curr.Kind == lexer.TokenLBracket {
 		return p.parseDestructureStmt(start)
 	}
-	
+
 	// Check for object destructuring: const { key1, key2 } = expr
 	if p.curr.Kind == lexer.TokenLBrace {
 		return p.parseObjectDestructureStmt(start)
 	}
-	
+
 	nameTok := p.expect(lexer.TokenIdent)
 	var texpr ast.TypeExpr
 	// 型注釈は省略可能（ローカル変数のみ）
@@ -256,11 +251,11 @@ func (p *Parser) parseDestructureStmt(start lexer.Position) ast.Stmt {
 	p.expect(lexer.TokenLBracket)
 	var names []string
 	var types []ast.TypeExpr
-	
+
 	for p.curr.Kind != lexer.TokenRBracket && p.curr.Kind != lexer.TokenEOF {
 		nameTok := p.expect(lexer.TokenIdent)
 		names = append(names, nameTok.Text)
-		
+
 		// Optional type annotation
 		var texpr ast.TypeExpr
 		if p.curr.Kind == lexer.TokenColon {
@@ -268,13 +263,13 @@ func (p *Parser) parseDestructureStmt(start lexer.Position) ast.Stmt {
 			texpr = p.parseType()
 		}
 		types = append(types, texpr)
-		
+
 		if p.curr.Kind != lexer.TokenComma {
 			break
 		}
 		p.next()
 	}
-	
+
 	p.expect(lexer.TokenRBracket)
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
@@ -287,11 +282,11 @@ func (p *Parser) parseObjectDestructureStmt(start lexer.Position) ast.Stmt {
 	p.expect(lexer.TokenLBrace)
 	var keys []string
 	var types []ast.TypeExpr
-	
+
 	for p.curr.Kind != lexer.TokenRBrace && p.curr.Kind != lexer.TokenEOF {
 		keyTok := p.expect(lexer.TokenIdent)
 		keys = append(keys, keyTok.Text)
-		
+
 		// Optional type annotation
 		var texpr ast.TypeExpr
 		if p.curr.Kind == lexer.TokenColon {
@@ -299,13 +294,13 @@ func (p *Parser) parseObjectDestructureStmt(start lexer.Position) ast.Stmt {
 			texpr = p.parseType()
 		}
 		types = append(types, texpr)
-		
+
 		if p.curr.Kind != lexer.TokenComma {
 			break
 		}
 		p.next()
 	}
-	
+
 	p.expect(lexer.TokenRBrace)
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
@@ -380,9 +375,16 @@ func (p *Parser) parseParamList() []ast.Param {
 	if p.curr.Kind != lexer.TokenRParen {
 		for {
 			nameTok := p.expect(lexer.TokenIdent)
-			p.expect(lexer.TokenColon)
-			typeExpr := p.parseType()
-			params = append(params, ast.Param{Name: nameTok.Text, Type: typeExpr, Span: spanFromPos(posFromLex(nameTok.Pos), typeExpr.GetSpan().End)})
+			var typeExpr ast.TypeExpr
+			endPos := posFromLex(nameTok.Pos)
+			if p.curr.Kind == lexer.TokenColon {
+				p.next()
+				typeExpr = p.parseType()
+				endPos = typeExpr.GetSpan().End
+			} else {
+				endPos = posFromLex(p.curr.Pos)
+			}
+			params = append(params, ast.Param{Name: nameTok.Text, Type: typeExpr, Span: spanFromPos(posFromLex(nameTok.Pos), endPos)})
 			if p.curr.Kind != lexer.TokenComma {
 				break
 			}
@@ -396,8 +398,11 @@ func (p *Parser) parseParamList() []ast.Param {
 func (p *Parser) parseArrowFunc() ast.Expr {
 	start := p.curr.Pos
 	params := p.parseParamList()
-	p.expect(lexer.TokenColon)
-	ret := p.parseType()
+	var ret ast.TypeExpr
+	if p.curr.Kind == lexer.TokenColon {
+		p.next()
+		ret = p.parseType()
+	}
 	p.expect(lexer.TokenArrow)
 	var body *ast.BlockStmt
 	var expr ast.Expr
@@ -414,8 +419,11 @@ func (p *Parser) parseFunctionLiteral() ast.Expr {
 	start := p.curr.Pos
 	p.expect(lexer.TokenFunction)
 	params := p.parseParamList()
-	p.expect(lexer.TokenColon)
-	ret := p.parseType()
+	var ret ast.TypeExpr
+	if p.curr.Kind == lexer.TokenColon {
+		p.next()
+		ret = p.parseType()
+	}
 	var body *ast.BlockStmt
 	var expr ast.Expr
 	if p.curr.Kind == lexer.TokenArrow {
@@ -576,7 +584,11 @@ func (p *Parser) parsePrimary() ast.Expr {
 		p.expect(lexer.TokenRParen)
 		return expr
 	case lexer.TokenFunction:
-		return p.parseFunctionLiteral()
+		start := p.curr.Pos
+		p.err("function literal is not supported; use 'function name(...) { ... }'")
+		_ = p.parseFunctionLiteral()
+		end := p.curr.Pos
+		return &ast.IdentExpr{Name: "", Span: spanFrom(start, end)}
 	case lexer.TokenLBracket:
 		return p.parseArrayLit()
 	case lexer.TokenLBrace:

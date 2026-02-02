@@ -5,7 +5,7 @@
 - TypeScript の最小サブセット。
 - クラス / インターフェイス / 名前空間 / this は不使用。
 - 代入はなく、`const` のみ。
-- 関数は **アロー関数のみ**（トップレベルのみ）。
+- 関数は `function` 宣言のみ（トップレベルのみ）。
 - 繰り返しは `for (const x: T of arr)` のみ。
 - ESModule 形式の `import` / `export`。
 - バックエンドは WAT を生成し、wasmtime-go の `Wat2Wasm` で WASM へ変換。
@@ -48,8 +48,10 @@ preludeには以下の型エイリアスが定義されている:
 
 | 型名       | 定義                                        |
 | ---------- | ------------------------------------------- |
-| `Request`  | `{ "path": string, "method": string }`      |
+| `Request`  | `{ "path": string, "method": string, "query": stringMap, "form": stringMap }` |
 | `Response` | `{ "body": string, "contentType": string }` |
+
+`stringMap` は **文字列キー → 文字列値** の動的オブジェクトを表す（`req.query.foo` の型は `string`）。この型は `Request` の `query` / `form` 専用で、型注釈で直接表現する構文はない。
 
 例:
 
@@ -136,12 +138,21 @@ const { name: string, age: integer } = obj;
 ## 4. 関数
 
 - トップレベルでのみ宣言可能（高階関数やクロージャは不可）。
-- 2 つの宣言方法をサポート:
-  - `const add: (a: integer, b: integer) => integer = (a: integer, b: integer): integer => a + b;`
-  - `function add(a: integer, b: integer): integer { return a + b; }`
-- どちらもパラメータ型・戻り値型が必須。
-- `export` を付ければ外部公開できる（`export const` / `export function`）。
-- 関数リテラルを式として記述できる。例: `function (n: integer): integer { return n * 2; }` や `function (n: integer): integer => n * 2;`。リテラルは匿名のトップレベル関数として扱われるため、周囲のローカル変数をキャプチャできない。
+- 宣言構文: `function add(a: integer, b: integer): integer { return a + b; }`
+- パラメータ型・戻り値型が必須。
+- `export` を付ければ外部公開できる（`export function`）。
+- 匿名関数 / ラムダ / アロー式は使用できない。コールバックにはトップレベルの関数を渡す。
+
+例:
+
+```
+function double(n: integer): integer {
+  return n * 2;
+}
+
+const nums: integer[] = [1, 2, 3];
+const doubled: integer[] = nums.map(double);
+```
 
 ### 4.1 メソッドスタイル呼び出し（ドット構文）
 
@@ -431,12 +442,14 @@ create_table todos {
 // 上記のテーブル定義により、以下の型エイリアスが自動定義される:
 // type todos = { "id": string, "title": string, "completed": string }
 
+function renderTodoRow(row: todos): JSX {
+  return <li>{row.title}</li>;
+}
+
 function renderTodos(): JSX {
   const rows = fetch_all { SELECT id, title, completed FROM todos };
   // row の型として todos を使用可能
-  return <ul>{rows.map(function (row: todos): JSX {
-    return <li>{row.title}</li>;
-  })}</ul>;
+  return <ul>{rows.map(renderTodoRow)}</ul>;
 }
 ```
 
@@ -465,6 +478,8 @@ function renderTodos(): JSX {
   - 配列の長さを返す。
 - `map(array: T[], fn: (value: T) => U): U[]`
   - 各要素に `fn` を適用した新しい配列を返す。
+- `filter(array: T[], fn: (value: T) => boolean): T[]`
+  - `fn` が `true` を返した要素のみを含む配列を返す。
 - `reduce(array: T[], fn: (acc: R, value: T) => R, initial: R): R`
   - 配列を畳み込み、`fn` の戻り値を結果とする。
 - `dbSave(filename: string): void`
@@ -496,7 +511,7 @@ function renderTodos(): JSX {
 #### 12.2.2 型
 
 - `Server`: HTTPサーバーインスタンス
-- `Request`: HTTPリクエスト（`{ "path": string, "method": string }` オブジェクト）
+- `Request`: HTTPリクエスト（`{ "path": string, "method": string, "query": stringMap, "form": stringMap }` オブジェクト）
 - `Response`: HTTPレスポンス（`{ "body": string }` オブジェクト）
 
 #### 12.2.3 使用例
