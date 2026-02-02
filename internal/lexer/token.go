@@ -55,24 +55,25 @@ const (
 	TokenTable      // "create_table" keyword
 	TokenTableBlock // raw create_table definition block content
 	// SQL query keywords (sqlx-style)
-	TokenExecute       // "execute" keyword
-	TokenExecuteBlock  // raw execute block content
-	TokenFetchOptional // "fetch_optional" keyword
+	TokenExecute            // "execute" keyword
+	TokenExecuteBlock       // raw execute block content
+	TokenFetchOptional      // "fetch_optional" keyword
 	TokenFetchOptionalBlock // raw fetch_optional block content
-	TokenFetchOne      // "fetch_one" keyword
-	TokenFetchOneBlock // raw fetch_one block content
-	TokenFetch         // "fetch" keyword
-	TokenFetchBlock    // raw fetch block content
-	TokenFetchAll      // "fetch_all" keyword
-	TokenFetchAllBlock // raw fetch_all block content
-	TokenType          // "type" keyword
+	TokenFetchOne           // "fetch_one" keyword
+	TokenFetchOneBlock      // raw fetch_one block content
+	TokenFetch              // "fetch" keyword
+	TokenFetchBlock         // raw fetch block content
+	TokenFetchAll           // "fetch_all" keyword
+	TokenFetchAllBlock      // raw fetch_all block content
+	TokenType               // "type" keyword
+	TokenAs                 // "as" keyword
 	// JSX tokens
-	TokenJSXOpen      // "<" in JSX context (opening tag start)
-	TokenJSXClose     // ">" in JSX context (closing tag end)
-	TokenJSXSlashOpen // "</" in JSX context (closing tag start)
+	TokenJSXOpen       // "<" in JSX context (opening tag start)
+	TokenJSXClose      // ">" in JSX context (closing tag end)
+	TokenJSXSlashOpen  // "</" in JSX context (closing tag start)
 	TokenJSXSlashClose // "/>" in JSX context (self-closing tag end)
-	TokenJSXText      // Plain text content inside JSX
-	TokenJSXIdent     // Tag or attribute name in JSX
+	TokenJSXText       // Plain text content inside JSX
+	TokenJSXIdent      // Tag or attribute name in JSX
 )
 
 type Position struct {
@@ -209,6 +210,8 @@ func (k TokenKind) String() string {
 		return "fetch_all_block"
 	case TokenType:
 		return "type"
+	case TokenAs:
+		return "as"
 	case TokenJSXOpen:
 		return "jsx_open"
 	case TokenJSXClose:
@@ -227,19 +230,19 @@ func (k TokenKind) String() string {
 }
 
 var keywords = map[string]TokenKind{
-	"import":   TokenImport,
-	"from":     TokenFrom,
-	"export":   TokenExport,
-	"const":    TokenConst,
-	"type":     TokenType,
-	"if":       TokenIf,
-	"else":     TokenElse,
-	"for":      TokenFor,
-	"of":       TokenOf,
-	"return":   TokenReturn,
-	"true":     TokenTrue,
-	"false":    TokenFalse,
-	"function": TokenFunction,
+	"import":         TokenImport,
+	"from":           TokenFrom,
+	"export":         TokenExport,
+	"const":          TokenConst,
+	"type":           TokenType,
+	"if":             TokenIf,
+	"else":           TokenElse,
+	"for":            TokenFor,
+	"of":             TokenOf,
+	"return":         TokenReturn,
+	"true":           TokenTrue,
+	"false":          TokenFalse,
+	"function":       TokenFunction,
 	"switch":         TokenSwitch,
 	"case":           TokenCase,
 	"default":        TokenDefault,
@@ -249,4 +252,5 @@ var keywords = map[string]TokenKind{
 	"fetch_one":      TokenFetchOne,
 	"fetch":          TokenFetch,
 	"fetch_all":      TokenFetchAll,
+	"as":             TokenAs,
 }

@@ -108,7 +108,7 @@ func (s *ConstStmt) GetSpan() Span { return s.Span }
 
 // DestructureStmt represents array destructuring: const [a, b, c] = expr;
 type DestructureStmt struct {
-	Names []string  // Variable names to bind
+	Names []string   // Variable names to bind
 	Types []TypeExpr // Optional type annotations for each variable
 	Init  Expr       // The array/tuple expression
 	Span  Span
@@ -289,6 +289,16 @@ type UnaryExpr struct {
 func (*UnaryExpr) exprNode()       {}
 func (e *UnaryExpr) GetSpan() Span { return e.Span }
 
+// AsExpr represents a type assertion: expr as Type
+type AsExpr struct {
+	Expr Expr
+	Type TypeExpr
+	Span Span
+}
+
+func (*AsExpr) exprNode()       {}
+func (e *AsExpr) GetSpan() Span { return e.Span }
+
 type BinaryExpr struct {
 	Op    string
 	Left  Expr
@@ -375,10 +385,10 @@ func (e *SQLExpr) GetSpan() Span { return e.Span }
 
 // JSXElement represents a JSX element: <div className="foo">children</div>
 type JSXElement struct {
-	Tag        string        // Tag name (e.g., "div", "span", "html")
+	Tag        string         // Tag name (e.g., "div", "span", "html")
 	Attributes []JSXAttribute // Attributes (e.g., className="foo")
-	Children   []JSXChild    // Children (text, elements, or expressions)
-	SelfClose  bool          // True if self-closing: <br />
+	Children   []JSXChild     // Children (text, elements, or expressions)
+	SelfClose  bool           // True if self-closing: <br />
 	Span       Span
 }
 
@@ -446,6 +456,14 @@ type TupleType struct {
 
 func (*TupleType) typeNode()       {}
 func (t *TupleType) GetSpan() Span { return t.Span }
+
+type UnionType struct {
+	Types []TypeExpr
+	Span  Span
+}
+
+func (*UnionType) typeNode()       {}
+func (t *UnionType) GetSpan() Span { return t.Span }
 
 type FuncType struct {
 	Params []FuncTypeParam

@@ -493,6 +493,10 @@ func (p *Parser) parsePostfix() ast.Expr {
 			idx := p.parseExpr(0)
 			p.expect(lexer.TokenRBracket)
 			expr = &ast.IndexExpr{Array: expr, Index: idx, Span: spanFromPos(expr.GetSpan().Start, idx.GetSpan().End)}
+		case lexer.TokenAs:
+			p.next()
+			typeExpr := p.parseType()
+			expr = &ast.AsExpr{Expr: expr, Type: typeExpr, Span: spanFromPos(expr.GetSpan().Start, typeExpr.GetSpan().End)}
 		default:
 			return expr
 		}
@@ -741,6 +745,25 @@ func (p *Parser) parseArgs() []ast.Expr {
 }
 
 func (p *Parser) parseType() ast.TypeExpr {
+	return p.parseUnionType()
+}
+
+func (p *Parser) parseUnionType() ast.TypeExpr {
+	left := p.parseTypePrimary()
+	if p.curr.Kind != lexer.TokenPipe {
+		return left
+	}
+	types := []ast.TypeExpr{left}
+	start := left.GetSpan().Start
+	for p.curr.Kind == lexer.TokenPipe {
+		p.next()
+		types = append(types, p.parseTypePrimary())
+	}
+	end := types[len(types)-1].GetSpan().End
+	return &ast.UnionType{Types: types, Span: spanFromPos(start, end)}
+}
+
+func (p *Parser) parseTypePrimary() ast.TypeExpr {
 	switch p.curr.Kind {
 	case lexer.TokenIdent:
 		start := p.curr.Pos
@@ -786,10 +809,17 @@ func (p *Parser) parseType() ast.TypeExpr {
 			}
 		}
 		p.expect(lexer.TokenRParen)
-		p.expect(lexer.TokenArrow)
-		ret := p.parseType()
-		base := ast.TypeExpr(&ast.FuncType{Params: params, Ret: ret, Span: spanFromPos(posFromLex(start), ret.GetSpan().End)})
-		return p.parseTypeSuffix(base)
+		if p.curr.Kind == lexer.TokenArrow {
+			p.next()
+			ret := p.parseType()
+			base := ast.TypeExpr(&ast.FuncType{Params: params, Ret: ret, Span: spanFromPos(posFromLex(start), ret.GetSpan().End)})
+			return p.parseTypeSuffix(base)
+		}
+		if len(params) == 1 && params[0].Name == "" {
+			return p.parseTypeSuffix(params[0].Type)
+		}
+		p.err("function type arrow required")
+		return &ast.NamedType{Name: "", Span: spanFrom(start, start)}
 	case lexer.TokenLBrace:
 		start := p.curr.Pos
 		p.next()

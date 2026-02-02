@@ -27,7 +27,20 @@
 - オブジェクト: `{ "key": T, ... }`
 - 関数型: `(a: T, b: U) => R`
 
-### 2.3 型エイリアス
+### 2.3 Union型
+
+- `T | U` で **Union型** を表す。
+- Union型の値は `T` または `U` のいずれか。
+
+例:
+
+```
+const v: integer | string = 42;
+```
+
+Union型の値を取り出すには `switch` 式の `case v as T` を使う（5.6参照）。
+
+### 2.4 型エイリアス
 
 TypeScriptと同様の構文で型に別名を付けることができる。
 
@@ -63,7 +76,7 @@ function handleRoot(req: Request): Response {
 }
 ```
 
-### 2.4 型のルール
+### 2.5 型のルール
 
 - 異なる型の比較・暗黙変換はしない。
 - `integer` と `float` の比較は **コンパイルエラー**。
@@ -225,6 +238,9 @@ switch (expr) {
 - 各caseは値を返す式を持つ
 - 複数の文を実行する場合は `{ }` でブロックを囲む（void型）
 - `default` は省略可能（値を返すswitch式では推奨）
+- Union型の分岐は `case v as T:` を使う
+  - `v` は `switch` の値と同じ識別子でなければならない
+  - `case v as T` の中では `v` は `T` として扱われる
 
 例:
 
@@ -251,6 +267,13 @@ switch (cmd) {
   }
   default:
     showUsage()
+};
+
+// Union型の分岐
+const v: integer | string = 42;
+const message = switch (v) {
+  case v as integer: "v is integer"
+  case v as string: "v is string"
 };
 ```
 

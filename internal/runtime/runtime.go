@@ -113,16 +113,16 @@ type Runtime struct {
 // "wasm trap: call stack exhausted" - スタックオーバーフロー
 //
 // 【原因の詳細】
-// 1. negitoroプログラムのmain関数がlisten()を呼び出す
-// 2. listen()はWASMのimport関数としてhttp_listen(Go関数)を呼び出す
-// 3. http_listenがhttp.ListenAndServe()でブロックする
-// 4. この時点でWASMのコールスタックは以下の状態:
-//    [_start] -> [main_impl] -> [http_listen(import)]
-// 5. HTTPリクエストが来ると、ハンドラー内でhandlerFunc.Call()を実行
-// 6. これは同じWASM instanceとstoreを使用して新しいWASM関数を呼び出す
-// 7. wasmtimeは既存のスタックフレーム上に新しい呼び出しを追加しようとする
-// 8. しかし、スタックは既にhttp_listen呼び出しで使用中のため、
-//    スタックの再入(reentrant)が発生し、即座にスタックオーバーフロー
+//  1. negitoroプログラムのmain関数がlisten()を呼び出す
+//  2. listen()はWASMのimport関数としてhttp_listen(Go関数)を呼び出す
+//  3. http_listenがhttp.ListenAndServe()でブロックする
+//  4. この時点でWASMのコールスタックは以下の状態:
+//     [_start] -> [main_impl] -> [http_listen(import)]
+//  5. HTTPリクエストが来ると、ハンドラー内でhandlerFunc.Call()を実行
+//  6. これは同じWASM instanceとstoreを使用して新しいWASM関数を呼び出す
+//  7. wasmtimeは既存のスタックフレーム上に新しい呼び出しを追加しようとする
+//  8. しかし、スタックは既にhttp_listen呼び出しで使用中のため、
+//     スタックの再入(reentrant)が発生し、即座にスタックオーバーフロー
 //
 // 【解決策】
 // http_listenではサーバー情報をpendingServerに保存するだけにし、
@@ -221,6 +221,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}
 	if err := define("val_to_bool", func(handle int32) int32 {
 		return must(r.valToBool(handle))
+	}); err != nil {
+		return err
+	}
+	if err := define("val_kind", func(handle int32) int32 {
+		return must(r.valKind(handle))
 	}); err != nil {
 		return err
 	}
@@ -559,6 +564,14 @@ func (r *Runtime) valToBool(handle int32) (int32, error) {
 		return 1, nil
 	}
 	return 0, nil
+}
+
+func (r *Runtime) valKind(handle int32) (int32, error) {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return 0, err
+	}
+	return int32(v.Kind), nil
 }
 
 func (r *Runtime) objNew(count int32) (int32, error) {
@@ -1909,7 +1922,7 @@ func (r *Runtime) StartPendingServer() error {
 					contentType = ctVal.Str
 				}
 			}
-			
+
 			// Check if it's a redirect response
 			if contentType == "redirect" {
 				redirectUrlKey := r.newValue(Value{Kind: KindString, Str: "redirectUrl"})
@@ -1922,7 +1935,7 @@ func (r *Runtime) StartPendingServer() error {
 				http.Error(w, "Invalid redirect response", http.StatusInternalServerError)
 				return
 			}
-			
+
 			w.Header().Set("Content-Type", contentType)
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(bodyVal.Str))
@@ -2029,10 +2042,10 @@ func (r *Runtime) httpResponseJson(dataHandle int32) (int32, error) {
 	if err != nil {
 		return 0, err
 	}
-	
+
 	// Convert to JSON
 	jsonStr := r.valueToJSON(val)
-	
+
 	// Create response object
 	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
 	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
@@ -2041,7 +2054,7 @@ func (r *Runtime) httpResponseJson(dataHandle int32) (int32, error) {
 	contentTypeKey := r.newValue(Value{Kind: KindString, Str: "contentType"})
 	contentTypeValue := r.newValue(Value{Kind: KindString, Str: "application/json"})
 	_ = r.objSet(resObj, contentTypeKey, contentTypeValue)
-	
+
 	return resObj, nil
 }
 
@@ -2081,7 +2094,7 @@ func (r *Runtime) valueToJSON(val *Value) string {
 			if err == nil {
 				escaped := strings.ReplaceAll(key, "\\", "\\\\")
 				escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-				parts = append(parts, "\"" + escaped + "\":" + r.valueToJSON(propVal))
+				parts = append(parts, "\""+escaped+"\":"+r.valueToJSON(propVal))
 			}
 		}
 		return "{" + strings.Join(parts, ",") + "}"
@@ -2108,7 +2121,7 @@ func (r *Runtime) httpResponseRedirect(caller *wasmtime.Caller, urlPtr int32, ur
 		return 0, errors.New("url string out of bounds")
 	}
 	url := string(data[start:end])
-	
+
 	return r.createRedirectResponse(url)
 }
 
@@ -2136,6 +2149,6 @@ func (r *Runtime) createRedirectResponse(url string) (int32, error) {
 	redirectUrlKey := r.newValue(Value{Kind: KindString, Str: "redirectUrl"})
 	redirectUrlValue := r.newValue(Value{Kind: KindString, Str: url})
 	_ = r.objSet(resObj, redirectUrlKey, redirectUrlValue)
-	
+
 	return resObj, nil
 }

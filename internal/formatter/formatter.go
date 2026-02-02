@@ -329,6 +329,10 @@ func (f *Formatter) formatExpr(expr ast.Expr) {
 	case *ast.UnaryExpr:
 		f.buf.WriteString(e.Op)
 		f.formatExpr(e.Expr)
+	case *ast.AsExpr:
+		f.formatExpr(e.Expr)
+		f.buf.WriteString(" as ")
+		f.formatType(e.Type)
 	case *ast.BinaryExpr:
 		f.formatBinaryExpr(e)
 	case *ast.TernaryExpr:
@@ -773,7 +777,13 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 	case *ast.NamedType:
 		f.buf.WriteString(ty.Name)
 	case *ast.ArrayType:
-		f.formatType(ty.Elem)
+		if _, ok := ty.Elem.(*ast.UnionType); ok {
+			f.buf.WriteString("(")
+			f.formatType(ty.Elem)
+			f.buf.WriteString(")")
+		} else {
+			f.formatType(ty.Elem)
+		}
 		f.buf.WriteString("[]")
 	case *ast.TupleType:
 		f.buf.WriteString("[")
@@ -784,6 +794,13 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			f.formatType(elem)
 		}
 		f.buf.WriteString("]")
+	case *ast.UnionType:
+		for i, member := range ty.Types {
+			if i > 0 {
+				f.buf.WriteString(" | ")
+			}
+			f.formatType(member)
+		}
 	case *ast.FuncType:
 		f.buf.WriteString("(")
 		for i, param := range ty.Params {

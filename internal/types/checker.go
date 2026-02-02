@@ -18,10 +18,11 @@ const (
 )
 
 type Symbol struct {
-	Name string
-	Kind SymbolKind
-	Type *Type
-	Decl ast.Decl
+	Name        string
+	Kind        SymbolKind
+	Type        *Type
+	StorageType *Type
+	Decl        ast.Decl
 }
 
 type ModuleInfo struct {
@@ -45,19 +46,21 @@ type ColumnInfo struct {
 }
 
 type Checker struct {
-	Modules      map[string]*ModuleInfo
-	ExprTypes    map[ast.Expr]*Type
-	IdentSymbols map[*ast.IdentExpr]*Symbol
-	Tables       map[string]*TableInfo // table name -> table info
-	Errors       []error
+	Modules       map[string]*ModuleInfo
+	ExprTypes     map[ast.Expr]*Type
+	IdentSymbols  map[*ast.IdentExpr]*Symbol
+	TypeExprTypes map[ast.TypeExpr]*Type
+	Tables        map[string]*TableInfo // table name -> table info
+	Errors        []error
 }
 
 func NewChecker() *Checker {
 	return &Checker{
-		Modules:      map[string]*ModuleInfo{},
-		ExprTypes:    map[ast.Expr]*Type{},
-		IdentSymbols: map[*ast.IdentExpr]*Symbol{},
-		Tables:       map[string]*TableInfo{},
+		Modules:       map[string]*ModuleInfo{},
+		ExprTypes:     map[ast.Expr]*Type{},
+		IdentSymbols:  map[*ast.IdentExpr]*Symbol{},
+		TypeExprTypes: map[ast.TypeExpr]*Type{},
+		Tables:        map[string]*TableInfo{},
 	}
 }
 
@@ -115,7 +118,7 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 		switch d := decl.(type) {
 		case *ast.ConstDecl:
 			declType := c.resolveType(d.Type, mod)
-			sym := &Symbol{Name: d.Name, Kind: SymVar, Type: declType, Decl: d}
+			sym := &Symbol{Name: d.Name, Kind: SymVar, Type: declType, StorageType: declType, Decl: d}
 			if declType != nil && declType.Kind == KindFunc {
 				sym.Kind = SymFunc
 			}
@@ -239,7 +242,7 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 		return
 	}
 	initType := c.checkExpr(env, d.Init, declType)
-	if initType != nil && !initType.Equals(declType) {
+	if initType != nil && !initType.AssignableTo(declType) {
 		c.errorf(d.Span, "type mismatch")
 	}
 }
@@ -346,7 +349,7 @@ func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) *Type {
 func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStmt, sig *Type) {
 	fnEnv := env.child()
 	for i, p := range params {
-		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: sig.Params[i]}
+		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: sig.Params[i], StorageType: sig.Params[i]}
 	}
 	c.checkBlock(fnEnv, body, sig.Ret)
 	if sig.Ret.Kind != KindVoid && !returns(body) {
@@ -362,7 +365,7 @@ type returnInfo struct {
 func (c *Checker) checkFuncBodyInfer(env *Env, params []ast.Param, body *ast.BlockStmt, paramTypes []*Type, expectedRet *Type) *Type {
 	fnEnv := env.child()
 	for i, p := range params {
-		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: paramTypes[i]}
+		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: paramTypes[i], StorageType: paramTypes[i]}
 	}
 	info := &returnInfo{expected: expectedRet}
 	c.checkBlockInfer(fnEnv, body, info)
@@ -395,7 +398,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 		if s.Type != nil {
 			declType = c.resolveType(s.Type, env.mod)
 			initType := c.checkExpr(env, s.Init, declType)
-			if initType != nil && !initType.Equals(declType) {
+			if initType != nil && !initType.AssignableTo(declType) {
 				c.errorf(s.Span, "type mismatch")
 			}
 		} else {
@@ -406,7 +409,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			}
 			declType = initType
 		}
-		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType}
+		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType, StorageType: declType}
 	case *ast.DestructureStmt:
 		initType := c.checkExpr(env, s.Init, nil)
 		if initType == nil {
@@ -433,13 +436,13 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			var declType *Type
 			if s.Types[i] != nil {
 				declType = c.resolveType(s.Types[i], env.mod)
-				if declType != nil && !declType.Equals(elemTypes[i]) {
+				if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", name)
 				}
 			} else {
 				declType = elemTypes[i]
 			}
-			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType}
+			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
 		}
 	case *ast.ObjectDestructureStmt:
 		initType := c.checkExpr(env, s.Init, nil)
@@ -459,13 +462,13 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			}
 			if s.Types[i] != nil {
 				declType = c.resolveType(s.Types[i], env.mod)
-				if declType != nil && !declType.Equals(propType) {
+				if declType != nil && propType != nil && !propType.AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", key)
 				}
 			} else {
 				declType = propType
 			}
-			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType}
+			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
 		}
 	case *ast.ExprStmt:
 		c.checkExpr(env, s.Expr, nil)
@@ -496,7 +499,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			if varType == nil {
 				return
 			}
-			if !elemType.Equals(varType) {
+			if !elemType.AssignableTo(varType) {
 				c.errorf(s.Span, "for-of element type mismatch")
 				return
 			}
@@ -504,7 +507,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			varType = elemType
 		}
 		loopEnv := env.child()
-		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType}
+		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType, StorageType: varType}
 		c.checkBlockInfer(loopEnv, s.Body, info)
 	case *ast.BlockStmt:
 		c.checkBlockInfer(env, s, info)
@@ -529,7 +532,7 @@ func (c *Checker) checkReturnInfer(env *Env, s *ast.ReturnStmt, info *returnInfo
 		return
 	}
 	if info.expected != nil {
-		if !valType.Equals(info.expected) {
+		if !valType.AssignableTo(info.expected) {
 			c.errorf(s.Span, "return type mismatch")
 		}
 		return
@@ -577,7 +580,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			// 型注釈がある場合
 			declType = c.resolveType(s.Type, env.mod)
 			initType := c.checkExpr(env, s.Init, declType)
-			if initType != nil && !initType.Equals(declType) {
+			if initType != nil && !initType.AssignableTo(declType) {
 				c.errorf(s.Span, "type mismatch")
 			}
 		} else {
@@ -589,7 +592,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			}
 			declType = initType
 		}
-		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType}
+		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType, StorageType: declType}
 	case *ast.DestructureStmt:
 		// Check the initializer expression
 		initType := c.checkExpr(env, s.Init, nil)
@@ -622,14 +625,14 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			if s.Types[i] != nil {
 				// Explicit type annotation
 				declType = c.resolveType(s.Types[i], env.mod)
-				if declType != nil && !declType.Equals(elemTypes[i]) {
+				if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", name)
 				}
 			} else {
 				// Type inference from array/tuple element
 				declType = elemTypes[i]
 			}
-			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType}
+			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
 		}
 	case *ast.ObjectDestructureStmt:
 		// Check the initializer expression
@@ -658,14 +661,14 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			if s.Types[i] != nil {
 				// Explicit type annotation
 				declType = c.resolveType(s.Types[i], env.mod)
-				if declType != nil && !declType.Equals(propType) {
+				if declType != nil && propType != nil && !propType.AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", key)
 				}
 			} else {
 				// Type inference from object property
 				declType = propType
 			}
-			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType}
+			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
 		}
 	case *ast.ExprStmt:
 		c.checkExpr(env, s.Expr, nil)
@@ -677,7 +680,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			return
 		}
 		valType := c.checkExpr(env, s.Value, retType)
-		if valType != nil && !valType.Equals(retType) {
+		if valType != nil && !valType.AssignableTo(retType) {
 			c.errorf(s.Span, "return type mismatch")
 		}
 	case *ast.IfStmt:
@@ -706,7 +709,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			if varType == nil {
 				return
 			}
-			if !elemType.Equals(varType) {
+			if !elemType.AssignableTo(varType) {
 				c.errorf(s.Span, "for-of element type mismatch")
 				return
 			}
@@ -715,7 +718,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			varType = elemType
 		}
 		loopEnv := env.child()
-		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType}
+		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType, StorageType: varType}
 		c.checkBlock(loopEnv, s.Body, retType)
 	case *ast.BlockStmt:
 		c.checkBlock(env, s, retType)
@@ -776,6 +779,29 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 		c.ExprTypes[expr] = inner
 		return inner
+	case *ast.AsExpr:
+		targetType := c.resolveType(e.Type, env.mod)
+		if targetType == nil {
+			return nil
+		}
+		if targetType.Kind == KindUnion {
+			c.errorf(e.Span, "as target must be non-union")
+			return nil
+		}
+		exprType := c.checkExpr(env, e.Expr, nil)
+		if exprType == nil {
+			return nil
+		}
+		if exprType.Kind != KindUnion {
+			c.errorf(e.Span, "as requires union type")
+			return nil
+		}
+		if !targetType.AssignableTo(exprType) {
+			c.errorf(e.Span, "as target not in union")
+			return nil
+		}
+		c.ExprTypes[expr] = targetType
+		return targetType
 	case *ast.BinaryExpr:
 		left := c.checkExpr(env, e.Left, nil)
 		right := c.checkExpr(env, e.Right, nil)
@@ -796,12 +822,16 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if thenType == nil || elseType == nil {
 			return nil
 		}
-		if !thenType.Equals(elseType) {
-			c.errorf(e.Span, "ternary branches must have same type")
-			return nil
+		if thenType.Equals(elseType) {
+			c.ExprTypes[expr] = thenType
+			return thenType
 		}
-		c.ExprTypes[expr] = thenType
-		return thenType
+		if expected != nil && thenType.AssignableTo(expected) && elseType.AssignableTo(expected) {
+			c.ExprTypes[expr] = expected
+			return expected
+		}
+		c.errorf(e.Span, "ternary branches must have same type")
+		return nil
 	case *ast.SwitchExpr:
 		// Check the value being switched on
 		valueType := c.checkExpr(env, e.Value, nil)
@@ -812,17 +842,59 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		// Determine result type from cases
 		var resultType *Type
 		for _, cas := range e.Cases {
-			// Check pattern type matches value type
-			patternType := c.checkExpr(env, cas.Pattern, valueType)
-			if patternType != nil && !patternType.Equals(valueType) {
-				c.errorf(cas.Pattern.GetSpan(), "switch case pattern type mismatch")
+			caseEnv := env
+			if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
+				ident, ok := asExpr.Expr.(*ast.IdentExpr)
+				if !ok {
+					c.errorf(asExpr.Span, "as pattern requires identifier")
+				} else {
+					if switchIdent, ok := e.Value.(*ast.IdentExpr); ok {
+						if ident.Name != switchIdent.Name {
+							c.errorf(asExpr.Span, "as pattern must match switch value")
+						}
+					} else {
+						c.errorf(asExpr.Span, "as pattern requires identifier switch value")
+					}
+					targetType := c.resolveType(asExpr.Type, env.mod)
+					if targetType != nil {
+						if targetType.Kind == KindUnion {
+							c.errorf(asExpr.Span, "as target must be non-union")
+						}
+						if valueType.Kind != KindUnion {
+							c.errorf(asExpr.Span, "as pattern requires union switch value")
+						} else if !targetType.AssignableTo(valueType) {
+							c.errorf(asExpr.Span, "as target not in union")
+						}
+						c.ExprTypes[asExpr] = targetType
+						if sym := env.lookup(ident.Name); sym != nil {
+							caseEnv = env.child()
+							storageType := sym.StorageType
+							if storageType == nil {
+								storageType = sym.Type
+							}
+							caseEnv.vars[ident.Name] = &Symbol{Name: sym.Name, Kind: sym.Kind, Type: targetType, StorageType: storageType, Decl: sym.Decl}
+						}
+					}
+				}
+			} else {
+				// Check pattern type matches value type
+				patternType := c.checkExpr(env, cas.Pattern, valueType)
+				if patternType != nil && !patternType.AssignableTo(valueType) {
+					c.errorf(cas.Pattern.GetSpan(), "switch case pattern type mismatch")
+				}
 			}
+
 			// Check body expression
-			bodyType := c.checkExpr(env, cas.Body, expected)
+			bodyType := c.checkExpr(caseEnv, cas.Body, expected)
 			if bodyType == nil {
 				continue
 			}
-			if resultType == nil {
+			if expected != nil {
+				if !bodyType.AssignableTo(expected) {
+					c.errorf(cas.Body.GetSpan(), "switch case body type mismatch")
+				}
+				resultType = expected
+			} else if resultType == nil {
 				resultType = bodyType
 			} else if !bodyType.Equals(resultType) {
 				c.errorf(cas.Body.GetSpan(), "switch case body type mismatch")
@@ -832,7 +904,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if e.Default != nil {
 			defaultType := c.checkExpr(env, e.Default, expected)
 			if defaultType != nil {
-				if resultType == nil {
+				if expected != nil {
+					if !defaultType.AssignableTo(expected) {
+						c.errorf(e.Default.GetSpan(), "switch default type mismatch")
+					}
+					resultType = expected
+				} else if resultType == nil {
 					resultType = defaultType
 				} else if !defaultType.Equals(resultType) {
 					c.errorf(e.Default.GetSpan(), "switch default type mismatch")
@@ -1099,7 +1176,7 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 	}
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i])
-		if argType != nil && !argType.Equals(sig.Params[i]) {
+		if argType != nil && !argType.AssignableTo(sig.Params[i]) {
 			c.errorf(call.Span, "argument type mismatch")
 			return nil
 		}
@@ -1150,7 +1227,7 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	}
 
 	// Check object type matches first parameter
-	if !objType.Equals(sig.Params[0]) {
+	if !objType.AssignableTo(sig.Params[0]) {
 		c.errorf(call.Span, "receiver type mismatch")
 		return nil
 	}
@@ -1158,7 +1235,7 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	// Check remaining arguments
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i+1])
-		if argType != nil && !argType.Equals(sig.Params[i+1]) {
+		if argType != nil && !argType.AssignableTo(sig.Params[i+1]) {
 			c.errorf(call.Span, "argument type mismatch")
 			return nil
 		}
@@ -1561,7 +1638,7 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 			for _, entry := range lit.Entries {
 				if entry.Kind == ast.ArrayValue {
 					et := c.checkExpr(env, entry.Value, expected.Elem)
-					if et != nil && !et.Equals(expected.Elem) {
+					if et != nil && !et.AssignableTo(expected.Elem) {
 						c.errorf(entry.Span, "array element type mismatch")
 						return nil
 					}
@@ -1571,7 +1648,7 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 						c.errorf(entry.Span, "array spread requires array")
 						return nil
 					}
-					if !spreadType.Elem.Equals(expected.Elem) {
+					if !spreadType.Elem.AssignableTo(expected.Elem) {
 						c.errorf(entry.Span, "array element type mismatch")
 						return nil
 					}
@@ -1590,7 +1667,7 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 			}
 			for i, entry := range lit.Entries {
 				et := c.checkExpr(env, entry.Value, expected.Tuple[i])
-				if et != nil && !et.Equals(expected.Tuple[i]) {
+				if et != nil && !et.AssignableTo(expected.Tuple[i]) {
 					c.errorf(entry.Span, "tuple element type mismatch")
 					return nil
 				}
@@ -1700,7 +1777,7 @@ func (c *Checker) checkObjectLit(env *Env, lit *ast.ObjectLit, expected *Type) *
 	}
 	objType := NewObject(list)
 	if expected != nil {
-		if !objType.Equals(expected) {
+		if !objType.AssignableTo(expected) {
 			c.errorf(lit.Span, "object type mismatch")
 			return nil
 		}
@@ -1711,50 +1788,63 @@ func (c *Checker) checkObjectLit(env *Env, lit *ast.ObjectLit, expected *Type) *
 	return objType
 }
 
+func (c *Checker) recordType(expr ast.TypeExpr, typ *Type) *Type {
+	if expr != nil && typ != nil {
+		c.TypeExprTypes[expr] = typ
+	}
+	return typ
+}
+
 func (c *Checker) resolveType(expr ast.TypeExpr, mod *ModuleInfo) *Type {
 	switch t := expr.(type) {
 	case *ast.NamedType:
 		switch t.Name {
 		case "integer":
-			return I64()
+			return c.recordType(expr, I64())
 		case "float":
-			return F64()
+			return c.recordType(expr, F64())
 		case "boolean":
-			return Bool()
+			return c.recordType(expr, Bool())
 		case "string", "JSX":
-			return String()
+			return c.recordType(expr, String())
 		case "void":
-			return Void()
+			return c.recordType(expr, Void())
 		default:
 			// Check if it's a type alias in the current module
 			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
-				return aliasType
+				return c.recordType(expr, aliasType)
 			}
 			c.errorf(t.Span, "unknown type %s", t.Name)
 			return nil
 		}
 	case *ast.ArrayType:
 		elem := c.resolveType(t.Elem, mod)
-		return NewArray(elem)
+		return c.recordType(expr, NewArray(elem))
 	case *ast.TupleType:
 		var elems []*Type
 		for _, e := range t.Elems {
 			elems = append(elems, c.resolveType(e, mod))
 		}
-		return NewTuple(elems)
+		return c.recordType(expr, NewTuple(elems))
+	case *ast.UnionType:
+		var members []*Type
+		for _, member := range t.Types {
+			members = append(members, c.resolveType(member, mod))
+		}
+		return c.recordType(expr, NewUnion(members))
 	case *ast.ObjectType:
 		var props []Prop
 		for _, p := range t.Props {
 			props = append(props, Prop{Name: p.Key, Type: c.resolveType(p.Type, mod)})
 		}
-		return NewObject(props)
+		return c.recordType(expr, NewObject(props))
 	case *ast.FuncType:
 		params := make([]*Type, len(t.Params))
 		for i, p := range t.Params {
 			params[i] = c.resolveType(p.Type, mod)
 		}
 		ret := c.resolveType(t.Ret, mod)
-		return NewFunc(params, ret)
+		return c.recordType(expr, NewFunc(params, ret))
 	default:
 		return nil
 	}

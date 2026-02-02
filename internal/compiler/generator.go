@@ -236,6 +236,9 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 		g.collectStringsExpr(e.Index)
 	case *ast.UnaryExpr:
 		g.collectStringsExpr(e.Expr)
+	case *ast.AsExpr:
+		g.collectStringsExpr(e.Expr)
+		g.collectStringsType(e.Type)
 	case *ast.BinaryExpr:
 		g.collectStringsExpr(e.Left)
 		g.collectStringsExpr(e.Right)
@@ -322,6 +325,10 @@ func (g *Generator) collectStringsType(t ast.TypeExpr) {
 		g.collectStringsType(tt.Elem)
 	case *ast.TupleType:
 		for _, e := range tt.Elems {
+			g.collectStringsType(e)
+		}
+	case *ast.UnionType:
+		for _, e := range tt.Types {
 			g.collectStringsType(e)
 		}
 	case *ast.ObjectType:
@@ -440,6 +447,8 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 		for _, arg := range e.Args {
 			g.collectFunctionNamesExpr(arg)
 		}
+	case *ast.AsExpr:
+		g.collectFunctionNamesExpr(e.Expr)
 	case *ast.BinaryExpr:
 		g.collectFunctionNamesExpr(e.Left)
 		g.collectFunctionNamesExpr(e.Right)
@@ -543,6 +552,7 @@ func (g *Generator) emitImports(w *watBuilder) {
 		"val_to_i64",
 		"val_to_f64",
 		"val_to_bool",
+		"val_kind",
 		"obj_new",
 		"obj_set",
 		"obj_get",
@@ -606,6 +616,8 @@ func importSig(name string) string {
 		return "(func $prelude.val_to_f64 (param i32) (result f64))"
 	case "val_to_bool":
 		return "(func $prelude.val_to_bool (param i32) (result i32))"
+	case "val_kind":
+		return "(func $prelude.val_kind (param i32) (result i32))"
 	case "obj_new":
 		return "(func $prelude.obj_new (param i32) (result i32))"
 	case "obj_set":
@@ -760,7 +772,9 @@ func (g *Generator) emitInit(w *watBuilder) {
 				continue
 			}
 			sym := mod.Top[cd.Name]
-			emitter.emitExpr(cd.Init, sym.Type)
+			initType := g.checker.ExprTypes[cd.Init]
+			emitter.emitExpr(cd.Init, initType)
+			emitter.emitCoerce(initType, sym.Type)
 			emitter.emitSetGlobal(sym)
 		}
 	}
@@ -1033,7 +1047,7 @@ func wasmType(t *types.Type) string {
 		return "f64"
 	case types.KindBool:
 		return "i32"
-	case types.KindString, types.KindArray, types.KindTuple, types.KindObject:
+	case types.KindString, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion:
 		return "i32"
 	default:
 		return "i32"
@@ -1154,8 +1168,16 @@ func (f *funcEmitter) emitBlock(block *ast.BlockStmt) {
 func (f *funcEmitter) emitStmt(stmt ast.Stmt) {
 	switch s := stmt.(type) {
 	case *ast.ConstStmt:
-		f.emitExpr(s.Init, f.g.checker.ExprTypes[s.Init])
-		local := f.addLocal(s.Name, f.g.checker.ExprTypes[s.Init])
+		initType := f.g.checker.ExprTypes[s.Init]
+		declType := initType
+		if s.Type != nil {
+			if resolved := f.g.checker.TypeExprTypes[s.Type]; resolved != nil {
+				declType = resolved
+			}
+		}
+		f.emitExpr(s.Init, initType)
+		f.emitCoerce(initType, declType)
+		local := f.addLocal(s.Name, declType)
 		f.emit(fmt.Sprintf("(local.set %s)", local))
 		f.bindLocal(s.Name, local)
 	case *ast.DestructureStmt:
@@ -1169,7 +1191,9 @@ func (f *funcEmitter) emitStmt(stmt ast.Stmt) {
 		}
 	case *ast.ReturnStmt:
 		if s.Value != nil {
-			f.emitExpr(s.Value, f.g.checker.ExprTypes[s.Value])
+			valType := f.g.checker.ExprTypes[s.Value]
+			f.emitExpr(s.Value, valType)
+			f.emitCoerce(valType, f.ret)
 		}
 		f.emit("return")
 	case *ast.IfStmt:
@@ -1214,15 +1238,24 @@ func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 		} else if initType.Kind == types.KindTuple {
 			elemType = initType.Tuple[i]
 		}
+		var varType *types.Type
+		if i < len(s.Types) && s.Types[i] != nil {
+			if resolved := f.g.checker.TypeExprTypes[s.Types[i]]; resolved != nil {
+				varType = resolved
+			}
+		}
+		if varType == nil {
+			varType = elemType
+		}
 
 		// Get element from array/tuple
 		f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
 		f.emit(fmt.Sprintf("(i32.const %d)", i))
 		f.emit("(call $prelude.arr_get)")
-		f.emitUnboxIfPrimitive(elemType)
+		f.emitUnboxIfPrimitive(varType)
 
 		// Store in local variable
-		local := f.addLocal(name, elemType)
+		local := f.addLocal(name, varType)
 		f.emit(fmt.Sprintf("(local.set %s)", local))
 		f.bindLocal(name, local)
 	}
@@ -1237,18 +1270,27 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 	f.emit(fmt.Sprintf("(local.set %s)", objLocal))
 
 	// Extract each property and bind to a local
-	for _, key := range s.Keys {
+	for i, key := range s.Keys {
 		// Get property type
 		propType := initType.PropType(key)
+		var varType *types.Type
+		if i < len(s.Types) && s.Types[i] != nil {
+			if resolved := f.g.checker.TypeExprTypes[s.Types[i]]; resolved != nil {
+				varType = resolved
+			}
+		}
+		if varType == nil {
+			varType = propType
+		}
 
 		// Get property from object
 		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(key)))
 		f.emit("(call $prelude.obj_get)")
-		f.emitUnboxIfPrimitive(propType)
+		f.emitUnboxIfPrimitive(varType)
 
 		// Store in local variable
-		local := f.addLocal(key, propType)
+		local := f.addLocal(key, varType)
 		f.emit(fmt.Sprintf("(local.set %s)", local))
 		f.bindLocal(key, local)
 	}
@@ -1257,6 +1299,15 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	iterType := f.g.checker.ExprTypes[s.Iter]
 	elem := elemType(iterType)
+	var varType *types.Type
+	if s.VarType != nil {
+		if resolved := f.g.checker.TypeExprTypes[s.VarType]; resolved != nil {
+			varType = resolved
+		}
+	}
+	if varType == nil {
+		varType = elem
+	}
 	arrLocal := f.addLocalRaw("i32")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
@@ -1284,10 +1335,10 @@ func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	f.emit(fmt.Sprintf("(local.set %s)", valLocal))
 
 	f.pushScope()
-	loopVarLocal := f.addLocal(s.VarName, elem)
+	loopVarLocal := f.addLocal(s.VarName, varType)
 	f.bindLocal(s.VarName, loopVarLocal)
 	f.emit(fmt.Sprintf("(local.get %s)", valLocal))
-	f.emitUnboxIfPrimitive(elem)
+	f.emitUnboxIfPrimitive(varType)
 	f.emit(fmt.Sprintf("(local.set %s)", loopVarLocal))
 	f.emitBlock(s.Body)
 	f.popScope()
@@ -1318,12 +1369,20 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 	case *ast.StringLit:
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(e.Value)))
 	case *ast.IdentExpr:
+		sym := f.g.checker.IdentSymbols[e]
 		if local, ok := f.lookup(e.Name); ok {
 			f.emit(fmt.Sprintf("(local.get %s)", local))
-			return
-		}
-		if sym := f.g.checker.IdentSymbols[e]; sym != nil && sym.Kind == types.SymVar {
+		} else if sym != nil && sym.Kind == types.SymVar {
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.globalNames[sym]))
+		}
+		if sym != nil && sym.Kind == types.SymVar {
+			storageType := sym.StorageType
+			if storageType == nil {
+				storageType = sym.Type
+			}
+			if storageType != nil && storageType.Kind == types.KindUnion {
+				f.emitUnboxIfPrimitive(t)
+			}
 		}
 	case *ast.UnaryExpr:
 		if e.Op == "+" {
@@ -1339,6 +1398,14 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 			f.emitExpr(e.Expr, f.g.checker.ExprTypes[e.Expr])
 			f.emit("f64.neg")
 		}
+	case *ast.AsExpr:
+		exprType := f.g.checker.ExprTypes[e.Expr]
+		f.emitExpr(e.Expr, exprType)
+		targetType := f.g.checker.ExprTypes[e]
+		if targetType == nil && e.Type != nil {
+			targetType = f.g.checker.TypeExprTypes[e.Type]
+		}
+		f.emitUnboxIfPrimitive(targetType)
 	case *ast.BinaryExpr:
 		f.emitBinaryExpr(e, t)
 	case *ast.TernaryExpr:
@@ -1384,12 +1451,16 @@ func (f *funcEmitter) emitTernaryExpr(e *ast.TernaryExpr, t *types.Type) {
 	f.indent++
 	f.emit("(then")
 	f.indent++
-	f.emitExpr(e.Then, t)
+	thenType := f.g.checker.ExprTypes[e.Then]
+	f.emitExpr(e.Then, thenType)
+	f.emitCoerce(thenType, t)
 	f.indent--
 	f.emit(")")
 	f.emit("(else")
 	f.indent++
-	f.emitExpr(e.Else, t)
+	elseType := f.g.checker.ExprTypes[e.Else]
+	f.emitExpr(e.Else, elseType)
+	f.emitCoerce(elseType, t)
 	f.indent--
 	f.emit(")")
 	f.indent--
@@ -1423,7 +1494,9 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 	if idx >= len(cases) {
 		// No more cases, emit default
 		if defaultExpr != nil {
-			f.emitExpr(defaultExpr, resultType)
+			defaultType := f.g.checker.ExprTypes[defaultExpr]
+			f.emitExpr(defaultExpr, defaultType)
+			f.emitCoerce(defaultType, resultType)
 		} else if !isVoid {
 			// No default: emit zero value (this shouldn't happen with proper exhaustiveness)
 			wt := wasmType(resultType)
@@ -1440,17 +1513,33 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 	}
 
 	cas := cases[idx]
-	patternType := f.g.checker.ExprTypes[cas.Pattern]
-
-	// Emit comparison: value == pattern
-	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
-	f.emitExpr(cas.Pattern, patternType)
-
-	// Emit equality check based on type
-	if valueType.Kind == types.KindString || valueType.Kind == types.KindObject || valueType.Kind == types.KindArray || valueType.Kind == types.KindTuple {
-		f.emit("(call $prelude.val_eq)")
+	if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
+		// Type guard: check runtime kind
+		targetType := f.g.checker.ExprTypes[asExpr]
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		f.emit("(call $prelude.val_kind)")
+		if kindConst, okKind := runtimeKindConst(targetType); okKind {
+			f.emit(fmt.Sprintf("(i32.const %d)", kindConst))
+		} else {
+			f.emit("(i32.const -1)")
+		}
+		f.emit("i32.eq")
 	} else {
-		f.emit(eqOp(valueType))
+		patternType := f.g.checker.ExprTypes[cas.Pattern]
+
+		// Emit comparison: value == pattern
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		f.emitExpr(cas.Pattern, patternType)
+
+		// Emit equality check based on type
+		if valueType.Kind == types.KindUnion {
+			f.emitCoerce(patternType, valueType)
+			f.emit("(call $prelude.val_eq)")
+		} else if valueType.Kind == types.KindString || valueType.Kind == types.KindObject || valueType.Kind == types.KindArray || valueType.Kind == types.KindTuple {
+			f.emit("(call $prelude.val_eq)")
+		} else {
+			f.emit(eqOp(valueType))
+		}
 	}
 
 	// if-then-else (without result type for void)
@@ -1462,7 +1551,9 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 	f.indent++
 	f.emit("(then")
 	f.indent++
-	f.emitExpr(cas.Body, resultType)
+	bodyType := f.g.checker.ExprTypes[cas.Body]
+	f.emitExpr(cas.Body, bodyType)
+	f.emitCoerce(bodyType, resultType)
 	f.indent--
 	f.emit(")")
 	f.emit("(else")
@@ -1485,7 +1576,7 @@ func (f *funcEmitter) emitBinaryExpr(e *ast.BinaryExpr, t *types.Type) {
 		return
 	}
 	if e.Op == "==" || e.Op == "!=" {
-		if leftType.Kind == types.KindString || leftType.Kind == types.KindObject || leftType.Kind == types.KindArray || leftType.Kind == types.KindTuple {
+		if leftType.Kind == types.KindString || leftType.Kind == types.KindObject || leftType.Kind == types.KindArray || leftType.Kind == types.KindTuple || leftType.Kind == types.KindUnion {
 			f.emitExpr(e.Left, leftType)
 			f.emitExpr(e.Right, rightType)
 			f.emit("(call $prelude.val_eq)")
@@ -1552,11 +1643,21 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		f.emitPreludeCall(name, call, t)
 		return
 	}
-	for _, arg := range call.Args {
-		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
-	}
 	sym := f.g.checker.IdentSymbols[ident]
 	if sym != nil {
+		if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Kind == types.KindFunc {
+			for i, arg := range call.Args {
+				argType := f.g.checker.ExprTypes[arg]
+				f.emitExpr(arg, argType)
+				if i < len(sym.Type.Params) {
+					f.emitCoerce(argType, sym.Type.Params[i])
+				}
+			}
+		} else {
+			for _, arg := range call.Args {
+				f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+			}
+		}
 		f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
 	}
 }
@@ -1577,23 +1678,37 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 		return
 	}
 
-	// Emit object (first argument)
-	f.emitExpr(member.Object, f.g.checker.ExprTypes[member.Object])
-
-	// Emit remaining arguments
-	for _, arg := range call.Args {
-		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
-	}
-
 	// Look up the function symbol
 	// We need to find the symbol for funcName
 	// Since checkMethodCall validated this, we can assume it exists
+	var targetSym *types.Symbol
 	for _, mod := range f.g.modules {
 		if sym, ok := mod.Top[funcName]; ok && sym.Kind == types.SymFunc {
-			f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
-			return
+			targetSym = sym
+			break
 		}
 	}
+	if targetSym == nil || targetSym.Type == nil || targetSym.Type.Kind != types.KindFunc {
+		return
+	}
+
+	// Emit object (first argument)
+	objType := f.g.checker.ExprTypes[member.Object]
+	f.emitExpr(member.Object, objType)
+	if len(targetSym.Type.Params) > 0 {
+		f.emitCoerce(objType, targetSym.Type.Params[0])
+	}
+
+	// Emit remaining arguments
+	for i, arg := range call.Args {
+		argType := f.g.checker.ExprTypes[arg]
+		f.emitExpr(arg, argType)
+		if i+1 < len(targetSym.Type.Params) {
+			f.emitCoerce(argType, targetSym.Type.Params[i+1])
+		}
+	}
+
+	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(targetSym)))
 }
 
 func (f *funcEmitter) resolveFunctionExpr(expr ast.Expr) (string, *types.Type) {
@@ -2390,6 +2505,19 @@ func (f *funcEmitter) emitUnboxIfPrimitive(t *types.Type) {
 	}
 }
 
+func (f *funcEmitter) emitCoerce(from, to *types.Type) {
+	if from == nil || to == nil {
+		return
+	}
+	if to.Kind == types.KindUnion && from.Kind != types.KindUnion {
+		f.emitBoxIfPrimitive(from)
+		return
+	}
+	if from.Kind == types.KindUnion && to.Kind != types.KindUnion {
+		f.emitUnboxIfPrimitive(to)
+	}
+}
+
 func valueLocalType(t *types.Type) string {
 	if t == nil {
 		return "i32"
@@ -2441,6 +2569,28 @@ func cmpOp(t *types.Type, op string) string {
 		return "i64." + op + "_s"
 	}
 	return "f64." + op
+}
+
+func runtimeKindConst(t *types.Type) (int32, bool) {
+	if t == nil {
+		return 0, false
+	}
+	switch t.Kind {
+	case types.KindI64:
+		return 0, true
+	case types.KindF64:
+		return 1, true
+	case types.KindBool:
+		return 2, true
+	case types.KindString:
+		return 3, true
+	case types.KindObject:
+		return 4, true
+	case types.KindArray, types.KindTuple:
+		return 5, true
+	default:
+		return 0, false
+	}
 }
 
 func elemType(t *types.Type) *types.Type {

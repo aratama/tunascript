@@ -111,6 +111,33 @@ const evens2: integer[] = filter(nums, isEven);
 	assertArrayElemKind(t, checker.ExprTypes[evens2.Init], KindI64, "evens2")
 }
 
+func TestUnionSwitchAs(t *testing.T) {
+	const src = `
+const v: integer | string = 42;
+const msg: string = switch (v) {
+  case v as integer: "int"
+  case v as string: "str"
+};
+`
+
+	mod := mustParseModule(t, "union_switch.ngtr", src)
+	checker := runChecker(t, mod)
+
+	sym := checker.Modules[mod.Path].Top["v"]
+	if sym == nil || sym.Type == nil {
+		t.Fatalf("union symbol not found")
+	}
+	if sym.Type.Kind != KindUnion {
+		t.Fatalf("expected union type, got %v", sym.Type.Kind)
+	}
+	if len(sym.Type.Union) != 2 {
+		t.Fatalf("expected 2 union members, got %d", len(sym.Type.Union))
+	}
+
+	msg := findConstDecl(t, mod, "msg")
+	assertTypeKind(t, checker.ExprTypes[msg.Init], KindString, "msg")
+}
+
 func mustParseModule(t *testing.T, path, src string) *ast.Module {
 	t.Helper()
 	p := parser.New(path, src)
