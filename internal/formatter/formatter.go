@@ -161,6 +161,16 @@ func (f *Formatter) formatTypeAliasDecl(d *ast.TypeAliasDecl) {
 	}
 	f.buf.WriteString("type ")
 	f.buf.WriteString(d.Name)
+	if len(d.TypeParams) > 0 {
+		f.buf.WriteString("<")
+		for i, name := range d.TypeParams {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.buf.WriteString(name)
+		}
+		f.buf.WriteString(">")
+	}
 	f.buf.WriteString(" = ")
 	f.formatType(d.Type)
 	f.buf.WriteString(";\n")
@@ -808,6 +818,35 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 	switch ty := t.(type) {
 	case *ast.NamedType:
 		f.buf.WriteString(ty.Name)
+	case *ast.GenericType:
+		f.buf.WriteString(ty.Name)
+		f.buf.WriteString("<")
+		for i, arg := range ty.Args {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.formatType(arg)
+		}
+		f.buf.WriteString(">")
+	case *ast.LiteralType:
+		switch lit := ty.Value.(type) {
+		case *ast.StringLit:
+			f.buf.WriteString("\"")
+			f.buf.WriteString(escapeString(lit.Value))
+			f.buf.WriteString("\"")
+		case *ast.IntLit:
+			f.buf.WriteString(fmt.Sprintf("%d", lit.Value))
+		case *ast.FloatLit:
+			f.buf.WriteString(fmt.Sprintf("%g", lit.Value))
+		case *ast.BoolLit:
+			if lit.Value {
+				f.buf.WriteString("true")
+			} else {
+				f.buf.WriteString("false")
+			}
+		default:
+			f.buf.WriteString("null")
+		}
 	case *ast.ArrayType:
 		if _, ok := ty.Elem.(*ast.UnionType); ok {
 			f.buf.WriteString("(")

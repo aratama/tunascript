@@ -1,4 +1,4 @@
-import { log, getArgs, length, map, type JSX } from "prelude"
+import { log, getArgs, getEnv, length, map, type JSX } from "prelude"
 import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
 import { Styles } from "./style.tuna"
@@ -86,6 +86,8 @@ export function main(): void {
   server.addRoute("/", handleRoot)
   server.addRoute("/add", handleAdd)
   server.addRoute("/toggle", handleToggle)
-  log("TODO App starting on http://localhost:8888")
-  server.listen(":8888")
+  const portEnv = getEnv("PORT")
+  const port = portEnv != "" ? portEnv : "8888"
+  log("TODO App starting on http://localhost:" + port)
+  server.listen(":" + port)
 }

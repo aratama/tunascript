@@ -61,6 +61,13 @@ export type Response = { "body": string, "contentType": string };
 - 他のモジュールから `import { type TypeName } from "module";` でインポートできる。
 - 型をインポートするときは必ず `type` キーワードを付ける必要がある。
 - 型エイリアスは型注釈で使用できる。
+- 型エイリアスには型パラメータを `<T>` 形式で付けられ、型式の中でそのパラメータを参照することで汎用的な別名を定義できます。たとえば `Result<T>` は次のように書けます:
+
+```
+type Result<T> = { "type": "error", "message": string } | { "type": "ok", value: T };
+```
+
+このようなタグ付きユニオンを型エイリアスにまとめておくと、`Result<string>` のように使い回せます。`prelude` でもこの `Result` を用意しており、`import { type Result } from "prelude";` で取り込みできます。
 
 #### preludeの型エイリアス
 
@@ -68,7 +75,8 @@ preludeには以下の型エイリアスが定義されている:
 
 | 型名   | 定義       |
 | ------ | ---------- |
-| `JSX`  | `string`   |
+| `JSX`         | `string`   |
+| `Result<T>`   | `{ "type": "error", "message": string } \| { "type": "ok", value: T }` |
 
 そのほか、`Map<T>` は **文字列キー → 値 `T`** の動的オブジェクトを表し、`req.query.foo` や `req.form.bar` のように自由にアクセスできます。`Map<T>` を使うことで汎用的なオブジェクトやプロパティ型を記述できます。
 
@@ -82,6 +90,29 @@ function handleRoot(): JSX {
   return responseHtml("<h1>Hello</h1>");
 }
 ```
+
+`Result<T>` は `"type"` プロパティに文字列リテラルを使ったタグ付きユニオンになっており、`case response as { "type": "ok", value: string }` のように `switch` で分岐できます。
+
+```
+import { log, type Result } from "prelude";
+
+const response: Result<string> = { "type": "ok", value: "ready" };
+const message = switch (response) {
+  case response as { "type": "ok", value: string }: response.value
+  case response as { "type": "error", "message": string }: response.message
+};
+log(message);
+```
+
+#### リテラル型
+
+リテラル型は特定の値だけを許す型で、文字列リテラル、整数、浮動小数点、真偽値のリテラルをそのまま型として書けます。たとえば `status` を `"error"` に限定することで、コードの意図が明示的になります:
+
+```
+const status: "error" = "error";
+```
+
+リテラル型はその値そのものしか代入できないため、`string` や `integer` などの汎用的な型からの代入はエラーになります。逆に、リテラル型はより広い型（`string` / `integer` / `boolean` / `number`）には代入可能なので、タグ付きユニオンの `"type"` プロパティに使うと `switch` での絞り込みが強力になります。
 
 ### 2.5 型のルール
 
@@ -531,6 +562,8 @@ function renderTodos(): JSX {
 -  - `fn` による畳み込みの結果（型 `R`）を返します。`initial` は初期累積値です。
 - `getArgs(): string[]`
   - コマンドライン引数を配列として返す。
+- `getEnv(name: string): string`
+  - 指定した名前の環境変数の値を返す。存在しない場合は空文字列になる。
 
 ### 12.1.1 sqliteモジュール
 

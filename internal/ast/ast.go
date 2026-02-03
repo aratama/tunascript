@@ -61,10 +61,11 @@ func (d *TableDecl) GetSpan() Span { return d.Span }
 
 // TypeAliasDecl represents a type alias: type Name = TypeExpr
 type TypeAliasDecl struct {
-	Name   string
-	Export bool
-	Type   TypeExpr
-	Span   Span
+	Name       string
+	Export     bool
+	TypeParams []string
+	Type       TypeExpr
+	Span       Span
 }
 
 func (*TypeAliasDecl) declNode()       {}
@@ -500,6 +501,14 @@ type UnionType struct {
 
 func (*UnionType) typeNode()       {}
 func (t *UnionType) GetSpan() Span { return t.Span }
+
+type LiteralType struct {
+	Value Expr
+	Span  Span
+}
+
+func (*LiteralType) typeNode()       {}
+func (t *LiteralType) GetSpan() Span { return t.Span }
 
 type FuncType struct {
 	TypeParams []string

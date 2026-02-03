@@ -37,7 +37,25 @@ type ModuleInfo struct {
 	AST         *ast.Module
 	Exports     map[string]*Symbol
 	Top         map[string]*Symbol
-	TypeAliases map[string]*Type
+	TypeAliases map[string]*TypeAlias
+}
+
+type TypeAlias struct {
+	Params            []string
+	Template          *Type
+	ParamPlaceholders map[string]*Type
+}
+
+func newTypeAlias(params []string, template *Type, placeholders map[string]*Type) *TypeAlias {
+	alias := &TypeAlias{
+		Params:            append([]string(nil), params...),
+		Template:          template,
+		ParamPlaceholders: map[string]*Type{},
+	}
+	for name, placeholder := range placeholders {
+		alias.ParamPlaceholders[name] = placeholder
+	}
+	return alias
 }
 
 // TableInfo stores information about a table definition
@@ -80,7 +98,7 @@ func NewChecker() *Checker {
 }
 
 func (c *Checker) AddModule(mod *ast.Module) {
-	c.Modules[mod.Path] = &ModuleInfo{AST: mod, Exports: map[string]*Symbol{}, Top: map[string]*Symbol{}, TypeAliases: map[string]*Type{}}
+	c.Modules[mod.Path] = &ModuleInfo{AST: mod, Exports: map[string]*Symbol{}, Top: map[string]*Symbol{}, TypeAliases: map[string]*TypeAlias{}}
 }
 
 func (c *Checker) Check() bool {
@@ -106,8 +124,8 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 			for _, item := range imp.Items {
 				if item.IsType {
 					// Check if it's a prelude type
-					if preludeType := getPreludeType(item.Name); preludeType != nil {
-						mod.TypeAliases[item.Name] = preludeType
+					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias != nil {
+						mod.TypeAliases[item.Name] = preludeAlias
 					}
 				}
 			}
@@ -115,8 +133,8 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 		if imp.From == "http" {
 			for _, item := range imp.Items {
 				if item.IsType {
-					if httpType := getHTTPType(item.Name); httpType != nil {
-						mod.TypeAliases[item.Name] = httpType
+					if httpAlias := getHTTPTypeAlias(item.Name); httpAlias != nil {
+						mod.TypeAliases[item.Name] = httpAlias
 					}
 				}
 			}
@@ -124,8 +142,8 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 		if imp.From == "sqlite" {
 			for _, item := range imp.Items {
 				if item.IsType {
-					if sqliteType := getSQLiteType(item.Name); sqliteType != nil {
-						mod.TypeAliases[item.Name] = sqliteType
+					if sqliteAlias := getSQLiteTypeAlias(item.Name); sqliteAlias != nil {
+						mod.TypeAliases[item.Name] = sqliteAlias
 					}
 				}
 			}
@@ -137,10 +155,10 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 	// First pass: collect type aliases
 	for _, decl := range mod.AST.Decls {
 		if d, ok := decl.(*ast.TypeAliasDecl); ok {
-			resolvedType := c.resolveType(d.Type, mod)
-			mod.TypeAliases[d.Name] = resolvedType
+			alias := c.buildTypeAlias(d, mod)
+			mod.TypeAliases[d.Name] = alias
 			if d.Export {
-				sym := &Symbol{Name: d.Name, Kind: SymType, Type: resolvedType, Decl: d}
+				sym := &Symbol{Name: d.Name, Kind: SymType, Type: alias.Template, Decl: d}
 				mod.Exports[d.Name] = sym
 			}
 		}
@@ -188,9 +206,22 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 				props = append(props, Prop{Name: col.Name, Type: String()})
 			}
 			rowType := NewObject(props)
-			mod.TypeAliases[d.Name] = rowType
+			mod.TypeAliases[d.Name] = newTypeAlias(nil, rowType, nil)
 		}
 	}
+}
+
+func (c *Checker) buildTypeAlias(decl *ast.TypeAliasDecl, mod *ModuleInfo) *TypeAlias {
+	params := append([]string(nil), decl.TypeParams...)
+	typeParams := map[string]*Type{}
+	paramPlaceholders := map[string]*Type{}
+	for _, name := range params {
+		placeholder := NewTypeParam(name)
+		typeParams[name] = placeholder
+		paramPlaceholders[name] = placeholder
+	}
+	template := c.resolveTypeRec(decl.Type, mod, typeParams)
+	return newTypeAlias(params, template, paramPlaceholders)
 }
 
 func (c *Checker) checkModule(mod *ModuleInfo) {
@@ -203,7 +234,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			for _, item := range imp.Items {
 				if item.IsType {
 					// Type imports are already handled in processImports
-					if preludeType := getPreludeType(item.Name); preludeType == nil {
+					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias == nil {
 						c.errorf(imp.Span, "%s is not a type in prelude", item.Name)
 					}
 					continue
@@ -219,7 +250,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 		if imp.From == "http" {
 			for _, item := range imp.Items {
 				if item.IsType {
-					if httpType := getHTTPType(item.Name); httpType == nil {
+					if httpAlias := getHTTPTypeAlias(item.Name); httpAlias == nil {
 						c.errorf(imp.Span, "%s is not a type in http", item.Name)
 					}
 					continue
@@ -235,7 +266,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 		if imp.From == "sqlite" {
 			for _, item := range imp.Items {
 				if item.IsType {
-					if sqliteType := getSQLiteType(item.Name); sqliteType == nil {
+					if sqliteAlias := getSQLiteTypeAlias(item.Name); sqliteAlias == nil {
 						c.errorf(imp.Span, "%s is not a type in sqlite", item.Name)
 					}
 					continue
@@ -265,7 +296,11 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 					c.errorf(imp.Span, "%s is not a type", item.Name)
 					continue
 				}
-				mod.TypeAliases[item.Name] = exp.Type
+				if aliasInfo := dep.TypeAliases[item.Name]; aliasInfo != nil {
+					mod.TypeAliases[item.Name] = aliasInfo
+				} else {
+					mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
+				}
 				continue
 			}
 			if exp.Kind == SymType {
@@ -613,7 +648,7 @@ func (c *Checker) checkReturnInfer(env *Env, s *ast.ReturnStmt, info *returnInfo
 		info.inferred = valType
 		return
 	}
-	if !info.inferred.Equals(valType) {
+	if !typesEqual(baseType(info.inferred), baseType(valType)) {
 		c.errorf(s.Span, "return type mismatch")
 	}
 }
@@ -907,17 +942,21 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 	}
 	switch e := expr.(type) {
 	case *ast.IntLit:
-		c.ExprTypes[expr] = I64()
-		return I64()
+		typ := LiteralI64(e.Value)
+		c.ExprTypes[expr] = typ
+		return typ
 	case *ast.FloatLit:
-		c.ExprTypes[expr] = F64()
-		return F64()
+		typ := LiteralF64(e.Value)
+		c.ExprTypes[expr] = typ
+		return typ
 	case *ast.BoolLit:
-		c.ExprTypes[expr] = Bool()
-		return Bool()
+		typ := LiteralBool(e.Value)
+		c.ExprTypes[expr] = typ
+		return typ
 	case *ast.StringLit:
-		c.ExprTypes[expr] = String()
-		return String()
+		typ := LiteralString(e.Value)
+		c.ExprTypes[expr] = typ
+		return typ
 	case *ast.IdentExpr:
 		sym := env.lookup(e.Name)
 		if sym == nil {
@@ -993,7 +1032,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if thenType == nil || elseType == nil {
 			return nil
 		}
-		if thenType.Equals(elseType) {
+		if typesEqual(baseType(thenType), baseType(elseType)) {
 			c.ExprTypes[expr] = thenType
 			return thenType
 		}
@@ -1067,7 +1106,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 				resultType = expected
 			} else if resultType == nil {
 				resultType = bodyType
-			} else if !bodyType.Equals(resultType) {
+			} else if !typesEqual(baseType(bodyType), baseType(resultType)) {
 				c.errorf(cas.Body.GetSpan(), "switch case body type mismatch")
 			}
 		}
@@ -1082,7 +1121,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 					resultType = expected
 				} else if resultType == nil {
 					resultType = defaultType
-				} else if !defaultType.Equals(resultType) {
+				} else if !typesEqual(baseType(defaultType), baseType(resultType)) {
 					c.errorf(e.Default.GetSpan(), "switch default type mismatch")
 				}
 			}
@@ -1406,7 +1445,7 @@ func (c *Checker) checkBinary(e *ast.BinaryExpr, left, right *Type) *Type {
 		c.errorf(e.Span, "number required")
 		return nil
 	case "==", "!=":
-		if !left.Equals(right) {
+		if !typesEqual(baseType(left), baseType(right)) {
 			c.errorf(e.Span, "type mismatch")
 			return nil
 		}
@@ -1769,7 +1808,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "map expects array")
 			return nil
 		}
-		elemType := arrType.Elem
+		elemType := baseType(arrType.Elem)
 		if elemType == nil {
 			c.errorf(call.Span, "map element type required")
 			return nil
@@ -1780,7 +1819,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "map expects function")
 			return nil
 		}
-		if !fnType.Params[0].Equals(elemType) {
+		if !typesEqual(baseType(fnType.Params[0]), baseType(elemType)) {
 			c.errorf(call.Span, "map callback type mismatch")
 			return nil
 		}
@@ -1800,7 +1839,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "filter expects array")
 			return nil
 		}
-		elemType := arrType.Elem
+		elemType := baseType(arrType.Elem)
 		if elemType == nil {
 			c.errorf(call.Span, "filter element type required")
 			return nil
@@ -1811,7 +1850,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "filter expects function")
 			return nil
 		}
-		if !fnType.Params[0].Equals(elemType) {
+		if !typesEqual(baseType(fnType.Params[0]), baseType(elemType)) {
 			c.errorf(call.Span, "filter callback type mismatch")
 			return nil
 		}
@@ -1835,7 +1874,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "reduce expects array")
 			return nil
 		}
-		elemType := arrType.Elem
+		elemType := baseType(arrType.Elem)
 		if elemType == nil {
 			c.errorf(call.Span, "reduce element type required")
 			return nil
@@ -1844,17 +1883,22 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		if initType == nil {
 			return nil
 		}
-		expectedFn := &Type{Kind: KindFunc, Params: []*Type{initType, elemType}}
+		initBase := baseType(initType)
+		if initBase == nil {
+			c.errorf(call.Span, "reduce initial value required")
+			return nil
+		}
+		expectedFn := &Type{Kind: KindFunc, Params: []*Type{initBase, elemType}}
 		fnType := c.checkExpr(env, call.Args[1], expectedFn)
 		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 2 {
 			c.errorf(call.Span, "reduce expects function")
 			return nil
 		}
-		if !fnType.Params[0].Equals(initType) || !fnType.Ret.Equals(fnType.Params[0]) {
+		if !typesEqual(baseType(fnType.Params[0]), baseType(initType)) || !typesEqual(baseType(fnType.Ret), baseType(fnType.Params[0])) {
 			c.errorf(call.Span, "reduce accumulator type mismatch")
 			return nil
 		}
-		if !fnType.Params[1].Equals(elemType) {
+		if !typesEqual(baseType(fnType.Params[1]), baseType(elemType)) {
 			c.errorf(call.Span, "reduce element type mismatch")
 			return nil
 		}
@@ -1880,6 +1924,18 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		arr := NewArray(String())
 		c.ExprTypes[call] = arr
 		return arr
+	case "getEnv":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "getEnv expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "getEnv expects string")
+			return nil
+		}
+		c.ExprTypes[call] = String()
+		return String()
 	case "sqlQuery":
 		if len(call.Args) != 2 {
 			c.errorf(call.Span, "sqlQuery expects 2 args: query string and params array")
@@ -2096,16 +2152,20 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 		}
 	}
 	if hasSpread {
-		var elemType *Type
+		var elemBase *Type
 		for _, entry := range lit.Entries {
 			if entry.Kind == ast.ArrayValue {
 				et := c.checkExpr(env, entry.Value, nil)
 				if et == nil {
 					return nil
 				}
-				if elemType == nil {
-					elemType = et
-				} else if !et.Equals(elemType) {
+				general := baseType(et)
+				if general == nil {
+					return nil
+				}
+				if elemBase == nil {
+					elemBase = general
+				} else if !typesEqual(elemBase, general) {
 					c.errorf(entry.Span, "array element type mismatch")
 					return nil
 				}
@@ -2115,19 +2175,27 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 					c.errorf(entry.Span, "array spread requires array")
 					return nil
 				}
-				if elemType == nil {
-					elemType = spreadType.Elem
-				} else if !spreadType.Elem.Equals(elemType) {
+				if spreadType.Elem == nil {
+					c.errorf(entry.Span, "array spread requires element type")
+					return nil
+				}
+				general := baseType(spreadType.Elem)
+				if general == nil {
+					return nil
+				}
+				if elemBase == nil {
+					elemBase = general
+				} else if !typesEqual(elemBase, general) {
 					c.errorf(entry.Span, "array element type mismatch")
 					return nil
 				}
 			}
 		}
-		if elemType == nil {
+		if elemBase == nil {
 			c.errorf(lit.Span, "array literal requires elements")
 			return nil
 		}
-		arr := NewArray(elemType)
+		arr := NewArray(elemBase)
 		c.ExprTypes[lit] = arr
 		return arr
 	}
@@ -2139,16 +2207,17 @@ func (c *Checker) checkArrayLit(env *Env, lit *ast.ArrayLit, expected *Type) *Ty
 		c.errorf(lit.Span, "empty array needs type")
 		return nil
 	}
-	allSame := true
 	first := elemTypes[0]
+	firstBase := baseType(first)
+	allSame := true
 	for _, t := range elemTypes[1:] {
-		if !t.Equals(first) {
+		if !typesEqual(baseType(t), firstBase) {
 			allSame = false
 			break
 		}
 	}
 	if allSame {
-		arr := NewArray(first)
+		arr := NewArray(firstBase)
 		c.ExprTypes[lit] = arr
 		return arr
 	}
@@ -2180,7 +2249,7 @@ func (c *Checker) checkObjectLit(env *Env, lit *ast.ObjectLit, expected *Type) *
 				return nil
 			}
 			if existing, ok := props[entry.Key]; ok {
-				if !existing.Equals(valType) {
+				if !typesEqual(baseType(existing), baseType(valType)) {
 					c.errorf(entry.Span, "property type mismatch")
 					return nil
 				}
@@ -2193,6 +2262,11 @@ func (c *Checker) checkObjectLit(env *Env, lit *ast.ObjectLit, expected *Type) *
 	var list []Prop
 	for _, name := range order {
 		list = append(list, Prop{Name: name, Type: props[name]})
+	}
+	for i := range list {
+		if list[i].Name != "type" {
+			list[i].Type = baseType(list[i].Type)
+		}
 	}
 	objType := NewObject(list)
 	if expected != nil {
@@ -2242,7 +2316,14 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			return c.recordType(expr, Number())
 		default:
 			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
-				return c.recordType(expr, aliasType)
+				if len(aliasType.Params) > 0 {
+					c.errorf(t.Span, "type alias %s requires %d type arguments", t.Name, len(aliasType.Params))
+					return nil
+				}
+				if aliasType.Template == nil {
+					return nil
+				}
+				return c.recordType(expr, aliasType.Template)
 			}
 			c.errorf(t.Span, "unknown type %s", t.Name)
 			return nil
@@ -2270,7 +2351,54 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			}
 			return c.recordType(expr, NewObjectWithIndex(nil, valType))
 		default:
+			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
+				if len(aliasType.Params) == 0 {
+					c.errorf(t.Span, "type alias %s does not take type arguments", t.Name)
+					return nil
+				}
+				if len(t.Args) != len(aliasType.Params) {
+					c.errorf(t.Span, "type alias %s expects %d type arguments", t.Name, len(aliasType.Params))
+					return nil
+				}
+				argTypes := make([]*Type, len(t.Args))
+				for i, arg := range t.Args {
+					argType := c.resolveTypeRec(arg, mod, typeParams)
+					if argType == nil {
+						return nil
+					}
+					argTypes[i] = argType
+				}
+				if aliasType.Template == nil {
+					return nil
+				}
+				bindings := map[*Type]*Type{}
+				for i, name := range aliasType.Params {
+					if placeholder, ok := aliasType.ParamPlaceholders[name]; ok && placeholder != nil {
+						bindings[placeholder] = argTypes[i]
+					}
+				}
+				specialized := c.substituteTypeParams(aliasType.Template, bindings)
+				return c.recordType(expr, specialized)
+			}
 			c.errorf(t.Span, "unknown generic type %s", t.Name)
+			return nil
+		}
+	case *ast.LiteralType:
+		if t.Value == nil {
+			c.errorf(t.Span, "invalid literal type")
+			return nil
+		}
+		switch lit := t.Value.(type) {
+		case *ast.IntLit:
+			return c.recordType(expr, LiteralI64(lit.Value))
+		case *ast.FloatLit:
+			return c.recordType(expr, LiteralF64(lit.Value))
+		case *ast.BoolLit:
+			return c.recordType(expr, LiteralBool(lit.Value))
+		case *ast.StringLit:
+			return c.recordType(expr, LiteralString(lit.Value))
+		default:
+			c.errorf(t.Span, "unsupported literal type")
 			return nil
 		}
 	case *ast.ArrayType:
@@ -2721,7 +2849,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 func isPreludeName(name string) bool {
 	switch name {
 	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"responseText", "getPath", "getMethod":
+		"getEnv", "responseText", "getPath", "getMethod":
 		return true
 	default:
 		return false
@@ -2746,41 +2874,53 @@ func isSQLiteName(name string) bool {
 	}
 }
 
-// getPreludeType returns the type for a prelude type alias, or nil if the name is not a prelude type
-func getPreludeType(name string) *Type {
+// getPreludeTypeAlias returns the prelude type alias definition, if any.
+func getPreludeTypeAlias(name string) *TypeAlias {
 	switch name {
 	case "JSX":
 		// JSX is a string alias for server-rendered fragments
-		return String()
+		return newTypeAlias(nil, String(), nil)
+	case "Result":
+		param := NewTypeParam("T")
+		errorObj := NewObject([]Prop{
+			{Name: "message", Type: String()},
+			{Name: "type", Type: LiteralString("error")},
+		})
+		okObj := NewObject([]Prop{
+			{Name: "type", Type: LiteralString("ok")},
+			{Name: "value", Type: param},
+		})
+		template := NewUnion([]*Type{errorObj, okObj})
+		return newTypeAlias([]string{"T"}, template, map[string]*Type{"T": param})
 	default:
 		return nil
 	}
 }
 
-// getHTTPType returns the type for an http module type alias
-func getHTTPType(name string) *Type {
+// getHTTPTypeAlias returns the HTTP module type alias definition, if any.
+func getHTTPTypeAlias(name string) *TypeAlias {
 	switch name {
 	case "Request":
 		// Request = { path: string, method: string, query: Map<string>, form: Map<string> }
 		mapOfString := NewObjectWithIndex(nil, String())
-		return NewObject([]Prop{
+		return newTypeAlias(nil, NewObject([]Prop{
 			{Name: "form", Type: mapOfString},
 			{Name: "method", Type: String()},
 			{Name: "path", Type: String()},
 			{Name: "query", Type: mapOfString},
-		})
+		}), nil)
 	case "Response":
 		// Response = { "body": string, "contentType": string }
-		return NewObject([]Prop{
+		return newTypeAlias(nil, NewObject([]Prop{
 			{Name: "body", Type: String()},
 			{Name: "contentType", Type: String()},
-		})
+		}), nil)
 	default:
 		return nil
 	}
 }
 
-func getSQLiteType(name string) *Type {
+func getSQLiteTypeAlias(name string) *TypeAlias {
 	return nil
 }
 

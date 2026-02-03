@@ -20,17 +20,19 @@ const (
 )
 
 type Type struct {
-	Kind       Kind
-	TypeParams []string
-	Name       string
-	Params     []*Type
-	Ret        *Type
-	Elem       *Type
-	Tuple      []*Type
-	Props      []Prop
-	Union      []*Type
-	Index      *Type
-	propIx     map[string]*Type
+	Kind         Kind
+	Literal      bool
+	LiteralValue interface{}
+	TypeParams   []string
+	Name         string
+	Params       []*Type
+	Ret          *Type
+	Elem         *Type
+	Tuple        []*Type
+	Props        []Prop
+	Union        []*Type
+	Index        *Type
+	propIx       map[string]*Type
 }
 
 type Prop struct {
@@ -50,6 +52,12 @@ func (t *Type) Equals(o *Type) bool {
 			}
 		}
 		return false
+	}
+	if t.Literal || o.Literal {
+		if t.Literal != o.Literal {
+			return false
+		}
+		return literalValuesEqual(t.Kind, t.LiteralValue, o.LiteralValue)
 	}
 	switch t.Kind {
 	case KindArray:
@@ -127,6 +135,21 @@ func (t *Type) AssignableTo(dst *Type) bool {
 		return false
 	}
 	if dst.Kind == KindUnion {
+		if t.Kind == KindUnion {
+			for _, tMember := range t.Union {
+				match := false
+				for _, member := range dst.Union {
+					if tMember.AssignableTo(member) {
+						match = true
+						break
+					}
+				}
+				if !match {
+					return false
+				}
+			}
+			return true
+		}
 		for _, member := range dst.Union {
 			if t.AssignableTo(member) {
 				return true
@@ -143,6 +166,15 @@ func (t *Type) AssignableTo(dst *Type) bool {
 		return true
 	}
 	if t.Kind != dst.Kind {
+		return false
+	}
+	if t.Literal {
+		if dst.Literal {
+			return literalValuesEqual(t.Kind, t.LiteralValue, dst.LiteralValue)
+		}
+		return true
+	}
+	if dst.Literal {
 		return false
 	}
 	switch t.Kind {
@@ -352,6 +384,68 @@ func NewUnion(members []*Type) *Type {
 		return unique[0]
 	}
 	return &Type{Kind: KindUnion, Union: unique}
+}
+
+func literalValuesEqual(kind Kind, a, b interface{}) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	switch kind {
+	case KindI64:
+		return a.(int64) == b.(int64)
+	case KindF64:
+		return a.(float64) == b.(float64)
+	case KindBool:
+		return a.(bool) == b.(bool)
+	case KindString:
+		return a.(string) == b.(string)
+	default:
+		return false
+	}
+}
+
+func baseType(typ *Type) *Type {
+	if typ == nil {
+		return nil
+	}
+	if !typ.Literal {
+		return typ
+	}
+	switch typ.Kind {
+	case KindI64:
+		return I64()
+	case KindF64:
+		return F64()
+	case KindBool:
+		return Bool()
+	case KindString:
+		return String()
+	default:
+		return typ
+	}
+}
+
+func typesEqual(a, b *Type) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equals(b)
+}
+
+func LiteralI64(value int64) *Type {
+	return &Type{Kind: KindI64, Literal: true, LiteralValue: value}
+}
+
+func LiteralF64(value float64) *Type {
+	return &Type{Kind: KindF64, Literal: true, LiteralValue: value}
+}
+
+func LiteralBool(value bool) *Type {
+	return &Type{Kind: KindBool, Literal: true, LiteralValue: value}
+}
+
+func LiteralString(value string) *Type {
+	return &Type{Kind: KindString, Literal: true, LiteralValue: value}
 }
 
 func NewTypeParam(name string) *Type {

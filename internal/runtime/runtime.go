@@ -322,6 +322,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := define("get_env", func(nameHandle int32) int32 {
+		return must(r.getEnv(nameHandle))
+	}); err != nil {
+		return err
+	}
 	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
 		return must(r.sqlQuery(caller, ptr, length, paramsHandle))
 	}); err != nil {
@@ -353,8 +358,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle int32, portPtr int32, portLen int32) {
-		must0(r.httpListen(caller, serverHandle, portPtr, portLen))
+	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle int32, portHandle int32) {
+		must0(r.httpListen(caller, serverHandle, portHandle))
 	}); err != nil {
 		return err
 	}
@@ -447,6 +452,18 @@ func (r *Runtime) strFromUTF8(caller *wasmtime.Caller, ptr int32, length int32) 
 		return 0, errors.New("string out of bounds")
 	}
 	return r.newValue(Value{Kind: KindString, Str: string(data[start:end])}), nil
+}
+
+func (r *Runtime) getEnv(nameHandle int32) (int32, error) {
+	valueHandle, err := r.getValue(nameHandle)
+	if err != nil {
+		return 0, err
+	}
+	if valueHandle.Kind != KindString {
+		return 0, errors.New("getEnv expects string")
+	}
+	value := os.Getenv(valueHandle.Str)
+	return r.newValue(Value{Kind: KindString, Str: value}), nil
 }
 
 // internString は文字列リテラル（offset, length）をヒープハンドルに変換します。
@@ -1728,7 +1745,7 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, path
 // 注意: この関数は実際にサーバーを起動しない。サーバー情報をpendingServerに保存し、
 // WASM実行完了後にStartPendingServer()で起動する。
 // 詳細はpendingHTTPServer構造体のコメントを参照。
-func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portPtr int32, portLen int32) error {
+func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portHandle int32) error {
 	r.httpMu.Lock()
 	server, ok := r.httpServers[serverHandle]
 	r.httpMu.Unlock()
@@ -1737,22 +1754,14 @@ func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portPt
 		return errors.New("invalid server handle")
 	}
 
-	// Get port from memory
-	ext := caller.GetExport("memory")
-	if ext == nil {
-		return errors.New("memory not found")
+	portVal, err := r.getValue(portHandle)
+	if err != nil {
+		return err
 	}
-	memory := ext.Memory()
-	if memory == nil {
-		return errors.New("memory not found")
+	if portVal.Kind != KindString {
+		return errors.New("port must be string")
 	}
-	data := memory.UnsafeData(caller)
-	start := int(portPtr)
-	end := start + int(portLen)
-	if start < 0 || end > len(data) {
-		return errors.New("port string out of bounds")
-	}
-	port := string(data[start:end])
+	port := portVal.Str
 
 	// Store pending server info - actual startup happens after WASM execution completes
 	r.pendingServer = &pendingHTTPServer{

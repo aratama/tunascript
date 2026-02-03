@@ -141,11 +141,15 @@ func (p *Parser) parseTypeAliasDecl(export bool) ast.Decl {
 	start := p.curr.Pos
 	p.expect(lexer.TokenType)
 	nameTok := p.expect(lexer.TokenIdent)
+	var typeParams []string
+	if p.curr.Kind == lexer.TokenLT {
+		typeParams = p.parseTypeParamList()
+	}
 	p.expect(lexer.TokenEq)
 	typeExpr := p.parseType()
 	p.optional(lexer.TokenSemicolon)
 	end := p.curr.Pos
-	return &ast.TypeAliasDecl{Name: nameTok.Text, Export: export, Type: typeExpr, Span: spanFrom(start, end)}
+	return &ast.TypeAliasDecl{Name: nameTok.Text, Export: export, TypeParams: typeParams, Type: typeExpr, Span: spanFrom(start, end)}
 }
 
 // parseTableColumns parses column definitions from table block content
@@ -865,11 +869,35 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 		p.expect(lexer.TokenRBrace)
 		base := ast.TypeExpr(&ast.ObjectType{Props: props, Span: spanFrom(start, p.curr.Pos)})
 		return p.parseTypeSuffix(base)
+	case lexer.TokenInt, lexer.TokenFloat, lexer.TokenString, lexer.TokenTrue, lexer.TokenFalse:
+		base := p.parseLiteralType()
+		return p.parseTypeSuffix(base)
 	default:
 		p.err("type required")
 		p.next()
 		return &ast.NamedType{Name: "", Span: spanFrom(p.curr.Pos, p.curr.Pos)}
 	}
+}
+
+func (p *Parser) parseLiteralType() ast.TypeExpr {
+	tok := p.curr
+	var lit ast.Expr
+	switch tok.Kind {
+	case lexer.TokenInt:
+		value, _ := strconv.ParseInt(tok.Text, 10, 64)
+		lit = &ast.IntLit{Value: value, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenFloat:
+		value, _ := strconv.ParseFloat(tok.Text, 64)
+		lit = &ast.FloatLit{Value: value, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenTrue, lexer.TokenFalse:
+		lit = &ast.BoolLit{Value: tok.Kind == lexer.TokenTrue, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenString:
+		lit = &ast.StringLit{Value: tok.Text, Span: spanFrom(tok.Pos, tok.Pos)}
+	default:
+		lit = &ast.StringLit{Value: tok.Text, Span: spanFrom(tok.Pos, tok.Pos)}
+	}
+	p.next()
+	return &ast.LiteralType{Value: lit, Span: lit.GetSpan()}
 }
 
 func (p *Parser) parseFuncTypeBody(start lexer.Position, typeParams []string) ast.TypeExpr {

@@ -8,6 +8,10 @@
 
 詳細な言語仕様は `spec.md` を参照してください。
 
+- SQLフレンドリー。SQLを直接コード内に記述できます。
+- JSONフレンドリー。データ型はすべてJSONライクです。また、データ型を定義すると同時にJSONデコーダーも定義されます。
+- シンプル。TypeScriptに似た構文を持ちますが、機能は最小限です。
+
 ## 要件
 
 TunaScript コンパイラのビルド・実行には、以下の環境が必要です。
@@ -62,9 +66,17 @@ go run ./cmd/tuna run example/server/server.tuna example/server/todo.sqlite3
 ## Cloud Run デプロイ
 
 ### コンテナ画像構成
+
 - `Dockerfile` はマルチステージ構成で Go 1.24.0 のビルド環境から `tuna` バイナリを生成し、distroless イメージへコピーします。
 - `example/server` フォルダと Web UI に必要なファイルもコンテナに含めるので、`docker build -t tuna-server .` でローカルでビルド／`docker run --rm -p 8888:8888 tuna-server` でサービスを直接確認できます（サーバーは `:8888` で待ち受けます）。
 
 ### Cloud Build + Cloud Run 自動デプロイ
+
 - `cloudbuild.yaml` を使えば `gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=tuna-server,_REGION=asia-northeast1` のようにコマンドを打つだけで、イメージのビルド・コンテナレジストリへのプッシュ・Cloud Run へのデプロイが順番に実施されます。
 - 同構成では `--port 8888` を指定しており、Cloud Run サービスは `tuna run example/server/server.tuna example/server/todo.sqlite3` を自動で起動します。`gcloud config set project <YOUR_PROJECT>` を済ませてから上記コマンドを実行し、必要に応じて `_SERVICE_NAME`／`_REGION` を上書きしてください。
+
+## TODO
+
+- Result型
+- エラーハンドリング
+- 自動JSONデコーダー。zodなどのように型とデコーダーの二重定義になりません

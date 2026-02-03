@@ -593,6 +593,7 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "intern_string"},
 		{"sqlite", "db_open"},
 		{"prelude", "get_args"},
+		{"prelude", "get_env"},
 		{"prelude", "register_tables"},
 		{"http", "http_create_server"},
 		{"http", "http_add_route"},
@@ -680,6 +681,8 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.db_open (param i32))", prefix)
 	case "get_args":
 		return fmt.Sprintf("(func %s.get_args (result i32))", prefix)
+	case "get_env":
+		return fmt.Sprintf("(func %s.get_env (param i32) (result i32))", prefix)
 	case "register_tables":
 		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
 	case "http_create_server":
@@ -687,7 +690,7 @@ func importSig(module, name string) string {
 	case "http_add_route":
 		return fmt.Sprintf("(func %s.http_add_route (param i32 i32 i32 i32))", prefix)
 	case "http_listen":
-		return fmt.Sprintf("(func %s.http_listen (param i32 i32 i32))", prefix)
+		return fmt.Sprintf("(func %s.http_listen (param i32 i32))", prefix)
 	case "http_response_text":
 		return fmt.Sprintf("(func %s.http_response_text (param i32 i32) (result i32))", prefix)
 	case "http_response_html":
@@ -1880,6 +1883,10 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitDbOpen(call, module)
 	case "getArgs":
 		f.emit(fmt.Sprintf("(call $%s.get_args)", module))
+	case "getEnv":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.get_env)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
 	case "createServer":
@@ -1966,12 +1973,10 @@ func (f *funcEmitter) emitHttpListen(call *ast.CallExpr, module string) {
 
 	// Handle port string
 	if strLit, ok := portArg.(*ast.StringLit); ok {
-		f.g.internString(strLit.Value)
-		datum := f.g.stringDataByValue(strLit.Value)
-		if datum != nil {
-			f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
-			f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
-		}
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(strLit.Value)))
+	} else {
+		portType := f.g.checker.ExprTypes[portArg]
+		f.emitExpr(portArg, portType)
 	}
 
 	f.emit(fmt.Sprintf("(call $%s.http_listen)", module))
@@ -2698,7 +2703,7 @@ func elemType(t *types.Type) *types.Type {
 func builtinModule(name string) (string, bool) {
 	switch name {
 	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"responseText", "getPath", "getMethod":
+		"getEnv", "responseText", "getPath", "getMethod":
 		return "prelude", true
 	case "dbOpen":
 		return "sqlite", true
