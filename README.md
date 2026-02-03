@@ -58,3 +58,13 @@ go run ./cmd/tuna run example/server/server.tuna example/server/todo.sqlite3
 ## エディタサポート(vscode)
 
 `editors` ディレクトリには TunaScript 用のシンタックスハイライト拡張機能が含まれています。`Tasks: Run Task` から `Install VSIX Extension` を選ぶとインストールできます（npm が必要です）。
+
+## Cloud Run デプロイ
+
+### コンテナ画像構成
+- `Dockerfile` はマルチステージ構成で Go 1.24.0 のビルド環境から `tuna` バイナリを生成し、distroless イメージへコピーします。
+- `example/server` フォルダと Web UI に必要なファイルもコンテナに含めるので、`docker build -t tuna-server .` でローカルでビルド／`docker run --rm -p 8888:8888 tuna-server` でサービスを直接確認できます（サーバーは `:8888` で待ち受けます）。
+
+### Cloud Build + Cloud Run 自動デプロイ
+- `cloudbuild.yaml` を使えば `gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=tuna-server,_REGION=asia-northeast1` のようにコマンドを打つだけで、イメージのビルド・コンテナレジストリへのプッシュ・Cloud Run へのデプロイが順番に実施されます。
+- 同構成では `--port 8888` を指定しており、Cloud Run サービスは `tuna run example/server/server.tuna example/server/todo.sqlite3` を自動で起動します。`gcloud config set project <YOUR_PROJECT>` を済ませてから上記コマンドを実行し、必要に応じて `_SERVICE_NAME`／`_REGION` を上書きしてください。
