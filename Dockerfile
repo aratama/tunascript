@@ -7,6 +7,7 @@ RUN go mod download
 
 COPY . .
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -o /workspace/tuna ./cmd/tuna
+RUN /workspace/tuna build example/server/server.tuna -o example/server/server
 
 FROM gcr.io/distroless/cc
 
@@ -16,4 +17,4 @@ COPY --from=builder /workspace/example /app/example
 
 EXPOSE 8888
 ENTRYPOINT ["/app/tuna"]
-CMD ["run", "example/server/server.tuna", "example/server/todo.sqlite3"]
+CMD ["launch", "example/server/server.wasm", "example/server/todo.sqlite3"]
