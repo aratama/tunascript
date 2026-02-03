@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
-	"negitoro/internal/ast"
-	"negitoro/internal/types"
+	"tuna/internal/ast"
+	"tuna/internal/types"
 )
 
 type Generator struct {

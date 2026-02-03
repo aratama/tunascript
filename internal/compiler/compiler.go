@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"negitoro/internal/ast"
-	"negitoro/internal/parser"
-	"negitoro/internal/types"
+	"tuna/internal/ast"
+	"tuna/internal/parser"
+	"tuna/internal/types"
 )
 
 type Result struct {
@@ -69,7 +69,7 @@ func (c *Compiler) loadRecursive(path string) error {
 		if imp.From == "prelude" || imp.From == "http" || imp.From == "sqlite" {
 			continue
 		}
- 		resolved, err := resolveImport(dir, imp.From)
+		resolved, err := resolveImport(dir, imp.From)
 		if err != nil {
 			return err
 		}

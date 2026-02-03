@@ -1,0 +1,35 @@
+{
+  "name": "tuna",
+  "displayName": "TunaScript Language",
+  "description": "Syntax highlighting for the TunaScript programming language",
+  "version": "0.1.0",
+  "publisher": "tuna",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "tuna",
+        "aliases": [
+          "TunaScript",
+          "tuna"
+        ],
+        "extensions": [
+          ".tuna"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "tuna",
+        "scopeName": "source.tuna",
+        "path": "./syntaxes/tuna.tmLanguage.json"
+      }
+    ]
+  }
+}

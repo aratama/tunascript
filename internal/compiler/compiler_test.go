@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"negitoro/internal/compiler"
-	"negitoro/internal/runtime"
+	"tuna/internal/compiler"
+	"tuna/internal/runtime"
 )
 
 func writeFiles(t *testing.T, dir string, files map[string]string) {

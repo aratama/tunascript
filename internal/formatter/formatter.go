@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"negitoro/internal/ast"
-	"negitoro/internal/parser"
+	"tuna/internal/ast"
+	"tuna/internal/parser"
 )
 
-// Formatter formats Negitoro source code
+// Formatter formats TunaScript source code
 type Formatter struct {
 	indent int
 	buf    strings.Builder

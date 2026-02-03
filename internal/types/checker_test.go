@@ -3,8 +3,8 @@ package types
 import (
 	"testing"
 
-	"negitoro/internal/ast"
-	"negitoro/internal/parser"
+	"tuna/internal/ast"
+	"tuna/internal/parser"
 )
 
 func TestMapInferenceFromArrayLiteral(t *testing.T) {
@@ -24,7 +24,7 @@ const doubled: integer[] = nums.map(double);
 const tripled: integer[] = map(nums, triple);
 `
 
-	mod := mustParseModule(t, "map_array_literal.ngtr", src)
+	mod := mustParseModule(t, "map_array_literal.tuna", src)
 	checker := runChecker(t, mod)
 
 	doubled := findConstDecl(t, mod, "doubled")
@@ -55,7 +55,7 @@ const wrapped: { "value": integer }[] = map(raw, wrap);
 const labels: string[] = raw.map(label);
 `
 
-	mod := mustParseModule(t, "map_object.ngtr", src)
+	mod := mustParseModule(t, "map_object.tuna", src)
 	checker := runChecker(t, mod)
 
 	wrapped := findConstDecl(t, mod, "wrapped")
@@ -78,7 +78,7 @@ const sum: integer = nums.reduce(sumValues, 0);
 const sum2: integer = reduce(nums, sumValues, 0);
 `
 
-	mod := mustParseModule(t, "reduce_infer.ngtr", src)
+	mod := mustParseModule(t, "reduce_infer.tuna", src)
 	checker := runChecker(t, mod)
 
 	sum := findConstDecl(t, mod, "sum")
@@ -101,7 +101,7 @@ const evens: integer[] = nums.filter(isEven);
 const evens2: integer[] = filter(nums, isEven);
 `
 
-	mod := mustParseModule(t, "filter_infer.ngtr", src)
+	mod := mustParseModule(t, "filter_infer.tuna", src)
 	checker := runChecker(t, mod)
 
 	evens := findConstDecl(t, mod, "evens")
@@ -120,7 +120,7 @@ const msg: string = switch (v) {
 };
 `
 
-	mod := mustParseModule(t, "union_switch.ngtr", src)
+	mod := mustParseModule(t, "union_switch.tuna", src)
 	checker := runChecker(t, mod)
 
 	sym := checker.Modules[mod.Path].Top["v"]

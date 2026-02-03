@@ -1,7 +1,7 @@
 import { log, getArgs, length, map, type JSX } from "prelude"
 import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
-import { Styles } from "./style.ngtr"
+import { Styles } from "./style.tuna"
 
 create_table todos {
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +36,7 @@ function handleRoot(req: Request): Response {
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>TODO App - Negitoro</title>
+        <title>TODO App - TunaScript</title>
         <Styles />
       </head>
       <body>

@@ -1,10 +1,10 @@
-# Negitoro Language Support for VS Code
+# TunaScript Language Support for VS Code
 
-Negitoro言語のシンタックスハイライトをVS Codeに追加する拡張機能です。
+TunaScriptのソースコードに対するシンタックスハイライトを提供する拡張機能です。
 
 ## 機能
 
-- `.ngtr` ファイルのシンタックスハイライト
+- `.tuna` ファイルのシンタックスハイライト
 - キーワード、型、関数、文字列、数値、コメントの色分け
 - `sql { ... }` ブロック内のSQLハイライト
 - `table` 定義のハイライト
@@ -37,10 +37,10 @@ Negitoro言語のシンタックスハイライトをVS Codeに追加する拡�
 1. VSIX パッケージを作成してインストール:
 
 ```bash
-cd /path/to/negitoro/editors/negitoro.negitoro-0.1.0
-rm -f negitoro.vsix
-npx @vscode/vsce package --allow-missing-repository -o negitoro.vsix
-code --install-extension negitoro.vsix --force
+cd /path/to/tuna/editors/tuna.tuna-0.1.0
+rm -f tuna.vsix
+npx @vscode/vsce package --allow-missing-repository -o tuna.vsix
+code --install-extension tuna.vsix --force
 ```
 
 2. VS Codeを再読み込み（`Ctrl+Shift+P` → "Developer: Reload Window"）
@@ -50,20 +50,20 @@ code --install-extension negitoro.vsix --force
 コマンドラインから:
 
 ```bash
-code --uninstall-extension negitoro.negitoro
+code --uninstall-extension tuna.tuna
 ```
 
 または手動で削除:
 
 ```bash
 # Linux / macOS
-rm -rf ~/.vscode/extensions/negitoro.negitoro-*
+rm -rf ~/.vscode/extensions/tuna.tuna-*
 
 # WSL (VS Code Remote)
-rm -rf ~/.vscode-server/extensions/negitoro.negitoro-*
+rm -rf ~/.vscode-server/extensions/tuna.tuna-*
 
 # Windows (PowerShell)
-Remove-Item -Recurse "$env:USERPROFILE\.vscode\extensions\negitoro.negitoro-*"
+Remove-Item -Recurse "$env:USERPROFILE\.vscode\extensions\tuna.tuna-*"
 ```
 
 ## ライセンス

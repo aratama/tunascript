@@ -1,8 +1,9 @@
-# 言語仕様（Negitoro → WASM）
+# 言語仕様（TunaScript → WASM）
 
 ## 1. 概要
 
-- TypeScript の最小サブセット。
+TunaScript（通称:tuna）はTypeScriptの最小サブセットです。以下の制約のもとでコンパイルと実行を行います。
+
 - クラス / インターフェイス / 名前空間 / this は不使用。
 - 代入はなく、`const` のみ。
 - 関数は `function` 宣言のみ（トップレベルのみ）。
@@ -14,13 +15,13 @@
 
 ### 2.1 プリミティブ
 
-- `integer`（Negitoro が TypeScript に追加した整数型）
+- `integer`（TunaScript が TypeScript に追加した整数型）
 - `number`（浮動小数点。TypeScript の標準 `number` 型）
 - `boolean`（`true` / `false`）
 - `string`（UTF-8）
 - `void`
 
-Negitoro では浮動小数点を扱う型の名前は `number` であり、`float` という名前は使いません。`integer` はこれに対する整数専用の型として追加されています。
+TunaScript では浮動小数点を扱う型の名前は `number` であり、`float` という名前は使いません。`integer` はこれに対する整数専用の型として追加されています。
 
 ### 2.2 複合型
 
@@ -671,7 +672,7 @@ import { responseHtml } from "http";
 import { createServer, addRoute, listen, type Request, type Response } from "http";
 
 function handleRoot(req: Request): Response {
-  const title = "Hello from Negitoro";
+  const title = "Hello from TunaScript";
   return responseHtml(
     <html>
       <head>
@@ -717,7 +718,7 @@ function Layout(props: { "title": string, "children": JSX }): JSX {
 function Page(): JSX {
   return (
     <div>
-      <Layout title="Hello from Negitoro">
+      <Layout title="Hello from TunaScript">
         <p>Welcome!</p>
       </Layout>
     </div>

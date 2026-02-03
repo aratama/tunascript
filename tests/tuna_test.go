@@ -6,23 +6,23 @@ import (
 	"strings"
 	"testing"
 
-	"negitoro/internal/compiler"
-	"negitoro/internal/runtime"
+	"tuna/internal/compiler"
+	"tuna/internal/runtime"
 )
 
-// TestNgtrFiles runs all .ngtr files in the tests directory.
-// Each .ngtr file can optionally specify expected output using a comment at the top:
+// TestTunaFiles runs all .tuna files in the tests directory.
+// Each .tuna file can optionally specify expected output using a comment at the top:
 //
 //	// expect: line1
 //	// expect: line2
 //
 // If no expect comments are found, the test only verifies that the file compiles and runs without error.
-func TestNgtrFiles(t *testing.T) {
+func TestTunaFiles(t *testing.T) {
 	if !runtimeAvailable() {
 		t.Skip("CGO が無効なためテストをスキップします")
 	}
 
-	// Find all .ngtr files in the tests directory
+	// Find all .tuna files in the tests directory
 	testsDir := "."
 	entries, err := os.ReadDir(testsDir)
 	if err != nil {
@@ -30,19 +30,19 @@ func TestNgtrFiles(t *testing.T) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".ngtr") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tuna") {
 			continue
 		}
 
 		name := entry.Name()
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(testsDir, name)
-			runNgtrTest(t, path)
+			runTunaTest(t, path)
 		})
 	}
 }
 
-func runNgtrTest(t *testing.T, path string) {
+func runTunaTest(t *testing.T, path string) {
 	t.Helper()
 
 	// Read the source file

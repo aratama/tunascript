@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"negitoro/internal/ast"
+	"tuna/internal/ast"
 )
 
 type SymbolKind int

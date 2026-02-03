@@ -115,7 +115,7 @@ type Runtime struct {
 // "wasm trap: call stack exhausted" - スタックオーバーフロー
 //
 // 【原因の詳細】
-//  1. negitoroプログラムのmain関数がlisten()を呼び出す
+//  1. TunaScriptプログラムのmain関数がlisten()を呼び出す
 //  2. listen()はWASMのimport関数としてhttp_listen(Go関数)を呼び出す
 //  3. http_listenがhttp.ListenAndServe()でブロックする
 //  4. この時点でWASMのコールスタックは以下の状態:

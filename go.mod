@@ -1,4 +1,4 @@
-module negitoro
+module tuna
 
 go 1.24.0
 

@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"negitoro/internal/compiler"
-	"negitoro/internal/formatter"
-    "negitoro/internal/parser"
-	"negitoro/internal/runtime"
+	"tuna/internal/compiler"
+	"tuna/internal/formatter"
+	"tuna/internal/parser"
+	"tuna/internal/runtime"
 )
 
 func main() {
@@ -98,10 +98,10 @@ func runCmd(args []string) {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "使い方:")
-	fmt.Fprintln(os.Stderr, "  negitoro build <entry.ngtr> [-o <name>]")
-	fmt.Fprintln(os.Stderr, "  negitoro run <entry.ngtr> [args...]")
-	fmt.Fprintln(os.Stderr, "  negitoro launch <entry.wasm> [args...]")
-	fmt.Fprintln(os.Stderr, "  negitoro format <file.ngtr> [--write]")
+	fmt.Fprintln(os.Stderr, "  tuna build <entry.tuna> [-o <name>]")
+	fmt.Fprintln(os.Stderr, "  tuna run <entry.tuna> [args...]")
+	fmt.Fprintln(os.Stderr, "  tuna launch <entry.wasm> [args...]")
+	fmt.Fprintln(os.Stderr, "  tuna format <file.tuna> [--write]")
 }
 
 func launchCmd(args []string) {

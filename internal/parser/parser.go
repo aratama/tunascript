@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"negitoro/internal/ast"
-	"negitoro/internal/lexer"
+	"tuna/internal/ast"
+	"tuna/internal/lexer"
 )
 
 type Parser struct {
