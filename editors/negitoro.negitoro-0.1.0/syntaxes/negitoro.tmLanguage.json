@@ -48,7 +48,7 @@
     "numbers": {
       "patterns": [
         {
-          "name": "constant.numeric.float.negitoro",
+          "name": "constant.numeric.number.negitoro",
           "match": "\\b[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?\\b"
         },
         {
@@ -94,7 +94,7 @@
         },
         {
           "name": "support.type.primitive.negitoro",
-          "match": "\\b(integer|float|boolean|string|void)\\b"
+          "match": "\\b(integer|number|boolean|string|void)\\b"
         },
         {
           "name": "storage.type.negitoro",
@@ -115,7 +115,7 @@
         {
           "comment": "Self-closing JSX tag: <tagname ... />",
           "name": "meta.tag.jsx.negitoro",
-          "begin": "(<)([a-z][a-zA-Z0-9]*)(?=\\s|/?>)",
+          "begin": "(<)([A-Za-z][a-zA-Z0-9]*)(?=\\s|/?>)",
           "beginCaptures": {
             "1": { "name": "punctuation.definition.tag.begin.jsx.negitoro" },
             "2": { "name": "entity.name.tag.jsx.negitoro" }
@@ -129,7 +129,7 @@
         {
           "comment": "Closing JSX tag: </tagname>",
           "name": "meta.tag.jsx.negitoro",
-          "match": "(</?)([a-z][a-zA-Z0-9]*)(>)",
+          "match": "(</?)([A-Za-z][a-zA-Z0-9]*)(>)",
           "captures": {
             "1": { "name": "punctuation.definition.tag.begin.jsx.negitoro" },
             "2": { "name": "entity.name.tag.jsx.negitoro" },

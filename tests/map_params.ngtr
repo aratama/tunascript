@@ -1,0 +1,10 @@
+// expect: bar
+
+import { log } from "prelude";
+
+type Params = Map<string>;
+
+export function main(): void {
+  const req: Params = { foo: "bar", baz: "ignore" };
+  log(req.foo);
+}

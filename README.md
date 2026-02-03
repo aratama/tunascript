@@ -6,96 +6,56 @@ This repo contains a Go compiler for a minimal TypeScript subset that targets WA
 
 Language details are in `spec.md`.
 
-## Layout
-
-- `cmd/negitoro` CLI entrypoint
-- `internal/ast` AST definitions
-- `internal/lexer` / `internal/parser` lexer + parser
-- `internal/types` type checker
-- `internal/compiler` WAT generator and WAT->WASM conversion
-- `internal/runtime` runtime (wasmtime-go)
-
 ## Requirements
+
+Negitoroコンパイラをビルドや実行するには、以下の開発環境が必要です
 
 - Go 1.21+
 - CGO enabled
 - A C compiler available (wasmtime-go depends on C)
 
-## Build
-
-```
-go run ./cmd/negitoro build <entry.ngtr> [-o name]
-```
-
-- Produces `<entry-dir>/<name-or-entry-base>.wat` and `.wasm` in the same folder as the `.ngtr`.
-
 ## Run
 
-```
+Negitoroコンパイラを直接実行しNegitoroプログラムを起動するには、以下のコマンドを実行してください。
+
+```shell
 go run ./cmd/negitoro run <entry.ngtr> [args...]
 ```
 
-## Format
+## Negitoroプログラムのビルドと実行
+
+```shell
+go run ./cmd/negitoro build <entry.ngtr>
+```
+
+`entry.ngtr`と同じフォルダに、`entry.wat` と `entry.wasm`が生成されます。
+ただし現状ではビルドした`*.wasm`はNegitoroのランタイム関数に依存しており、`wasmtime`などのランタイム環境では実行できません。
+コンパイル済みの`*.wasm`を実行するには、以下のコマンドを使います。
+
+```shell
+go run ./cmd/negitoro launch <entry.ngtr> [args...]
+```
+
+将来的には、WASI Preview3に対応したwasmtimeなどのランタイムで直接実行できるようになるかもしれません。
+
+## サンプルの実行
+
+TODOリストのウェブサービスのサンプルを起動するには、以下のコマンドを実行します。
+
+```shell
+go run ./cmd/negitoro run example/server/server.ngtr example/server/todo.sqlite3
+```
+
+## Compiler Options
+
+### `negitoro format --write --type <file.ngtr>`
 
 コードフォーマッタを使ってソースコードを整形できます。
 
-```
-# フォーマット結果を標準出力に表示
-go run ./cmd/negitoro fmt <file.ngtr>
+- `--write` フォーマットした結果で上書きします。
+- `--type` ローカル変数に型推論で決定した型注釈を追加します。
 
-# ファイルを上書き保存
-go run ./cmd/negitoro fmt -w <file.ngtr>
+## エディタサポート(vscode)
 
-# 複数ファイルを一括フォーマット
-go run ./cmd/negitoro fmt -w *.ngtr
-```
-
-## Tests (detailed commands)
-
-### Run all tests (PowerShell)
-
-```
-$env:CGO_ENABLED=1
-# Ensure a C compiler is installed and on PATH
-go test ./...
-```
-
-### Run one package
-
-```
-go test ./internal/compiler -v
-```
-
-### Run a single test
-
-```
-go test ./internal/compiler -run TestArrayForOf -v
-```
-
-### Common failures
-
-- `undefined: wasmtime.*`
-  - CGO is disabled or a C compiler is missing.
-  - Enable CGO and install a C toolchain, then re-run tests.
-
-## エディタサポート
-
-### VS Code
-
-Negitoro言語のシンタックスハイライト拡張機能が `editors/vscode` に含まれています。
-
-#### インストール方法
-
-1. シンボリックリンクを作成（開発用に推奨）:
-
-```bash
-# Linux / macOS
-ln -s $(pwd)/editors/vscode ~/.vscode/extensions/negitoro.negitoro-0.1.0
-
-# Windows (PowerShell を管理者として実行)
-cmd /c mklink /D "$env:USERPROFILE\.vscode\extensions\negitoro.negitoro-0.1.0" "$(Get-Location)\editors\vscode"
-```
-
-2. VS Codeを再起動
-
-詳細は [editors/vscode/README.md](editors/vscode/README.md) を参照してください。
+Negitoro言語のシンタックスハイライト拡張機能が `editors` に含まれています。
+`Tasks: Run Task`から`Install VSIX Extension`を選択するとインストールできます(要NPM)。

@@ -97,6 +97,7 @@ func (g *Generator) collectStrings() {
 			g.collectStringsDecl(decl)
 		}
 	}
+	g.internString("")
 	// Generate and intern table definitions JSON if any tables exist
 	if len(g.tableDefs) > 0 {
 		jsonStr := g.generateTableDefsJSON()
@@ -189,7 +190,21 @@ func (g *Generator) collectStringsStmt(stmt ast.Stmt) {
 			g.collectStringsBlock(s.Else)
 		}
 	case *ast.ForOfStmt:
-		g.collectStringsType(s.VarType)
+		switch v := s.Var.(type) {
+		case *ast.ForOfIdentVar:
+			g.collectStringsType(v.Type)
+		case *ast.ForOfArrayDestructureVar:
+			for _, t := range v.Types {
+				g.collectStringsType(t)
+			}
+		case *ast.ForOfObjectDestructureVar:
+			for _, key := range v.Keys {
+				g.internString(key)
+			}
+			for _, t := range v.Types {
+				g.collectStringsType(t)
+			}
+		}
 		g.collectStringsExpr(s.Iter)
 		g.collectStringsBlock(s.Body)
 	case *ast.BlockStmt:
@@ -542,154 +557,155 @@ func (g *Generator) assignSymbols(entry string) {
 }
 
 func (g *Generator) emitImports(w *watBuilder) {
-	imports := []string{
-		"str_from_utf8",
-		"str_concat",
-		"str_eq",
-		"val_from_i64",
-		"val_from_f64",
-		"val_from_bool",
-		"val_to_i64",
-		"val_to_f64",
-		"val_to_bool",
-		"val_kind",
-		"obj_new",
-		"obj_set",
-		"obj_get",
-		"arr_new",
-		"arr_set",
-		"arr_get",
-		"arr_len",
-		"arr_join",
-		"range",
-		"val_eq",
-		"print",
-		"stringify",
-		"parse",
-		"toString",
-		"sql_exec",
-		"sql_query",
-		"sql_fetch_one",
-		"sql_fetch_optional",
-		"sql_execute",
-		"intern_string",
-		"db_save",
-		"db_open",
-		"get_args",
-		"register_tables",
-		"http_create_server",
-		"http_add_route",
-		"http_listen",
-		"http_response_text",
-		"http_response_html",
-		"http_response_text_str",
-		"http_response_html_str",
-		"http_response_json",
-		"http_response_redirect",
-		"http_response_redirect_str",
-		"http_get_path",
-		"http_get_method",
+	imports := []struct {
+		module string
+		name   string
+	}{
+		{"prelude", "str_from_utf8"},
+		{"prelude", "str_concat"},
+		{"prelude", "str_eq"},
+		{"prelude", "val_from_i64"},
+		{"prelude", "val_from_f64"},
+		{"prelude", "val_from_bool"},
+		{"prelude", "val_to_i64"},
+		{"prelude", "val_to_f64"},
+		{"prelude", "val_to_bool"},
+		{"prelude", "val_kind"},
+		{"prelude", "obj_new"},
+		{"prelude", "obj_set"},
+		{"prelude", "obj_get"},
+		{"prelude", "arr_new"},
+		{"prelude", "arr_set"},
+		{"prelude", "arr_get"},
+		{"prelude", "arr_len"},
+		{"prelude", "arr_join"},
+		{"prelude", "range"},
+		{"prelude", "val_eq"},
+		{"prelude", "log"},
+		{"prelude", "stringify"},
+		{"prelude", "parse"},
+		{"prelude", "toString"},
+		{"prelude", "sql_exec"},
+		{"prelude", "sql_query"},
+		{"prelude", "sql_fetch_one"},
+		{"prelude", "sql_fetch_optional"},
+		{"prelude", "sql_execute"},
+		{"prelude", "intern_string"},
+		{"sqlite", "db_open"},
+		{"prelude", "get_args"},
+		{"prelude", "register_tables"},
+		{"http", "http_create_server"},
+		{"http", "http_add_route"},
+		{"http", "http_listen"},
+		{"prelude", "http_response_text"},
+		{"http", "http_response_html"},
+		{"prelude", "http_response_text_str"},
+		{"http", "http_response_html_str"},
+		{"http", "http_response_json"},
+		{"http", "http_response_redirect"},
+		{"http", "http_response_redirect_str"},
+		{"prelude", "http_get_path"},
+		{"prelude", "http_get_method"},
 	}
-	for _, name := range imports {
-		sig := importSig(name)
-		w.line(fmt.Sprintf("(import \"prelude\" \"%s\" %s)", name, sig))
+	for _, imp := range imports {
+		sig := importSig(imp.module, imp.name)
+		w.line(fmt.Sprintf("(import \"%s\" \"%s\" %s)", imp.module, imp.name, sig))
 	}
 }
 
-func importSig(name string) string {
+func importSig(module, name string) string {
+	prefix := fmt.Sprintf("$%s", module)
 	switch name {
 	case "str_from_utf8":
-		return "(func $prelude.str_from_utf8 (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.str_from_utf8 (param i32 i32) (result i32))", prefix)
 	case "str_concat":
-		return "(func $prelude.str_concat (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.str_concat (param i32 i32) (result i32))", prefix)
 	case "str_eq":
-		return "(func $prelude.str_eq (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.str_eq (param i32 i32) (result i32))", prefix)
 	case "val_from_i64":
-		return "(func $prelude.val_from_i64 (param i64) (result i32))"
+		return fmt.Sprintf("(func %s.val_from_i64 (param i64) (result i32))", prefix)
 	case "val_from_f64":
-		return "(func $prelude.val_from_f64 (param f64) (result i32))"
+		return fmt.Sprintf("(func %s.val_from_f64 (param f64) (result i32))", prefix)
 	case "val_from_bool":
-		return "(func $prelude.val_from_bool (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.val_from_bool (param i32) (result i32))", prefix)
 	case "val_to_i64":
-		return "(func $prelude.val_to_i64 (param i32) (result i64))"
+		return fmt.Sprintf("(func %s.val_to_i64 (param i32) (result i64))", prefix)
 	case "val_to_f64":
-		return "(func $prelude.val_to_f64 (param i32) (result f64))"
+		return fmt.Sprintf("(func %s.val_to_f64 (param i32) (result f64))", prefix)
 	case "val_to_bool":
-		return "(func $prelude.val_to_bool (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.val_to_bool (param i32) (result i32))", prefix)
 	case "val_kind":
-		return "(func $prelude.val_kind (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.val_kind (param i32) (result i32))", prefix)
 	case "obj_new":
-		return "(func $prelude.obj_new (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.obj_new (param i32) (result i32))", prefix)
 	case "obj_set":
-		return "(func $prelude.obj_set (param i32 i32 i32))"
+		return fmt.Sprintf("(func %s.obj_set (param i32 i32 i32))", prefix)
 	case "obj_get":
-		return "(func $prelude.obj_get (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.obj_get (param i32 i32) (result i32))", prefix)
 	case "arr_new":
-		return "(func $prelude.arr_new (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.arr_new (param i32) (result i32))", prefix)
 	case "arr_set":
-		return "(func $prelude.arr_set (param i32 i32 i32))"
+		return fmt.Sprintf("(func %s.arr_set (param i32 i32 i32))", prefix)
 	case "arr_get":
-		return "(func $prelude.arr_get (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.arr_get (param i32 i32) (result i32))", prefix)
 	case "arr_len":
-		return "(func $prelude.arr_len (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.arr_len (param i32) (result i32))", prefix)
 	case "arr_join":
-		return "(func $prelude.arr_join (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.arr_join (param i32) (result i32))", prefix)
 	case "range":
-		return "(func $prelude.range (param i64 i64) (result i32))"
+		return fmt.Sprintf("(func %s.range (param i64 i64) (result i32))", prefix)
 	case "val_eq":
-		return "(func $prelude.val_eq (param i32 i32) (result i32))"
-	case "print":
-		return "(func $prelude.print (param i32))"
+		return fmt.Sprintf("(func %s.val_eq (param i32 i32) (result i32))", prefix)
+	case "log":
+		return fmt.Sprintf("(func %s.log (param i32))", prefix)
 	case "stringify":
-		return "(func $prelude.stringify (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.stringify (param i32) (result i32))", prefix)
 	case "parse":
-		return "(func $prelude.parse (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.parse (param i32) (result i32))", prefix)
 	case "toString":
-		return "(func $prelude.toString (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.toString (param i32) (result i32))", prefix)
 	case "sql_exec":
-		return "(func $prelude.sql_exec (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.sql_exec (param i32 i32) (result i32))", prefix)
 	case "sql_query":
-		return "(func $prelude.sql_query (param i32 i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.sql_query (param i32 i32 i32) (result i32))", prefix)
 	case "sql_fetch_one":
-		return "(func $prelude.sql_fetch_one (param i32 i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.sql_fetch_one (param i32 i32 i32) (result i32))", prefix)
 	case "sql_fetch_optional":
-		return "(func $prelude.sql_fetch_optional (param i32 i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.sql_fetch_optional (param i32 i32 i32) (result i32))", prefix)
 	case "sql_execute":
-		return "(func $prelude.sql_execute (param i32 i32 i32))"
+		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 i32))", prefix)
 	case "intern_string":
-		return "(func $prelude.intern_string (param i32 i32) (result i32))"
-	case "db_save":
-		return "(func $prelude.db_save (param i32))"
+		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result i32))", prefix)
 	case "db_open":
-		return "(func $prelude.db_open (param i32))"
+		return fmt.Sprintf("(func %s.db_open (param i32))", prefix)
 	case "get_args":
-		return "(func $prelude.get_args (result i32))"
+		return fmt.Sprintf("(func %s.get_args (result i32))", prefix)
 	case "register_tables":
-		return "(func $prelude.register_tables (param i32 i32))"
+		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
 	case "http_create_server":
-		return "(func $prelude.http_create_server (result i32))"
+		return fmt.Sprintf("(func %s.http_create_server (result i32))", prefix)
 	case "http_add_route":
-		return "(func $prelude.http_add_route (param i32 i32 i32 i32))"
+		return fmt.Sprintf("(func %s.http_add_route (param i32 i32 i32 i32))", prefix)
 	case "http_listen":
-		return "(func $prelude.http_listen (param i32 i32 i32))"
+		return fmt.Sprintf("(func %s.http_listen (param i32 i32 i32))", prefix)
 	case "http_response_text":
-		return "(func $prelude.http_response_text (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_text (param i32 i32) (result i32))", prefix)
 	case "http_response_html":
-		return "(func $prelude.http_response_html (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_html (param i32 i32) (result i32))", prefix)
 	case "http_response_text_str":
-		return "(func $prelude.http_response_text_str (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_text_str (param i32) (result i32))", prefix)
 	case "http_response_html_str":
-		return "(func $prelude.http_response_html_str (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_html_str (param i32) (result i32))", prefix)
 	case "http_response_json":
-		return "(func $prelude.http_response_json (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_json (param i32) (result i32))", prefix)
 	case "http_response_redirect":
-		return "(func $prelude.http_response_redirect (param i32 i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_redirect (param i32 i32) (result i32))", prefix)
 	case "http_response_redirect_str":
-		return "(func $prelude.http_response_redirect_str (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_response_redirect_str (param i32) (result i32))", prefix)
 	case "http_get_path":
-		return "(func $prelude.http_get_path (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_get_path (param i32) (result i32))", prefix)
 	case "http_get_method":
-		return "(func $prelude.http_get_method (param i32) (result i32))"
+		return fmt.Sprintf("(func %s.http_get_method (param i32) (result i32))", prefix)
 	default:
 		return ""
 	}
@@ -771,7 +787,15 @@ func (g *Generator) emitInit(w *watBuilder) {
 			if _, ok := cd.Init.(*ast.ArrowFunc); ok {
 				continue
 			}
+			if ident, ok := cd.Init.(*ast.IdentExpr); ok {
+				if _, ok := builtinModule(ident.Name); ok {
+					continue
+				}
+			}
 			sym := mod.Top[cd.Name]
+			if sym == nil || sym.Kind != types.SymVar {
+				continue
+			}
 			initType := g.checker.ExprTypes[cd.Init]
 			emitter.emitExpr(cd.Init, initType)
 			emitter.emitCoerce(initType, sym.Type)
@@ -1299,15 +1323,6 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	iterType := f.g.checker.ExprTypes[s.Iter]
 	elem := elemType(iterType)
-	var varType *types.Type
-	if s.VarType != nil {
-		if resolved := f.g.checker.TypeExprTypes[s.VarType]; resolved != nil {
-			varType = resolved
-		}
-	}
-	if varType == nil {
-		varType = elem
-	}
 	arrLocal := f.addLocalRaw("i32")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
@@ -1335,11 +1350,7 @@ func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	f.emit(fmt.Sprintf("(local.set %s)", valLocal))
 
 	f.pushScope()
-	loopVarLocal := f.addLocal(s.VarName, varType)
-	f.bindLocal(s.VarName, loopVarLocal)
-	f.emit(fmt.Sprintf("(local.get %s)", valLocal))
-	f.emitUnboxIfPrimitive(varType)
-	f.emit(fmt.Sprintf("(local.set %s)", loopVarLocal))
+	f.emitForOfBinding(s.Var, valLocal, elem)
 	f.emitBlock(s.Body)
 	f.popScope()
 
@@ -1352,6 +1363,102 @@ func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	f.emit(")")
 	f.indent--
 	f.emit(")")
+}
+
+func (f *funcEmitter) emitForOfBinding(binding ast.ForOfVar, valLocal string, elemType *types.Type) {
+	switch b := binding.(type) {
+	case *ast.ForOfIdentVar:
+		var varType *types.Type
+		if b.Type != nil {
+			varType = f.g.checker.TypeExprTypes[b.Type]
+		}
+		if varType == nil {
+			varType = elemType
+		}
+		if varType == nil {
+			return
+		}
+		local := f.addLocal(b.Name, varType)
+		f.bindLocal(b.Name, local)
+		f.emit(fmt.Sprintf("(local.get %s)", valLocal))
+		f.emitUnboxIfPrimitive(varType)
+		f.emit(fmt.Sprintf("(local.set %s)", local))
+	case *ast.ForOfArrayDestructureVar:
+		f.emitForOfArrayDestructure(b, valLocal, elemType)
+	case *ast.ForOfObjectDestructureVar:
+		f.emitForOfObjectDestructure(b, valLocal, elemType)
+	}
+}
+
+func (f *funcEmitter) emitForOfArrayDestructure(binding *ast.ForOfArrayDestructureVar, valLocal string, elemType *types.Type) {
+	if elemType == nil {
+		return
+	}
+	var elemTypes []*types.Type
+	switch elemType.Kind {
+	case types.KindArray:
+		for range binding.Names {
+			elemTypes = append(elemTypes, elemType.Elem)
+		}
+	case types.KindTuple:
+		if len(binding.Names) > len(elemType.Tuple) {
+			return
+		}
+		elemTypes = append(elemTypes, elemType.Tuple[:len(binding.Names)]...)
+	default:
+		return
+	}
+
+	for i, name := range binding.Names {
+		var varType *types.Type
+		if i < len(binding.Types) && binding.Types[i] != nil {
+			varType = f.g.checker.TypeExprTypes[binding.Types[i]]
+		}
+		if varType == nil && i < len(elemTypes) {
+			varType = elemTypes[i]
+		}
+		if varType == nil {
+			continue
+		}
+
+		local := f.addLocal(name, varType)
+		f.bindLocal(name, local)
+		f.emit(fmt.Sprintf("(local.get %s)", valLocal))
+		f.emit(fmt.Sprintf("(i32.const %d)", i))
+		f.emit("(call $prelude.arr_get)")
+		f.emitUnboxIfPrimitive(varType)
+		f.emit(fmt.Sprintf("(local.set %s)", local))
+	}
+}
+
+func (f *funcEmitter) emitForOfObjectDestructure(binding *ast.ForOfObjectDestructureVar, valLocal string, elemType *types.Type) {
+	if elemType == nil || elemType.Kind != types.KindObject {
+		return
+	}
+	for i, key := range binding.Keys {
+		propType := elemType.PropType(key)
+		if propType == nil {
+			continue
+		}
+		var varType *types.Type
+		if i < len(binding.Types) && binding.Types[i] != nil {
+			varType = f.g.checker.TypeExprTypes[binding.Types[i]]
+		}
+		if varType == nil {
+			varType = propType
+		}
+		if varType == nil {
+			continue
+		}
+
+		local := f.addLocal(key, varType)
+		f.bindLocal(key, local)
+		f.emit(fmt.Sprintf("(local.get %s)", valLocal))
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(key)))
+		f.emit("(call $prelude.obj_get)")
+		f.emitUnboxIfPrimitive(varType)
+		f.emit(fmt.Sprintf("(local.set %s)", local))
+	}
 }
 
 func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
@@ -1639,34 +1746,41 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		return
 	}
 	name := ident.Name
-	if isPreludeName(name) {
-		f.emitPreludeCall(name, call, t)
+	if module, ok := builtinModule(name); ok {
+		f.emitBuiltinCall(module, name, call, t)
 		return
 	}
-	sym := f.g.checker.IdentSymbols[ident]
-	if sym != nil {
-		if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Kind == types.KindFunc {
-			for i, arg := range call.Args {
-				argType := f.g.checker.ExprTypes[arg]
-				f.emitExpr(arg, argType)
-				if i < len(sym.Type.Params) {
-					f.emitCoerce(argType, sym.Type.Params[i])
-				}
-			}
-		} else {
-			for _, arg := range call.Args {
-				f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+	sym := resolveSymbolAlias(f.g.checker.IdentSymbols[ident])
+	if sym == nil {
+		return
+	}
+	if sym.Kind == types.SymBuiltin {
+		if module, ok := builtinModule(sym.Name); ok {
+			f.emitBuiltinCall(module, sym.Name, call, t)
+		}
+		return
+	}
+	if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Kind == types.KindFunc {
+		for i, arg := range call.Args {
+			argType := f.g.checker.ExprTypes[arg]
+			f.emitExpr(arg, argType)
+			if i < len(sym.Type.Params) {
+				f.emitCoerce(argType, sym.Type.Params[i])
 			}
 		}
-		f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
+	} else {
+		for _, arg := range call.Args {
+			f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		}
 	}
+	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
 }
 
 // emitMethodCallExpr emits code for method-style calls: obj.func(args) => func(obj, args)
 func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberExpr, t *types.Type) {
 	funcName := member.Property
 
-	if isPreludeName(funcName) {
+	if module, ok := builtinModule(funcName); ok {
 		// Create a synthetic call with object as first argument
 		allArgs := append([]ast.Expr{member.Object}, call.Args...)
 		syntheticCall := &ast.CallExpr{
@@ -1674,7 +1788,7 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 			Args:   allArgs,
 			Span:   call.Span,
 		}
-		f.emitPreludeCall(funcName, syntheticCall, t)
+		f.emitBuiltinCall(module, funcName, syntheticCall, t)
 		return
 	}
 
@@ -1726,34 +1840,34 @@ func (f *funcEmitter) resolveFunctionExpr(expr ast.Expr) (string, *types.Type) {
 	}
 }
 
-func (f *funcEmitter) emitPreludeCall(name string, call *ast.CallExpr, t *types.Type) {
+func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t *types.Type) {
 	switch name {
-	case "print":
+	case "log":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emitBoxIfPrimitive(f.g.checker.ExprTypes[arg])
-		f.emit("(call $prelude.print)")
+		f.emit(fmt.Sprintf("(call $%s.log)", module))
 	case "stringify":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emitBoxIfPrimitive(f.g.checker.ExprTypes[arg])
-		f.emit("(call $prelude.stringify)")
+		f.emit(fmt.Sprintf("(call $%s.stringify)", module))
 	case "parse":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
-		f.emit("(call $prelude.parse)")
+		f.emit(fmt.Sprintf("(call $%s.parse)", module))
 		f.emitUnboxIfPrimitive(t)
 	case "toString":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emitBoxIfPrimitive(f.g.checker.ExprTypes[arg])
-		f.emit("(call $prelude.toString)")
+		f.emit(fmt.Sprintf("(call $%s.toString)", module))
 	case "range":
 		start := call.Args[0]
 		end := call.Args[1]
 		f.emitExpr(start, f.g.checker.ExprTypes[start])
 		f.emitExpr(end, f.g.checker.ExprTypes[end])
-		f.emit("(call $prelude.range)")
+		f.emit(fmt.Sprintf("(call $%s.range)", module))
 	case "length":
 		f.emitLength(call)
 	case "map":
@@ -1762,36 +1876,34 @@ func (f *funcEmitter) emitPreludeCall(name string, call *ast.CallExpr, t *types.
 		f.emitFilter(call, t)
 	case "reduce":
 		f.emitReduce(call, t)
-	case "dbSave":
-		f.emitDbSave(call)
 	case "dbOpen":
-		f.emitDbOpen(call)
+		f.emitDbOpen(call, module)
 	case "getArgs":
-		f.emit("(call $prelude.get_args)")
+		f.emit(fmt.Sprintf("(call $%s.get_args)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
 	case "createServer":
-		f.emit("(call $prelude.http_create_server)")
+		f.emit(fmt.Sprintf("(call $%s.http_create_server)", module))
 	case "listen":
-		f.emitHttpListen(call)
+		f.emitHttpListen(call, module)
 	case "addRoute":
-		f.emitHttpAddRoute(call)
+		f.emitHttpAddRoute(call, module)
 	case "responseText":
-		f.emitHttpResponseText(call)
+		f.emitHttpResponseText(call, module)
 	case "responseHtml":
-		f.emitHttpResponseHtml(call)
+		f.emitHttpResponseHtml(call, module)
 	case "responseJson":
-		f.emitHttpResponseJson(call)
+		f.emitHttpResponseJson(call, module)
 	case "responseRedirect":
-		f.emitHttpResponseRedirect(call)
+		f.emitHttpResponseRedirect(call, module)
 	case "getPath":
-		f.emitHttpGetPath(call)
+		f.emitHttpGetPath(call, module)
 	case "getMethod":
-		f.emitHttpGetMethod(call)
+		f.emitHttpGetMethod(call, module)
 	}
 }
 
-func (f *funcEmitter) emitDbSave(call *ast.CallExpr) {
+func (f *funcEmitter) emitDbOpen(call *ast.CallExpr, module string) {
 	arg := call.Args[0]
 	argType := f.g.checker.ExprTypes[arg]
 	if argType.Kind == types.KindString {
@@ -1803,35 +1915,13 @@ func (f *funcEmitter) emitDbSave(call *ast.CallExpr) {
 				f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 				f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
 				f.emit("(call $prelude.intern_string)")
-				f.emit("(call $prelude.db_save)")
+				f.emit(fmt.Sprintf("(call $%s.db_open)", module))
 				return
 			}
 		}
 		// For non-literal strings (already a handle), use directly
 		f.emitExpr(arg, argType)
-		f.emit("(call $prelude.db_save)")
-	}
-}
-
-func (f *funcEmitter) emitDbOpen(call *ast.CallExpr) {
-	arg := call.Args[0]
-	argType := f.g.checker.ExprTypes[arg]
-	if argType.Kind == types.KindString {
-		// For string literal, use intern_string to convert to a handle
-		if strLit, ok := arg.(*ast.StringLit); ok {
-			f.g.internString(strLit.Value)
-			datum := f.g.stringDataByValue(strLit.Value)
-			if datum != nil {
-				f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
-				f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
-				f.emit("(call $prelude.intern_string)")
-				f.emit("(call $prelude.db_open)")
-				return
-			}
-		}
-		// For non-literal strings (already a handle), use directly
-		f.emitExpr(arg, argType)
-		f.emit("(call $prelude.db_open)")
+		f.emit(fmt.Sprintf("(call $%s.db_open)", module))
 	}
 }
 
@@ -1866,7 +1956,7 @@ func (f *funcEmitter) emitSqlQuery(call *ast.CallExpr) {
 
 // HTTP Server helper methods
 
-func (f *funcEmitter) emitHttpListen(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpListen(call *ast.CallExpr, module string) {
 	serverArg := call.Args[0]
 	portArg := call.Args[1]
 	serverType := f.g.checker.ExprTypes[serverArg]
@@ -1884,10 +1974,10 @@ func (f *funcEmitter) emitHttpListen(call *ast.CallExpr) {
 		}
 	}
 
-	f.emit("(call $prelude.http_listen)")
+	f.emit(fmt.Sprintf("(call $%s.http_listen)", module))
 }
 
-func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 	serverArg := call.Args[0]
 	pathArg := call.Args[1]
 	handlerArg := call.Args[2]
@@ -1937,10 +2027,10 @@ func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr) {
 		f.emitExpr(handlerArg, handlerType)
 	}
 
-	f.emit("(call $prelude.http_add_route)")
+	f.emit(fmt.Sprintf("(call $%s.http_add_route)", module))
 }
 
-func (f *funcEmitter) emitHttpResponseText(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpResponseText(call *ast.CallExpr, module string) {
 	textArg := call.Args[0]
 	textType := f.g.checker.ExprTypes[textArg]
 
@@ -1953,15 +2043,15 @@ func (f *funcEmitter) emitHttpResponseText(call *ast.CallExpr) {
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
 		}
-		f.emit("(call $prelude.http_response_text)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_text)", module))
 	} else {
 		// For non-literal strings (e.g., JSX), use the string handle version
 		f.emitExpr(textArg, textType)
-		f.emit("(call $prelude.http_response_text_str)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_text_str)", module))
 	}
 }
 
-func (f *funcEmitter) emitHttpResponseHtml(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpResponseHtml(call *ast.CallExpr, module string) {
 	htmlArg := call.Args[0]
 	htmlType := f.g.checker.ExprTypes[htmlArg]
 
@@ -1974,22 +2064,22 @@ func (f *funcEmitter) emitHttpResponseHtml(call *ast.CallExpr) {
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
 		}
-		f.emit("(call $prelude.http_response_html)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_html)", module))
 	} else {
 		// For non-literal strings (e.g., JSX), use the string handle version
 		f.emitExpr(htmlArg, htmlType)
-		f.emit("(call $prelude.http_response_html_str)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_html_str)", module))
 	}
 }
 
-func (f *funcEmitter) emitHttpResponseJson(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpResponseJson(call *ast.CallExpr, module string) {
 	dataArg := call.Args[0]
 	dataType := f.g.checker.ExprTypes[dataArg]
 	f.emitExpr(dataArg, dataType)
-	f.emit("(call $prelude.http_response_json)")
+	f.emit(fmt.Sprintf("(call $%s.http_response_json)", module))
 }
 
-func (f *funcEmitter) emitHttpResponseRedirect(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpResponseRedirect(call *ast.CallExpr, module string) {
 	urlArg := call.Args[0]
 	urlType := f.g.checker.ExprTypes[urlArg]
 
@@ -2002,26 +2092,26 @@ func (f *funcEmitter) emitHttpResponseRedirect(call *ast.CallExpr) {
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 			f.emit(fmt.Sprintf("(i32.const %d)", datum.length))
 		}
-		f.emit("(call $prelude.http_response_redirect)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_redirect)", module))
 	} else {
 		// For non-literal strings, use the string handle version
 		f.emitExpr(urlArg, urlType)
-		f.emit("(call $prelude.http_response_redirect_str)")
+		f.emit(fmt.Sprintf("(call $%s.http_response_redirect_str)", module))
 	}
 }
 
-func (f *funcEmitter) emitHttpGetPath(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpGetPath(call *ast.CallExpr, module string) {
 	reqArg := call.Args[0]
 	reqType := f.g.checker.ExprTypes[reqArg]
 	f.emitExpr(reqArg, reqType)
-	f.emit("(call $prelude.http_get_path)")
+	f.emit(fmt.Sprintf("(call $%s.http_get_path)", module))
 }
 
-func (f *funcEmitter) emitHttpGetMethod(call *ast.CallExpr) {
+func (f *funcEmitter) emitHttpGetMethod(call *ast.CallExpr, module string) {
 	reqArg := call.Args[0]
 	reqType := f.g.checker.ExprTypes[reqArg]
 	f.emitExpr(reqArg, reqType)
-	f.emit("(call $prelude.http_get_method)")
+	f.emit(fmt.Sprintf("(call $%s.http_get_method)", module))
 }
 
 func (f *funcEmitter) emitLength(call *ast.CallExpr) {
@@ -2605,18 +2695,41 @@ func elemType(t *types.Type) *types.Type {
 	}
 }
 
-func isPreludeName(name string) bool {
+func builtinModule(name string) (string, bool) {
 	switch name {
-	case "print", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
-		"createServer", "listen", "addRoute", "responseText", "responseHtml", "responseJson", "responseRedirect", "getPath", "getMethod":
-		return true
+	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
+		"responseText", "getPath", "getMethod":
+		return "prelude", true
+	case "dbOpen":
+		return "sqlite", true
+	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":
+		return "http", true
 	default:
-		return false
+		return "", false
 	}
+}
+
+func resolveSymbolAlias(sym *types.Symbol) *types.Symbol {
+	seen := map[*types.Symbol]bool{}
+	for sym != nil {
+		if seen[sym] {
+			return sym
+		}
+		seen[sym] = true
+		if sym.Alias == nil {
+			return sym
+		}
+		sym = sym.Alias
+	}
+	return nil
 }
 
 // emitJSXElement generates code for a JSX element (converts to string concatenation)
 func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
+	if info, ok := f.g.checker.JSXComponents[e]; ok {
+		f.emitJSXComponent(e, info)
+		return
+	}
 	// JSX is compiled to string concatenation
 	// <div className="foo">Hello {name}</div>
 	// becomes: "<div className=\"foo\">" + "Hello " + name + "</div>"
@@ -2691,6 +2804,47 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("</"+e.Tag+">")))
 		f.emit("(call $prelude.str_concat)")
 	}
+}
+
+func (f *funcEmitter) emitJSXComponent(e *ast.JSXElement, info *types.JSXComponentInfo) {
+	if info.PropsType == nil {
+		f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(info.Symbol)))
+		return
+	}
+
+	var childFragment ast.Expr
+	if info.PropsType.PropType("children") != nil {
+		childFragment = &ast.JSXFragment{Children: e.Children, Span: e.Span}
+		f.g.checker.ExprTypes[childFragment] = types.String()
+	}
+
+	var entries []ast.ObjectEntry
+	for _, attr := range e.Attributes {
+		valueExpr := attr.Value
+		if valueExpr == nil {
+			valueExpr = &ast.BoolLit{Value: true, Span: attr.Span}
+			f.g.checker.ExprTypes[valueExpr] = types.Bool()
+		}
+		entries = append(entries, ast.ObjectEntry{
+			Kind:  ast.ObjectProp,
+			Key:   attr.Name,
+			Value: valueExpr,
+			Span:  attr.Span,
+		})
+	}
+
+	if childFragment != nil {
+		entries = append(entries, ast.ObjectEntry{
+			Kind:  ast.ObjectProp,
+			Key:   "children",
+			Value: childFragment,
+			Span:  e.Span,
+		})
+	}
+
+	objLit := &ast.ObjectLit{Entries: entries, Span: e.Span}
+	f.emitObjectLit(objLit, info.PropsType)
+	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(info.Symbol)))
 }
 
 // emitJSXFragment generates code for a JSX fragment

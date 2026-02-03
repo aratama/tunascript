@@ -1,4 +1,4 @@
-import { print, stringify } from "prelude";
+import { log, stringify } from "prelude";
 
 // Simple JSX
 function simpleJsx(): string {
@@ -29,9 +29,9 @@ function nestedJsx(): string {
 }
 
 export function main(): void {
-  print(simpleJsx());
-  print(jsxWithExpr());
-  print(jsxWithAttrs());
-  print(jsxWithDynamicAttr());
-  print(nestedJsx());
+  log(simpleJsx());
+  log(jsxWithExpr());
+  log(jsxWithAttrs());
+  log(jsxWithDynamicAttr());
+  log(nestedJsx());
 }

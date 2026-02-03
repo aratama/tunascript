@@ -1,0 +1,17 @@
+// expect: [2,4,6,8]
+
+import { log, map, filter, reduce, stringify } from "prelude";
+
+const nums: integer[] = [1, 2, 3, 4];
+
+const genericMap: <T>(arr: T[], fn: (n: T) => T) => T[] = map;
+
+const numericMap: (arr: integer[], fn: (n: integer) => integer) => integer[] = genericMap;
+
+const doubled: integer[] = numericMap(nums, function (n: integer): integer {
+  return n * 2;
+});
+
+export function main(): void {
+  log(stringify(doubled));
+}

@@ -39,6 +39,9 @@ func (r *Runner) RunWithArgs(wasm []byte, args []string) (string, error) {
 	}
 	// Set WASM context for HTTP server callbacks
 	rt.SetWasmContext(store, instance)
+	if err := rt.ensureDefaultDB(); err != nil {
+		return "", err
+	}
 	start := instance.GetFunc(store, "_start")
 	if start == nil {
 		return "", errors.New("error")

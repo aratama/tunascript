@@ -1,0 +1,15 @@
+// expect: <div><section><h2>Greeting</h2><p>Hello</p></section></div>
+
+import { log, type JSX } from "prelude";
+
+function Card(props: { "title": string, "children": JSX }): JSX {
+  return <section><h2>{props.title}</h2>{props.children}</section>;
+}
+
+function Page(): JSX {
+  return <div><Card title="Greeting"><p>Hello</p></Card></div>;
+}
+
+export function main(): void {
+  log(Page());
+}

@@ -1,0 +1,15 @@
+// expect: <div><span>Hello</span></div>
+
+import { log, type JSX } from "prelude";
+
+function Greeting(): JSX {
+  return <span>Hello</span>;
+}
+
+function Page(): JSX {
+  return <div><Greeting /></div>;
+}
+
+export function main(): void {
+  log(Page());
+}

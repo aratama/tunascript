@@ -147,15 +147,42 @@ func (*IfStmt) stmtNode()       {}
 func (s *IfStmt) GetSpan() Span { return s.Span }
 
 type ForOfStmt struct {
-	VarName string
-	VarType TypeExpr
-	Iter    Expr
-	Body    *BlockStmt
-	Span    Span
+	Var  ForOfVar
+	Iter Expr
+	Body *BlockStmt
+	Span Span
 }
 
 func (*ForOfStmt) stmtNode()       {}
 func (s *ForOfStmt) GetSpan() Span { return s.Span }
+
+type ForOfVar interface {
+	forOfVarNode()
+}
+
+type ForOfIdentVar struct {
+	Name string
+	Type TypeExpr
+	Span Span
+}
+
+func (*ForOfIdentVar) forOfVarNode() {}
+
+type ForOfArrayDestructureVar struct {
+	Names []string
+	Types []TypeExpr
+	Span  Span
+}
+
+func (*ForOfArrayDestructureVar) forOfVarNode() {}
+
+type ForOfObjectDestructureVar struct {
+	Keys  []string
+	Types []TypeExpr
+	Span  Span
+}
+
+func (*ForOfObjectDestructureVar) forOfVarNode() {}
 
 type ReturnStmt struct {
 	Value Expr
@@ -441,6 +468,15 @@ type NamedType struct {
 func (*NamedType) typeNode()       {}
 func (t *NamedType) GetSpan() Span { return t.Span }
 
+type GenericType struct {
+	Name string
+	Args []TypeExpr
+	Span Span
+}
+
+func (*GenericType) typeNode()       {}
+func (t *GenericType) GetSpan() Span { return t.Span }
+
 type ArrayType struct {
 	Elem TypeExpr
 	Span Span
@@ -466,9 +502,10 @@ func (*UnionType) typeNode()       {}
 func (t *UnionType) GetSpan() Span { return t.Span }
 
 type FuncType struct {
-	Params []FuncTypeParam
-	Ret    TypeExpr
-	Span   Span
+	TypeParams []string
+	Params     []FuncTypeParam
+	Ret        TypeExpr
+	Span       Span
 }
 
 func (*FuncType) typeNode()       {}

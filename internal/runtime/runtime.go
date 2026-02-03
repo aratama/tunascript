@@ -87,6 +87,8 @@ type Runtime struct {
 	heap            []Value
 	output          bytes.Buffer
 	db              *sql.DB
+	handlerMu       sync.Mutex
+	currentTx       *sql.Tx
 	args            []string
 	tableDefs       []TableDef // Table definitions for validation
 	httpServers     map[int32]*HTTPServer
@@ -148,11 +150,6 @@ func NewRuntime() *Runtime {
 		internedStrings: make(map[uint64]int32),
 	}
 	r.heap = append(r.heap, Value{})
-	// Initialize in-memory SQLite database
-	db, err := sql.Open("sqlite", ":memory:")
-	if err == nil {
-		r.db = db
-	}
 	return r
 }
 
@@ -173,6 +170,12 @@ func (r *Runtime) SetArgs(args []string) {
 func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	define := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "prelude", name, fn)
+	}
+	defineHTTP := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "http", name, fn)
+	}
+	defineSQLite := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "sqlite", name, fn)
 	}
 	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) int32 {
 		return must(r.strFromUTF8(caller, ptr, length))
@@ -279,8 +282,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("print", func(handle int32) {
-		must0(r.print(handle))
+	if err := define("log", func(handle int32) {
+		must0(r.log(handle))
 	}); err != nil {
 		return err
 	}
@@ -304,12 +307,7 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("db_save", func(strHandle int32) {
-		must0(r.dbSaveHandle(strHandle))
-	}); err != nil {
-		return err
-	}
-	if err := define("db_open", func(strHandle int32) {
+	if err := defineSQLite("db_open", func(strHandle int32) {
 		must0(r.dbOpenHandle(strHandle))
 	}); err != nil {
 		return err
@@ -345,17 +343,17 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 		return err
 	}
 	// HTTP server functions
-	if err := define("http_create_server", func() int32 {
+	if err := defineHTTP("http_create_server", func() int32 {
 		return must(r.httpCreateServer())
 	}); err != nil {
 		return err
 	}
-	if err := define("http_add_route", func(caller *wasmtime.Caller, serverHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) {
+	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) {
 		must0(r.httpAddRoute(caller, serverHandle, pathPtr, pathLen, handlerHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_listen", func(caller *wasmtime.Caller, serverHandle int32, portPtr int32, portLen int32) {
+	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle int32, portPtr int32, portLen int32) {
 		must0(r.httpListen(caller, serverHandle, portPtr, portLen))
 	}); err != nil {
 		return err
@@ -365,7 +363,7 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) int32 {
+	if err := defineHTTP("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) int32 {
 		return must(r.httpResponseHtml(caller, htmlPtr, htmlLen))
 	}); err != nil {
 		return err
@@ -375,22 +373,22 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_html_str", func(strHandle int32) int32 {
+	if err := defineHTTP("http_response_html_str", func(strHandle int32) int32 {
 		return must(r.httpResponseHtmlStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_json", func(dataHandle int32) int32 {
+	if err := defineHTTP("http_response_json", func(dataHandle int32) int32 {
 		return must(r.httpResponseJson(dataHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) int32 {
+	if err := defineHTTP("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) int32 {
 		return must(r.httpResponseRedirect(caller, urlPtr, urlLen))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_redirect_str", func(strHandle int32) int32 {
+	if err := defineHTTP("http_response_redirect_str", func(strHandle int32) int32 {
 		return must(r.httpResponseRedirectStr(strHandle))
 	}); err != nil {
 		return err
@@ -547,7 +545,7 @@ func (r *Runtime) valToF64(handle int32) (float64, error) {
 		return 0, err
 	}
 	if v.Kind != KindF64 {
-		return 0, errors.New("not float")
+		return 0, errors.New("not number")
 	}
 	return v.F64, nil
 }
@@ -783,7 +781,7 @@ func (r *Runtime) valueEqual(a *Value, b *Value) bool {
 	}
 }
 
-func (r *Runtime) print(handle int32) error {
+func (r *Runtime) log(handle int32) error {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return err
@@ -822,7 +820,7 @@ func (r *Runtime) toString(handle int32) (int32, error) {
 		return r.newValue(Value{Kind: KindString, Str: strconv.FormatInt(v.I64, 10)}), nil
 	case KindF64:
 		if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-			return 0, errors.New("invalid float")
+			return 0, errors.New("invalid number")
 		}
 		return r.newValue(Value{Kind: KindString, Str: strconv.FormatFloat(v.F64, 'g', -1, 64)}), nil
 	case KindBool:
@@ -926,7 +924,7 @@ func (r *Runtime) writeJSON(handle int32, buf *bytes.Buffer) error {
 		buf.WriteString(strconv.FormatInt(v.I64, 10))
 	case KindF64:
 		if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-			return errors.New("invalid float")
+			return errors.New("invalid number")
 		}
 		buf.WriteString(strconv.FormatFloat(v.F64, 'g', -1, 64))
 	case KindBool:
@@ -999,7 +997,7 @@ func (r *Runtime) sqlExec(caller *wasmtime.Caller, ptr int32, length int32) (int
 }
 
 func (r *Runtime) execSelectQuery(query string) (int32, error) {
-	rows, err := r.db.Query(query)
+	rows, err := r.dbQuery(query)
 	if err != nil {
 		return 0, fmt.Errorf("sql query error: %w", err)
 	}
@@ -1070,7 +1068,7 @@ func (r *Runtime) execSelectQuery(query string) (int32, error) {
 }
 
 func (r *Runtime) execModifyQuery(query string) (int32, error) {
-	result, err := r.db.Exec(query)
+	result, err := r.dbExec(query)
 	if err != nil {
 		return 0, fmt.Errorf("sql exec error: %w", err)
 	}
@@ -1103,29 +1101,7 @@ func (r *Runtime) execModifyQuery(query string) (int32, error) {
 	return objHandle, nil
 }
 
-// dbSave saves the in-memory database to a file
-// dbSaveHandle saves the database using a string handle from the heap
-func (r *Runtime) dbSaveHandle(strHandle int32) error {
-	if r.db == nil {
-		return errors.New("database not initialized")
-	}
-	val, err := r.getValue(strHandle)
-	if err != nil {
-		return err
-	}
-	if val.Kind != KindString {
-		return errors.New("dbSaveHandle expects a string")
-	}
-	filename := val.Str
-	os.Remove(filename)
-	_, err = r.db.Exec(fmt.Sprintf("VACUUM INTO '%s'", filename))
-	if err != nil {
-		return fmt.Errorf("db save error: %w", err)
-	}
-	return nil
-}
-
-// dbOpenHandle opens a database using a string handle from the heap
+// dbOpenHandle opens a database file using a string handle from the heap
 func (r *Runtime) dbOpenHandle(strHandle int32) error {
 	val, err := r.getValue(strHandle)
 	if err != nil {
@@ -1136,74 +1112,7 @@ func (r *Runtime) dbOpenHandle(strHandle int32) error {
 	}
 	filename := val.Str
 
-	// Close existing database if any
-	if r.db != nil {
-		r.db.Close()
-	}
-
-	// Check if file exists and has content
-	fileInfo, err := os.Stat(filename)
-	fileExists := err == nil && fileInfo.Size() > 0
-
-	// Always use in-memory database for full read/write access
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		return fmt.Errorf("db open error: %w", err)
-	}
-	r.db = db
-
-	if fileExists {
-		// Restore the in-memory database from the file
-		_, err := r.db.Exec(fmt.Sprintf("ATTACH DATABASE '%s' AS backup", filename))
-		if err != nil {
-			return fmt.Errorf("db attach error: %w", err)
-		}
-
-		// Get all tables from the backup database
-		rows, err := r.db.Query("SELECT name FROM backup.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-		if err != nil {
-			return fmt.Errorf("db query tables error: %w", err)
-		}
-		defer rows.Close()
-
-		var tables []string
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				return fmt.Errorf("db scan error: %w", err)
-			}
-			tables = append(tables, name)
-		}
-
-		// Copy each table from backup to main
-		for _, table := range tables {
-			var createSQL string
-			err := r.db.QueryRow(fmt.Sprintf("SELECT sql FROM backup.sqlite_master WHERE type='table' AND name='%s'", table)).Scan(&createSQL)
-			if err != nil {
-				return fmt.Errorf("db get create sql error: %w", err)
-			}
-			_, err = r.db.Exec(createSQL)
-			if err != nil {
-				return fmt.Errorf("db create table error: %w", err)
-			}
-			_, err = r.db.Exec(fmt.Sprintf("INSERT INTO main.%s SELECT * FROM backup.%s", table, table))
-			if err != nil {
-				return fmt.Errorf("db copy data error: %w", err)
-			}
-		}
-
-		_, err = r.db.Exec("DETACH DATABASE backup")
-		if err != nil {
-			return fmt.Errorf("db detach error: %w", err)
-		}
-	}
-
-	// Initialize and validate tables based on registered table definitions
-	if err := r.initAndValidateTables(); err != nil {
-		return err
-	}
-
-	return nil
+	return r.openDB(filename)
 }
 
 // registerTables registers table definitions from JSON
@@ -1229,6 +1138,11 @@ func (r *Runtime) registerTables(caller *wasmtime.Caller, ptr int32, length int3
 		return fmt.Errorf("failed to parse table definitions: %w", err)
 	}
 	r.tableDefs = tableDefs
+	if r.db != nil {
+		if err := r.initAndValidateTables(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1260,10 +1174,46 @@ func (r *Runtime) initAndValidateTables() error {
 	return nil
 }
 
+func (r *Runtime) openDB(filename string) error {
+	if r.currentTx != nil {
+		r.currentTx.Rollback()
+		r.currentTx = nil
+	}
+	if r.db != nil {
+		r.db.Close()
+		r.db = nil
+	}
+
+	db, err := sql.Open("sqlite", filename)
+	if err != nil {
+		return fmt.Errorf("db open error: %w", err)
+	}
+	r.db = db
+
+	if err := r.initAndValidateTables(); err != nil {
+		r.db.Close()
+		r.db = nil
+		return err
+	}
+
+	return nil
+}
+
+func (r *Runtime) ensureDefaultDB() error {
+	if r.db != nil {
+		return nil
+	}
+	return r.openDB(":memory:")
+}
+
 // tableExists checks if a table exists in the database
 func (r *Runtime) tableExists(tableName string) (bool, error) {
 	var count int
-	err := r.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&count)
+	exec := r.currentExecutor()
+	if exec == nil {
+		return false, errors.New("database not initialized")
+	}
+	err := exec.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", tableName).Scan(&count)
 	if err != nil {
 		return false, fmt.Errorf("failed to check table existence: %w", err)
 	}
@@ -1272,7 +1222,7 @@ func (r *Runtime) tableExists(tableName string) (bool, error) {
 
 // validateTableStructure validates that an existing table matches the definition
 func (r *Runtime) validateTableStructure(tableDef TableDef) error {
-	rows, err := r.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", tableDef.Name))
+	rows, err := r.dbQuery(fmt.Sprintf("PRAGMA table_info(%s)", tableDef.Name))
 	if err != nil {
 		return fmt.Errorf("failed to get table info: %w", err)
 	}
@@ -1326,7 +1276,7 @@ func (r *Runtime) createTable(tableDef TableDef) error {
 	}
 	b.WriteString(")")
 
-	_, err := r.db.Exec(b.String())
+	_, err := r.dbExec(b.String())
 	if err != nil {
 		return fmt.Errorf("failed to create table '%s': %w", tableDef.Name, err)
 	}
@@ -1406,7 +1356,7 @@ func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, par
 }
 
 func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) (int32, error) {
-	rows, err := r.db.Query(query, params...)
+	rows, err := r.dbQuery(query, params...)
 	if err != nil {
 		return 0, fmt.Errorf("sql query error: %w", err)
 	}
@@ -1458,7 +1408,7 @@ func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) 
 }
 
 func (r *Runtime) execModifyQueryWithParams(query string, params []interface{}) (int32, error) {
-	result, err := r.db.Exec(query, params...)
+	result, err := r.dbExec(query, params...)
 	if err != nil {
 		return 0, fmt.Errorf("sql exec error: %w", err)
 	}
@@ -1499,7 +1449,7 @@ func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, 
 		return 0, err
 	}
 
-	rows, err := r.db.Query(query, params...)
+	rows, err := r.dbQuery(query, params...)
 	if err != nil {
 		return 0, fmt.Errorf("sql query error: %w", err)
 	}
@@ -1577,7 +1527,7 @@ func (r *Runtime) sqlFetchOptional(caller *wasmtime.Caller, ptr int32, length in
 		return 0, err
 	}
 
-	rows, err := r.db.Query(query, params...)
+	rows, err := r.dbQuery(query, params...)
 	if err != nil {
 		return 0, fmt.Errorf("sql query error: %w", err)
 	}
@@ -1655,7 +1605,7 @@ func (r *Runtime) sqlExecute(caller *wasmtime.Caller, ptr int32, length int32, p
 		return err
 	}
 
-	_, err = r.db.Exec(query, params...)
+	_, err = r.dbExec(query, params...)
 	if err != nil {
 		return fmt.Errorf("sql exec error: %w", err)
 	}
@@ -1695,6 +1645,35 @@ func (r *Runtime) extractSQLParams(paramsHandle int32) ([]interface{}, error) {
 		}
 	}
 	return params, nil
+}
+
+type dbExecutor interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
+func (r *Runtime) currentExecutor() dbExecutor {
+	if r.currentTx != nil {
+		return r.currentTx
+	}
+	return r.db
+}
+
+func (r *Runtime) dbExec(query string, args ...interface{}) (sql.Result, error) {
+	exec := r.currentExecutor()
+	if exec == nil {
+		return nil, errors.New("database not initialized")
+	}
+	return exec.Exec(query, args...)
+}
+
+func (r *Runtime) dbQuery(query string, args ...interface{}) (*sql.Rows, error) {
+	exec := r.currentExecutor()
+	if exec == nil {
+		return nil, errors.New("database not initialized")
+	}
+	return exec.Query(query, args...)
 }
 
 // HTTP Server methods
@@ -1801,6 +1780,8 @@ func (r *Runtime) StartPendingServer() error {
 
 	// Set up handler for all routes
 	server.mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		r.handlerMu.Lock()
+		defer r.handlerMu.Unlock()
 		// Look up the handler for this path
 		r.httpMu.Lock()
 		handlerHandle, ok := server.routes[req.URL.Path]
@@ -1846,6 +1827,25 @@ func (r *Runtime) StartPendingServer() error {
 		}
 		formKeyHandle := r.newValue(Value{Kind: KindString, Str: "form"})
 		_ = r.objSet(reqObj, formKeyHandle, formObj)
+
+		if r.db == nil {
+			http.Error(w, "Internal Server Error: database not initialized", http.StatusInternalServerError)
+			return
+		}
+		tx, err := r.db.Begin()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Transaction begin error: %v\n", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		r.currentTx = tx
+		committed := false
+		defer func() {
+			if !committed {
+				tx.Rollback()
+			}
+			r.currentTx = nil
+		}()
 
 		// Call the handler function
 		if r.instance != nil && r.store != nil {
@@ -1924,6 +1924,12 @@ func (r *Runtime) StartPendingServer() error {
 			}
 
 			// Check if it's a redirect response
+			if err := tx.Commit(); err != nil {
+				fmt.Fprintf(os.Stderr, "Transaction commit error: %v\n", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			committed = true
 			if contentType == "redirect" {
 				redirectUrlKey := r.newValue(Value{Kind: KindString, Str: "redirectUrl"})
 				if urlHandle, err := r.objGet(resHandle, redirectUrlKey); err == nil {

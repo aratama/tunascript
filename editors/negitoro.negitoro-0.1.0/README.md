@@ -22,7 +22,7 @@ Negitoro言語のシンタックスハイライトをVS Codeに追加する拡�
 
 ### 型
 
-- プリミティブ: `integer`, `float`, `boolean`, `string`, `void`
+- プリミティブ: `integer`, `number`, `boolean`, `string`, `void`
 - SQLテーブル定義用: `INTEGER`, `TEXT`, `REAL`, `BLOB` など
 
 ### その他

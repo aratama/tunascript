@@ -1,4 +1,5 @@
-import { print, stringify, getArgs, length, dbOpen, dbSave } from "prelude";
+import { log, stringify, getArgs, length } from "prelude";
+import { dbOpen } from "sqlite";
 
 // TODOリスト CLIツール
 // 使い方:
@@ -20,11 +21,11 @@ function listTodos(): void {
   const todos = fetch_all {
     SELECT id, title, created_at FROM todos WHERE completed = 0 ORDER BY id
   };
-  print("ID\tTitle\tCreated");
-  print("--\t-----\t-------");
+  log("ID\tTitle\tCreated");
+  log("--\t-----\t-------");
   for (const row of todos) {
     const { id, title, created_at } = row;
-    print(id + "\t" + title + "\t" + created_at);
+    log(id + "\t" + title + "\t" + created_at);
   }
 }
 
@@ -32,12 +33,12 @@ function listAllTodos(): void {
   const todos = fetch_all {
     SELECT id, title, completed, created_at FROM todos ORDER BY id
   };
-  print("ID\tStatus\tTitle\tCreated");
-  print("--\t------\t-----\t-------");
+  log("ID\tStatus\tTitle\tCreated");
+  log("--\t------\t-----\t-------");
   for (const row of todos) {
     const { id, title, completed, created_at } = row;
     const status = completed == "1" ? "[x]" : "[ ]";
-    print(id + "\t" + status + "\t" + title + "\t" + created_at);
+    log(id + "\t" + status + "\t" + title + "\t" + created_at);
   }
 }
 
@@ -48,30 +49,30 @@ function openTodo(title: string): void {
   const { id } = fetch_one {
     SELECT last_insert_rowid() AS id
   };
-  print("Task #" + id + " created: " + title);
+  log("Task #" + id + " created: " + title);
 }
 
 function closeTodo(id: string): void {
   execute {
     UPDATE todos SET completed = 1 WHERE id = {id}
   };
-  print("Task #" + id + " completed!");
+  log("Task #" + id + " completed!");
 }
 
 function showUsage(): void {
-  print("TODOリスト CLIツール");
-  print("");
-  print("使い方:");
-  print("  todo list           - 未完了のタスク一覧を表示");
-  print("  todo list --all     - 完了済みも含めてタスク一覧を表示");
-  print("  todo open <title>   - タスクを追加");
-  print("  todo close <id>     - タスクを完了");
-  print("  todo help           - ヘルプを表示");
-  print("  todo version        - バージョンを表示");
+  log("TODOリスト CLIツール");
+  log("");
+  log("使い方:");
+  log("  todo list           - 未完了のタスク一覧を表示");
+  log("  todo list --all     - 完了済みも含めてタスク一覧を表示");
+  log("  todo open <title>   - タスクを追加");
+  log("  todo close <id>     - タスクを完了");
+  log("  todo help           - ヘルプを表示");
+  log("  todo version        - バージョンを表示");
 }
 
 function showVersion(): void {
-  print("todo version 1.0.0");
+  log("todo version 1.0.0");
 }
 
 export function main(): void {
@@ -83,7 +84,6 @@ export function main(): void {
 
   if (argc == 0) {
     showUsage();
-    dbSave("todo.sqlite3");
     return;
   }
 
@@ -97,7 +97,7 @@ export function main(): void {
         if(opt == "--all") {
           listAllTodos();
         } else {
-          print("エラー: 不明なオプション: " + opt);
+          log("エラー: 不明なオプション: " + opt);
           showUsage();
         }
       } else {
@@ -108,7 +108,7 @@ export function main(): void {
       if (argc >= 2) {
         openTodo(args[1]);
       } else {
-        print("エラー: タイトルを指定してください");
+        log("エラー: タイトルを指定してください");
         showUsage();
       }
     }
@@ -116,7 +116,7 @@ export function main(): void {
       if (argc >= 2) {
         closeTodo(args[1]);
       } else {
-        print("エラー: IDを指定してください");
+        log("エラー: IDを指定してください");
         showUsage();
       }
     }
@@ -125,10 +125,9 @@ export function main(): void {
     case "version":
       showVersion()
     default: {
-      print("エラー: 不明なコマンド: " + cmd);
+      log("エラー: 不明なコマンド: " + cmd);
       showUsage();
     }
   };
 
-  dbSave("todo.sqlite3");
 }

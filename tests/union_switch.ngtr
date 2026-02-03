@@ -1,0 +1,17 @@
+// expect: v is integer
+// expect: v is string
+
+import { log } from "prelude";
+
+function describe(v: integer | string): string {
+  const message = switch (v) {
+    case v as integer: "v is integer"
+    case v as string: "v is string"
+  };
+  return message;
+}
+
+export function main(): void {
+  log(describe(42));
+  log(describe("hello"));
+}

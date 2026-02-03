@@ -1,0 +1,37 @@
+// expect: 1:Welcome back:Alice
+// expect: 2:Farewell tour:Bob
+
+import { log } from "prelude";
+
+create_table authors {
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL
+}
+
+create_table posts {
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  author_id INTEGER NOT NULL
+}
+
+export function main(): void {
+  execute {
+    INSERT INTO authors (name) VALUES ('Alice'), ('Bob')
+  };
+  execute {
+    INSERT INTO posts (title, author_id) VALUES ('Welcome back', 1), ('Farewell tour', 2)
+  };
+
+  const rows = fetch_all {
+    SELECT posts.id AS post_id,
+           posts.title AS post_title,
+           author.name AS author_name
+    FROM posts
+    JOIN authors AS author ON posts.author_id = author.id
+    ORDER BY posts.id
+  }
+
+  for (const { post_id, post_title, author_name } of rows) {
+    log(post_id + ":" + post_title + ":" + author_name);
+  }
+}

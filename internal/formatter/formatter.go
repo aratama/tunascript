@@ -271,10 +271,42 @@ func (f *Formatter) formatIfStmt(s *ast.IfStmt) {
 func (f *Formatter) formatForOfStmt(s *ast.ForOfStmt) {
 	f.writeIndent()
 	f.buf.WriteString("for (const ")
-	f.buf.WriteString(s.VarName)
-	if s.VarType != nil {
-		f.buf.WriteString(": ")
-		f.formatType(s.VarType)
+	switch v := s.Var.(type) {
+	case *ast.ForOfIdentVar:
+		f.buf.WriteString(v.Name)
+		if v.Type != nil {
+			f.buf.WriteString(": ")
+			f.formatType(v.Type)
+		}
+	case *ast.ForOfArrayDestructureVar:
+		f.buf.WriteString("[")
+		for i, name := range v.Names {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.buf.WriteString(name)
+			if i < len(v.Types) && v.Types[i] != nil {
+				f.buf.WriteString(": ")
+				f.formatType(v.Types[i])
+			}
+		}
+		f.buf.WriteString("]")
+	case *ast.ForOfObjectDestructureVar:
+		f.buf.WriteString("{ ")
+		for i, key := range v.Keys {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.buf.WriteString(key)
+			if i < len(v.Types) && v.Types[i] != nil {
+				f.buf.WriteString(": ")
+				f.formatType(v.Types[i])
+			}
+		}
+		f.buf.WriteString(" }")
+	default:
+		// Fallback to empty identifier to keep formatter stable
+		f.buf.WriteString("")
 	}
 	f.buf.WriteString(" of ")
 	f.formatExpr(s.Iter)
@@ -802,6 +834,16 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			f.formatType(member)
 		}
 	case *ast.FuncType:
+		if len(ty.TypeParams) > 0 {
+			f.buf.WriteString("<")
+			for i, name := range ty.TypeParams {
+				if i > 0 {
+					f.buf.WriteString(", ")
+				}
+				f.buf.WriteString(name)
+			}
+			f.buf.WriteString(">")
+		}
 		f.buf.WriteString("(")
 		for i, param := range ty.Params {
 			if i > 0 {

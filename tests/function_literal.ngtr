@@ -1,0 +1,21 @@
+// expect: [2,4,6,8]
+// expect: [2,4]
+// expect: 10
+import { filter, map, log, reduce, stringify } from "prelude";
+
+const numbers: integer[] = [1, 2, 3, 4];
+const doubled: integer[] = map(numbers, function (value) {
+  return value * 2;
+});
+const evens: integer[] = filter(numbers, function (value) {
+  return value % 2 == 0;
+});
+const total: integer = reduce(numbers, function (acc, value) {
+  return acc + value;
+}, 0);
+
+export function main(): void {
+  log(stringify(doubled));
+  log(stringify(evens));
+  log(total);
+}

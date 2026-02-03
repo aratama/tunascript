@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode"
 
 	"negitoro/internal/ast"
 )
@@ -23,6 +24,13 @@ type Symbol struct {
 	Type        *Type
 	StorageType *Type
 	Decl        ast.Decl
+	Alias       *Symbol
+}
+
+type JSXComponentInfo struct {
+	Symbol    *Symbol
+	PropsType *Type
+	ParamType *Type
 }
 
 type ModuleInfo struct {
@@ -45,6 +53,11 @@ type ColumnInfo struct {
 	Constraints string
 }
 
+type sqlColumnRef struct {
+	Table  string
+	Column string
+}
+
 type Checker struct {
 	Modules       map[string]*ModuleInfo
 	ExprTypes     map[ast.Expr]*Type
@@ -52,6 +65,7 @@ type Checker struct {
 	TypeExprTypes map[ast.TypeExpr]*Type
 	Tables        map[string]*TableInfo // table name -> table info
 	Errors        []error
+	JSXComponents map[*ast.JSXElement]*JSXComponentInfo
 }
 
 func NewChecker() *Checker {
@@ -61,6 +75,7 @@ func NewChecker() *Checker {
 		IdentSymbols:  map[*ast.IdentExpr]*Symbol{},
 		TypeExprTypes: map[ast.TypeExpr]*Type{},
 		Tables:        map[string]*TableInfo{},
+		JSXComponents: map[*ast.JSXElement]*JSXComponentInfo{},
 	}
 }
 
@@ -93,6 +108,24 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 					// Check if it's a prelude type
 					if preludeType := getPreludeType(item.Name); preludeType != nil {
 						mod.TypeAliases[item.Name] = preludeType
+					}
+				}
+			}
+		}
+		if imp.From == "http" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if httpType := getHTTPType(item.Name); httpType != nil {
+						mod.TypeAliases[item.Name] = httpType
+					}
+				}
+			}
+		}
+		if imp.From == "sqlite" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if sqliteType := getSQLiteType(item.Name); sqliteType != nil {
+						mod.TypeAliases[item.Name] = sqliteType
 					}
 				}
 			}
@@ -183,6 +216,38 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			}
 			continue
 		}
+		if imp.From == "http" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if httpType := getHTTPType(item.Name); httpType == nil {
+						c.errorf(imp.Span, "%s is not a type in http", item.Name)
+					}
+					continue
+				}
+				if !isHTTPName(item.Name) {
+					c.errorf(imp.Span, "%s is not in http", item.Name)
+					continue
+				}
+				env.vars[item.Name] = &Symbol{Name: item.Name, Kind: SymBuiltin}
+			}
+			continue
+		}
+		if imp.From == "sqlite" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if sqliteType := getSQLiteType(item.Name); sqliteType == nil {
+						c.errorf(imp.Span, "%s is not a type in sqlite", item.Name)
+					}
+					continue
+				}
+				if !isSQLiteName(item.Name) {
+					c.errorf(imp.Span, "%s is not in sqlite", item.Name)
+					continue
+				}
+				env.vars[item.Name] = &Symbol{Name: item.Name, Kind: SymBuiltin}
+			}
+			continue
+		}
 		dep, ok := c.Modules[imp.From]
 		if !ok {
 			c.errorf(imp.Span, "%s not found", imp.From)
@@ -226,6 +291,14 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 	if declType == nil {
 		return
 	}
+	sym := env.lookup(d.Name)
+	if sym != nil {
+		if ident, ok := d.Init.(*ast.IdentExpr); ok {
+			if target := env.lookup(ident.Name); target != nil {
+				sym.Alias = target
+			}
+		}
+	}
 	if arrow, ok := d.Init.(*ast.ArrowFunc); ok {
 		if declType.Kind != KindFunc {
 			c.errorf(d.Span, "function type annotation required")
@@ -238,7 +311,10 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 		return
 	}
 	if declType.Kind == KindFunc {
-		c.errorf(d.Span, "function initializer required")
+		initType := c.checkExpr(env, d.Init, declType)
+		if initType != nil && !initType.AssignableTo(declType) {
+			c.errorf(d.Span, "type mismatch")
+		}
 		return
 	}
 	initType := c.checkExpr(env, d.Init, declType)
@@ -285,7 +361,7 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 		if params[i] == nil {
 			return nil
 		}
-		if expectedParams != nil && !params[i].Equals(expectedParams[i]) {
+		if expectedParams != nil && expectedParams[i] != nil && expectedParams[i].Kind != KindTypeParam && !params[i].AssignableTo(expectedParams[i]) {
 			c.errorf(p.Span, "param type mismatch")
 			return nil
 		}
@@ -305,7 +381,7 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 		if ret == nil {
 			return nil
 		}
-		if expectedRet != nil && !ret.Equals(expectedRet) {
+		if expectedRet != nil && expectedRet.Kind != KindTypeParam && !ret.AssignableTo(expectedRet) {
 			c.errorf(fn.Span, "return type mismatch")
 			return nil
 		}
@@ -493,21 +569,17 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			c.errorf(s.Span, "for-of requires array")
 			return
 		}
-		var varType *Type
-		if s.VarType != nil {
-			varType = c.resolveType(s.VarType, env.mod)
-			if varType == nil {
-				return
-			}
-			if !elemType.AssignableTo(varType) {
-				c.errorf(s.Span, "for-of element type mismatch")
-				return
-			}
-		} else {
-			varType = elemType
+		loopVars, ok := c.resolveForOfBindings(env, s.Var, elemType)
+		if !ok {
+			return
 		}
 		loopEnv := env.child()
-		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType, StorageType: varType}
+		for _, lv := range loopVars {
+			if lv.Type == nil {
+				continue
+			}
+			loopEnv.vars[lv.Name] = &Symbol{Name: lv.Name, Kind: SymVar, Type: lv.Type, StorageType: lv.Type}
+		}
 		c.checkBlockInfer(loopEnv, s.Body, info)
 	case *ast.BlockStmt:
 		c.checkBlockInfer(env, s, info)
@@ -702,26 +774,121 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			c.errorf(s.Span, "for-of requires array")
 			return
 		}
-		var varType *Type
-		if s.VarType != nil {
-			// 型注釈がある場合
-			varType = c.resolveType(s.VarType, env.mod)
-			if varType == nil {
-				return
-			}
-			if !elemType.AssignableTo(varType) {
-				c.errorf(s.Span, "for-of element type mismatch")
-				return
-			}
-		} else {
-			// 型推論：イテラブルの要素型を使用
-			varType = elemType
+		loopVars, ok := c.resolveForOfBindings(env, s.Var, elemType)
+		if !ok {
+			return
 		}
 		loopEnv := env.child()
-		loopEnv.vars[s.VarName] = &Symbol{Name: s.VarName, Kind: SymVar, Type: varType, StorageType: varType}
+		for _, lv := range loopVars {
+			if lv.Type == nil {
+				continue
+			}
+			loopEnv.vars[lv.Name] = &Symbol{Name: lv.Name, Kind: SymVar, Type: lv.Type, StorageType: lv.Type}
+		}
 		c.checkBlock(loopEnv, s.Body, retType)
 	case *ast.BlockStmt:
 		c.checkBlock(env, s, retType)
+	}
+}
+
+type forOfVarBinding struct {
+	Name string
+	Type *Type
+}
+
+func (c *Checker) resolveForOfBindings(env *Env, binding ast.ForOfVar, elemType *Type) ([]forOfVarBinding, bool) {
+	switch b := binding.(type) {
+	case *ast.ForOfIdentVar:
+		if elemType == nil {
+			c.errorf(b.Span, "for-of binding requires iterable element")
+			return nil, false
+		}
+		var varType *Type
+		if b.Type != nil {
+			varType = c.resolveType(b.Type, env.mod)
+			if varType == nil {
+				return nil, false
+			}
+			if elemType != nil && !elemType.AssignableTo(varType) {
+				c.errorf(b.Span, "for-of element type mismatch")
+				return nil, false
+			}
+		} else {
+			varType = elemType
+		}
+		return []forOfVarBinding{{Name: b.Name, Type: varType}}, true
+	case *ast.ForOfArrayDestructureVar:
+		if elemType == nil {
+			c.errorf(b.Span, "for-of destructuring requires iterable element")
+			return nil, false
+		}
+		var elemTypes []*Type
+		switch elemType.Kind {
+		case KindArray:
+			for range b.Names {
+				elemTypes = append(elemTypes, elemType.Elem)
+			}
+		case KindTuple:
+			if len(b.Names) > len(elemType.Tuple) {
+				c.errorf(b.Span, "destructuring has more elements than tuple")
+				return nil, false
+			}
+			elemTypes = append(elemTypes, elemType.Tuple[:len(b.Names)]...)
+		default:
+			c.errorf(b.Span, "for-of destructuring requires array or tuple element")
+			return nil, false
+		}
+		var bindings []forOfVarBinding
+		for i, name := range b.Names {
+			var elem *Type
+			if i < len(elemTypes) {
+				elem = elemTypes[i]
+			}
+			var declType *Type
+			if i < len(b.Types) && b.Types[i] != nil {
+				declType = c.resolveType(b.Types[i], env.mod)
+				if declType == nil {
+					return nil, false
+				}
+				if elem != nil && !elem.AssignableTo(declType) {
+					c.errorf(b.Span, "destructuring type mismatch for %s", name)
+				}
+			} else {
+				declType = elem
+			}
+			bindings = append(bindings, forOfVarBinding{Name: name, Type: declType})
+		}
+		return bindings, true
+	case *ast.ForOfObjectDestructureVar:
+		if elemType == nil || elemType.Kind != KindObject {
+			c.errorf(b.Span, "for-of object destructuring requires object element")
+			return nil, false
+		}
+		var bindings []forOfVarBinding
+		for i, key := range b.Keys {
+			propType := elemType.PropType(key)
+			if propType == nil {
+				c.errorf(b.Span, "property '%s' not found in object", key)
+				return nil, false
+			}
+			var declType *Type
+			if i < len(b.Types) && b.Types[i] != nil {
+				declType = c.resolveType(b.Types[i], env.mod)
+				if declType == nil {
+					return nil, false
+				}
+				if !propType.AssignableTo(declType) {
+					c.errorf(b.Span, "destructuring type mismatch for %s", key)
+				}
+			} else {
+				declType = propType
+			}
+			bindings = append(bindings, forOfVarBinding{Name: key, Type: declType})
+		}
+		return bindings, true
+	default:
+		c.errorf(ast.Span{}, "unsupported for-of binding")
+		return nil, false
 	}
 }
 
@@ -758,8 +925,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			return nil
 		}
 		if sym.Kind == SymBuiltin {
-			c.errorf(e.Span, "builtin cannot be used as value")
-			return nil
+			if expected == nil || expected.Kind != KindFunc {
+				c.errorf(e.Span, "builtin cannot be used as value")
+				return nil
+			}
+			c.ExprTypes[expr] = expected
+			return expected
 		}
 		c.IdentSymbols[e] = sym
 		c.ExprTypes[expr] = sym.Type
@@ -996,12 +1167,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			if paramType == nil {
 				continue
 			}
-			// Parameters must be primitive types (string, integer, float, bool)
+			// Parameters must be primitive types (string, integer, number, bool)
 			switch paramType.Kind {
 			case KindString, KindI64, KindF64, KindBool:
 				// OK
 			default:
-				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, integer, float, or bool)")
+				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, integer, number, or bool)")
 			}
 		}
 		// Validate SQL query against table definitions
@@ -1033,6 +1204,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		c.ExprTypes[expr] = resultType
 		return resultType
 	case *ast.JSXElement:
+		if isJSXComponentTag(e.Tag) {
+			return c.checkJSXComponent(env, e)
+		}
 		// JSX element returns string
 		// Check attribute expressions
 		for _, attr := range e.Attributes {
@@ -1063,6 +1237,119 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 	default:
 		return nil
 	}
+}
+
+func (c *Checker) checkJSXComponent(env *Env, e *ast.JSXElement) *Type {
+	tag := e.Tag
+	sym := env.lookup(tag)
+	if sym == nil {
+		c.errorf(e.Span, "undefined component: %s", tag)
+		c.ExprTypes[e] = String()
+		return String()
+	}
+	if sym.Kind != SymFunc || sym.Type == nil || sym.Type.Kind != KindFunc {
+		c.errorf(e.Span, "%s is not a component function", tag)
+		c.ExprTypes[e] = String()
+		return String()
+	}
+	if len(sym.Type.Params) == 0 {
+		for _, attr := range e.Attributes {
+			c.errorf(attr.Span, "component %s does not accept attributes", tag)
+		}
+		if len(e.Children) > 0 {
+			c.errorf(e.Span, "component %s does not accept children", tag)
+		}
+		c.JSXComponents[e] = &JSXComponentInfo{
+			Symbol: sym,
+		}
+		c.ExprTypes[e] = String()
+		return String()
+	}
+	paramType := sym.Type.Params[0]
+	if paramType.Kind != KindObject {
+		c.errorf(e.Span, "component %s props must be an object", tag)
+		c.ExprTypes[e] = String()
+		return String()
+	}
+
+	props := []Prop{}
+	seen := map[string]bool{}
+
+	for _, attr := range e.Attributes {
+		attrType := Bool()
+		if attr.Value != nil {
+			attrType = c.checkExpr(env, attr.Value, nil)
+			if attrType != nil && !isPrimitiveKind(attrType.Kind) {
+				c.errorf(attr.Span, "JSX attribute value must be a primitive type")
+			}
+		}
+
+		targetType := paramType.PropType(attr.Name)
+		if targetType == nil {
+			if paramType.Index != nil {
+				targetType = paramType.Index
+			} else {
+				c.errorf(attr.Span, "component %s does not accept attribute %q", tag, attr.Name)
+				continue
+			}
+		}
+
+		if attrType != nil && !attrType.AssignableTo(targetType) {
+			c.errorf(attr.Span, "attribute %s has incompatible type", attr.Name)
+		}
+
+		props = append(props, Prop{Name: attr.Name, Type: targetType})
+		seen[attr.Name] = true
+	}
+
+	childType := paramType.PropType("children")
+	if len(e.Children) > 0 {
+		if childType == nil {
+			childType = paramType.Index
+		}
+		if childType == nil {
+			c.errorf(e.Span, "component %s does not accept children", tag)
+		} else {
+			if !String().AssignableTo(childType) {
+				c.errorf(e.Span, "children must be a string-compatible type")
+			}
+			props = append(props, Prop{Name: "children", Type: childType})
+			seen["children"] = true
+		}
+	} else if childType != nil {
+		props = append(props, Prop{Name: "children", Type: childType})
+		seen["children"] = true
+	}
+
+	for _, prop := range paramType.Props {
+		if !seen[prop.Name] {
+			c.errorf(e.Span, "component %s missing property %q", tag, prop.Name)
+		}
+	}
+
+	c.JSXComponents[e] = &JSXComponentInfo{
+		Symbol:    sym,
+		PropsType: NewObject(props),
+		ParamType: paramType,
+	}
+	c.ExprTypes[e] = String()
+	return String()
+}
+
+func isPrimitiveKind(kind Kind) bool {
+	switch kind {
+	case KindString, KindI64, KindF64, KindBool:
+		return true
+	default:
+		return false
+	}
+}
+
+func isJSXComponentTag(tag string) bool {
+	for _, r := range tag {
+		return unicode.IsUpper(r)
+	}
+	return false
 }
 
 // checkJSXChild checks the type of a JSX child element
@@ -1174,15 +1461,159 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 		c.errorf(call.Span, "argument count mismatch")
 		return nil
 	}
+	bindings := map[*Type]*Type{}
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i])
-		if argType != nil && !argType.AssignableTo(sig.Params[i]) {
+		if argType == nil {
+			return nil
+		}
+		expectedParam := sig.Params[i]
+		if typeContainsTypeParam(expectedParam) {
+			if !c.matchType(expectedParam, argType, bindings) {
+				c.errorf(call.Span, "argument type mismatch")
+				return nil
+			}
+		} else if !argType.AssignableTo(expectedParam) {
 			c.errorf(call.Span, "argument type mismatch")
 			return nil
 		}
 	}
-	c.ExprTypes[call] = sig.Ret
-	return sig.Ret
+	retType := c.substituteTypeParams(sig.Ret, bindings)
+	c.ExprTypes[call] = retType
+	return retType
+}
+
+func (c *Checker) matchType(expected, actual *Type, bindings map[*Type]*Type) bool {
+	if expected == nil || actual == nil {
+		return false
+	}
+	if expected.Kind == KindTypeParam {
+		if bound, ok := bindings[expected]; ok {
+			return actual.Equals(bound)
+		}
+		bindings[expected] = actual
+		return true
+	}
+	if expected.Kind != actual.Kind {
+		return false
+	}
+	switch expected.Kind {
+	case KindArray:
+		return c.matchType(expected.Elem, actual.Elem, bindings)
+	case KindFunc:
+		if len(expected.Params) != len(actual.Params) {
+			return false
+		}
+		for i := range expected.Params {
+			if !c.matchType(expected.Params[i], actual.Params[i], bindings) {
+				return false
+			}
+		}
+		return c.matchType(expected.Ret, actual.Ret, bindings)
+	case KindTuple:
+		if len(expected.Tuple) != len(actual.Tuple) {
+			return false
+		}
+		for i := range expected.Tuple {
+			if !c.matchType(expected.Tuple[i], actual.Tuple[i], bindings) {
+				return false
+			}
+		}
+		return true
+	default:
+		return actual.Equals(expected)
+	}
+}
+
+func (c *Checker) substituteTypeParams(typ *Type, bindings map[*Type]*Type) *Type {
+	if typ == nil {
+		return nil
+	}
+	if typ.Kind == KindTypeParam {
+		if actual, ok := bindings[typ]; ok {
+			return actual
+		}
+		return typ
+	}
+	switch typ.Kind {
+	case KindArray:
+		return NewArray(c.substituteTypeParams(typ.Elem, bindings))
+	case KindFunc:
+		params := make([]*Type, len(typ.Params))
+		for i, param := range typ.Params {
+			params[i] = c.substituteTypeParams(param, bindings)
+		}
+		return NewFunc(params, c.substituteTypeParams(typ.Ret, bindings))
+	case KindTuple:
+		elems := make([]*Type, len(typ.Tuple))
+		for i, elem := range typ.Tuple {
+			elems[i] = c.substituteTypeParams(elem, bindings)
+		}
+		return NewTuple(elems)
+	case KindObject:
+		var props []Prop
+		for _, prop := range typ.Props {
+			props = append(props, Prop{Name: prop.Name, Type: c.substituteTypeParams(prop.Type, bindings)})
+		}
+		if typ.Index != nil {
+			return NewObjectWithIndex(props, c.substituteTypeParams(typ.Index, bindings))
+		}
+		return NewObject(props)
+	case KindUnion:
+		var members []*Type
+		for _, member := range typ.Union {
+			members = append(members, c.substituteTypeParams(member, bindings))
+		}
+		return NewUnion(members)
+	default:
+		return typ
+	}
+}
+
+func typeContainsTypeParam(typ *Type) bool {
+	if typ == nil {
+		return false
+	}
+	if typ.Kind == KindTypeParam {
+		return true
+	}
+	switch typ.Kind {
+	case KindArray:
+		return typeContainsTypeParam(typ.Elem)
+	case KindFunc:
+		for _, param := range typ.Params {
+			if typeContainsTypeParam(param) {
+				return true
+			}
+		}
+		return typeContainsTypeParam(typ.Ret)
+	case KindTuple:
+		for _, elem := range typ.Tuple {
+			if typeContainsTypeParam(elem) {
+				return true
+			}
+		}
+		return false
+	case KindObject:
+		for _, prop := range typ.Props {
+			if typeContainsTypeParam(prop.Type) {
+				return true
+			}
+		}
+		if typ.Index != nil {
+			return typeContainsTypeParam(typ.Index)
+		}
+		return false
+	case KindUnion:
+		for _, member := range typ.Union {
+			if typeContainsTypeParam(member) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 // checkMethodCall handles method-style calls: obj.func(args) => func(obj, args)
@@ -1247,9 +1678,9 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 
 func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, expected *Type) *Type {
 	switch name {
-	case "print":
+	case "log":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "print expects 1 arg")
+			c.errorf(call.Span, "log expects 1 arg")
 			return nil
 		}
 		c.checkExpr(env, call.Args[0], nil)
@@ -1429,18 +1860,6 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = fnType.Ret
 		return fnType.Ret
-	case "dbSave":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "dbSave expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "dbSave expects string")
-			return nil
-		}
-		c.ExprTypes[call] = Void()
-		return Void()
 	case "dbOpen":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "dbOpen expects 1 arg")
@@ -1796,58 +2215,139 @@ func (c *Checker) recordType(expr ast.TypeExpr, typ *Type) *Type {
 }
 
 func (c *Checker) resolveType(expr ast.TypeExpr, mod *ModuleInfo) *Type {
+	return c.resolveTypeRec(expr, mod, nil)
+}
+
+func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams map[string]*Type) *Type {
+	if expr == nil {
+		return nil
+	}
 	switch t := expr.(type) {
 	case *ast.NamedType:
+		if typeParams != nil {
+			if paramType, ok := typeParams[t.Name]; ok {
+				return c.recordType(expr, paramType)
+			}
+		}
 		switch t.Name {
 		case "integer":
 			return c.recordType(expr, I64())
-		case "float":
-			return c.recordType(expr, F64())
 		case "boolean":
 			return c.recordType(expr, Bool())
-		case "string", "JSX":
+		case "string":
 			return c.recordType(expr, String())
 		case "void":
 			return c.recordType(expr, Void())
+		case "number":
+			return c.recordType(expr, Number())
 		default:
-			// Check if it's a type alias in the current module
 			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
 				return c.recordType(expr, aliasType)
 			}
 			c.errorf(t.Span, "unknown type %s", t.Name)
 			return nil
 		}
+	case *ast.GenericType:
+		switch t.Name {
+		case "Array":
+			if len(t.Args) != 1 {
+				c.errorf(t.Span, "Array expects 1 type argument")
+				return nil
+			}
+			elemType := c.resolveTypeRec(t.Args[0], mod, typeParams)
+			if elemType == nil {
+				return nil
+			}
+			return c.recordType(expr, NewArray(elemType))
+		case "Map":
+			if len(t.Args) != 1 {
+				c.errorf(t.Span, "Map expects 1 type argument")
+				return nil
+			}
+			valType := c.resolveTypeRec(t.Args[0], mod, typeParams)
+			if valType == nil {
+				return nil
+			}
+			return c.recordType(expr, NewObjectWithIndex(nil, valType))
+		default:
+			c.errorf(t.Span, "unknown generic type %s", t.Name)
+			return nil
+		}
 	case *ast.ArrayType:
-		elem := c.resolveType(t.Elem, mod)
+		elem := c.resolveTypeRec(t.Elem, mod, typeParams)
+		if elem == nil {
+			return nil
+		}
 		return c.recordType(expr, NewArray(elem))
 	case *ast.TupleType:
 		var elems []*Type
 		for _, e := range t.Elems {
-			elems = append(elems, c.resolveType(e, mod))
+			elemType := c.resolveTypeRec(e, mod, typeParams)
+			if elemType == nil {
+				return nil
+			}
+			elems = append(elems, elemType)
 		}
 		return c.recordType(expr, NewTuple(elems))
 	case *ast.UnionType:
 		var members []*Type
 		for _, member := range t.Types {
-			members = append(members, c.resolveType(member, mod))
+			memberType := c.resolveTypeRec(member, mod, typeParams)
+			if memberType == nil {
+				return nil
+			}
+			members = append(members, memberType)
 		}
 		return c.recordType(expr, NewUnion(members))
 	case *ast.ObjectType:
 		var props []Prop
 		for _, p := range t.Props {
-			props = append(props, Prop{Name: p.Key, Type: c.resolveType(p.Type, mod)})
+			propType := c.resolveTypeRec(p.Type, mod, typeParams)
+			if propType == nil {
+				return nil
+			}
+			props = append(props, Prop{Name: p.Key, Type: propType})
 		}
 		return c.recordType(expr, NewObject(props))
 	case *ast.FuncType:
+		combined := typeParams
+		if len(t.TypeParams) > 0 {
+			combined = cloneTypeParams(typeParams)
+			for _, name := range t.TypeParams {
+				combined[name] = NewTypeParam(name)
+			}
+		}
 		params := make([]*Type, len(t.Params))
 		for i, p := range t.Params {
-			params[i] = c.resolveType(p.Type, mod)
+			paramType := c.resolveTypeRec(p.Type, mod, combined)
+			if paramType == nil {
+				return nil
+			}
+			params[i] = paramType
 		}
-		ret := c.resolveType(t.Ret, mod)
-		return c.recordType(expr, NewFunc(params, ret))
+		ret := c.resolveTypeRec(t.Ret, mod, combined)
+		if ret == nil {
+			return nil
+		}
+		funcType := NewFunc(params, ret)
+		if len(t.TypeParams) > 0 {
+			funcType.TypeParams = append([]string(nil), t.TypeParams...)
+		}
+		return c.recordType(expr, funcType)
 	default:
 		return nil
 	}
+}
+
+func cloneTypeParams(src map[string]*Type) map[string]*Type {
+	if src == nil {
+		return map[string]*Type{}
+	}
+	clone := make(map[string]*Type, len(src))
+	for k, v := range src {
+		clone[k] = v
+	}
+	return clone
 }
 
 func (c *Checker) errorf(span ast.Span, format string, args ...interface{}) {
@@ -1870,32 +2370,37 @@ func (c *Checker) validateSQLQuery(e *ast.SQLExpr) {
 		return // Can't determine table name, skip validation
 	}
 
-	tableInfo, exists := c.Tables[tableName]
-	if !exists {
-		// If no table definitions exist at all, skip validation (for backward compatibility)
-		if len(c.Tables) == 0 {
-			return
-		}
-		c.errorf(e.Span, "table '%s' is not defined", tableName)
-		return
-	}
-
 	// Validate column references
 	for _, col := range columns {
-		if col == "*" {
+		if col.Column == "*" {
 			continue // SELECT * is always valid
 		}
-		if _, exists := tableInfo.Columns[col]; !exists {
-			c.errorf(e.Span, "column '%s' does not exist in table '%s'", col, tableName)
+		actualTable := col.Table
+		if actualTable == "" {
+			actualTable = tableName
+		}
+		tableInfo, exists := c.Tables[actualTable]
+		if !exists {
+			// If no table definitions exist at all, skip validation (for backward compatibility)
+			if len(c.Tables) == 0 {
+				continue
+			}
+			c.errorf(e.Span, "table '%s' is not defined", actualTable)
+			continue
+		}
+		if _, exists := tableInfo.Columns[col.Column]; !exists {
+			c.errorf(e.Span, "column '%s' does not exist in table '%s'", col.Column, actualTable)
 		}
 	}
 }
 
 // parseSQLQueryInfo extracts table name and referenced columns from SQL query
-func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []string) {
+func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []sqlColumnRef) {
 	upper := strings.ToUpper(query)
 	words := strings.Fields(query)
 	upperWords := strings.Fields(upper)
+
+	_, tableAliases := parseSQLTableReferences(words, upperWords)
 
 	// Handle SELECT
 	if strings.HasPrefix(upper, "SELECT") {
@@ -1908,7 +2413,9 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 			}
 		}
 		if fromIdx > 0 && fromIdx+1 < len(words) {
-			tableName = strings.ToLower(words[fromIdx+1])
+			if tableName == "" {
+				tableName = strings.ToLower(words[fromIdx+1])
+			}
 			// Extract column names (between SELECT and FROM)
 			i := 1
 			for i < fromIdx {
@@ -1932,11 +2439,18 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 				}
 
 				if col != "" {
+					refTable := ""
 					// Handle table.column format
 					if dotIdx := strings.Index(col, "."); dotIdx >= 0 {
+						prefix := strings.ToLower(strings.Trim(col[:dotIdx], ","))
 						col = col[dotIdx+1:]
+						if actual, ok := tableAliases[prefix]; ok {
+							refTable = actual
+						} else {
+							refTable = prefix
+						}
 					}
-					columns = append(columns, strings.ToLower(col))
+					columns = append(columns, sqlColumnRef{Table: refTable, Column: strings.ToLower(col)})
 				}
 				i++
 			}
@@ -1964,7 +2478,7 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 				for _, col := range strings.Split(colPart, ",") {
 					col = strings.TrimSpace(col)
 					if col != "" {
-						columns = append(columns, strings.ToLower(col))
+						columns = append(columns, sqlColumnRef{Column: strings.ToLower(col)})
 					}
 				}
 			}
@@ -1999,7 +2513,7 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 					assign = strings.TrimSpace(assign)
 					if eqIdx := strings.Index(assign, "="); eqIdx >= 0 {
 						col := strings.TrimSpace(assign[:eqIdx])
-						columns = append(columns, strings.ToLower(col))
+						columns = append(columns, sqlColumnRef{Column: strings.ToLower(col)})
 					}
 				}
 			}
@@ -2014,7 +2528,7 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 			if whereIdx >= 0 && whereIdx+1 < len(words) {
 				// Simple: extract first identifier after WHERE
 				col := words[whereIdx+1]
-				columns = append(columns, strings.ToLower(col))
+				columns = append(columns, sqlColumnRef{Column: strings.ToLower(col)})
 			}
 		}
 		return
@@ -2036,6 +2550,62 @@ func (c *Checker) parseSQLQueryInfo(query string) (tableName string, columns []s
 	}
 
 	return "", nil
+}
+
+func parseSQLTableReferences(words, upperWords []string) (string, map[string]string) {
+	aliasMap := map[string]string{}
+	defaultTable := ""
+	i := 0
+	for i < len(words) {
+		upper := upperWords[i]
+		if upper == "FROM" || upper == "JOIN" {
+			i++
+			if i >= len(words) {
+				break
+			}
+			tableToken := strings.Trim(words[i], ",")
+			if tableToken == "" {
+				continue
+			}
+			tableName := strings.ToLower(tableToken)
+			aliasMap[tableName] = tableName
+			if defaultTable == "" && upper == "FROM" {
+				defaultTable = tableName
+			}
+			nextIdx := i + 1
+			if nextIdx < len(words) {
+				nextUpper := upperWords[nextIdx]
+				if nextUpper == "AS" && nextIdx+1 < len(words) {
+					alias := strings.ToLower(strings.Trim(words[nextIdx+1], ","))
+					if alias != "" {
+						aliasMap[alias] = tableName
+					}
+					i = nextIdx + 1
+				} else if shouldTreatAsAlias(nextUpper) {
+					alias := strings.ToLower(strings.Trim(words[nextIdx], ","))
+					if alias != "" {
+						aliasMap[alias] = tableName
+					}
+					i = nextIdx
+				} else {
+					i = nextIdx - 1
+				}
+			}
+			i++
+			continue
+		}
+		i++
+	}
+	return defaultTable, aliasMap
+}
+
+func shouldTreatAsAlias(word string) bool {
+	switch word {
+	case "ON", "JOIN", "WHERE", "GROUP", "ORDER", "LIMIT", "INNER", "LEFT", "RIGHT", "FULL", "OUTER", "CROSS", "NATURAL", ",":
+		return false
+	default:
+		return word != ""
+	}
 }
 
 // inferSQLRowType determines the row type for a SQL expression based on SELECT columns
@@ -2150,8 +2720,26 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "print", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "dbSave", "dbOpen", "getArgs", "sqlQuery",
-		"createServer", "listen", "addRoute", "responseText", "responseHtml", "responseJson", "responseRedirect", "getPath", "getMethod":
+	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
+		"responseText", "getPath", "getMethod":
+		return true
+	default:
+		return false
+	}
+}
+
+func isHTTPName(name string) bool {
+	switch name {
+	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":
+		return true
+	default:
+		return false
+	}
+}
+
+func isSQLiteName(name string) bool {
+	switch name {
+	case "dbOpen":
 		return true
 	default:
 		return false
@@ -2161,15 +2749,25 @@ func isPreludeName(name string) bool {
 // getPreludeType returns the type for a prelude type alias, or nil if the name is not a prelude type
 func getPreludeType(name string) *Type {
 	switch name {
+	case "JSX":
+		// JSX is a string alias for server-rendered fragments
+		return String()
+	default:
+		return nil
+	}
+}
+
+// getHTTPType returns the type for an http module type alias
+func getHTTPType(name string) *Type {
+	switch name {
 	case "Request":
-		// Request = { path: string, method: string, query: { [key: string]: string }, form: { [key: string]: string } }
-		// query and form are dynamic string-keyed objects with string values
-		stringMap := NewObjectWithIndex(nil, String())
+		// Request = { path: string, method: string, query: Map<string>, form: Map<string> }
+		mapOfString := NewObjectWithIndex(nil, String())
 		return NewObject([]Prop{
-			{Name: "form", Type: stringMap},
+			{Name: "form", Type: mapOfString},
 			{Name: "method", Type: String()},
 			{Name: "path", Type: String()},
-			{Name: "query", Type: stringMap},
+			{Name: "query", Type: mapOfString},
 		})
 	case "Response":
 		// Response = { "body": string, "contentType": string }
@@ -2180,6 +2778,10 @@ func getPreludeType(name string) *Type {
 	default:
 		return nil
 	}
+}
+
+func getSQLiteType(name string) *Type {
+	return nil
 }
 
 type Env struct {

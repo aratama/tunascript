@@ -8,6 +8,7 @@ import (
 
 	"negitoro/internal/compiler"
 	"negitoro/internal/formatter"
+    "negitoro/internal/parser"
 	"negitoro/internal/runtime"
 )
 
@@ -129,6 +130,7 @@ func launchCmd(args []string) {
 func formatCmd(args []string) {
 	fs := flag.NewFlagSet("format", flag.ExitOnError)
 	write := fs.Bool("write", false, "ファイルを上書き保存する")
+	annotate := fs.Bool("type", false, "型推論で決定した型注釈を追加する")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "入力ファイルが必要です")
@@ -143,10 +145,25 @@ func formatCmd(args []string) {
 		}
 
 		f := formatter.New()
-		formatted, err := f.Format(file, string(src))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
-			os.Exit(1)
+		var formatted string
+		if *annotate {
+			p := parser.New(file, string(src))
+			mod, err := p.ParseModule()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
+				os.Exit(1)
+			}
+			if err := f.AnnotateModuleTypes(mod); err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
+				os.Exit(1)
+			}
+			formatted = f.FormatModule(mod)
+		} else {
+			formatted, err = f.Format(file, string(src))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
+				os.Exit(1)
+			}
 		}
 
 		if *write {

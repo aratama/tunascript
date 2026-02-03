@@ -16,18 +16,21 @@ const (
 	KindTuple
 	KindObject
 	KindUnion
+	KindTypeParam
 )
 
 type Type struct {
-	Kind   Kind
-	Params []*Type
-	Ret    *Type
-	Elem   *Type
-	Tuple  []*Type
-	Props  []Prop
-	Union  []*Type
-	Index  *Type
-	propIx map[string]*Type
+	Kind       Kind
+	TypeParams []string
+	Name       string
+	Params     []*Type
+	Ret        *Type
+	Elem       *Type
+	Tuple      []*Type
+	Props      []Prop
+	Union      []*Type
+	Index      *Type
+	propIx     map[string]*Type
 }
 
 type Prop struct {
@@ -112,6 +115,8 @@ func (t *Type) Equals(o *Type) bool {
 			}
 		}
 		return true
+	case KindTypeParam:
+		return t == o
 	default:
 		return true
 	}
@@ -141,6 +146,23 @@ func (t *Type) AssignableTo(dst *Type) bool {
 		return false
 	}
 	switch t.Kind {
+	case KindFunc:
+		if len(t.Params) != len(dst.Params) {
+			return false
+		}
+		if len(t.TypeParams) > 0 {
+			bindings := map[string]*Type{}
+			if !bindTypeParams(t, dst, bindings) {
+				return false
+			}
+			return true
+		}
+		for i := range t.Params {
+			if !t.Params[i].AssignableTo(dst.Params[i]) {
+				return false
+			}
+		}
+		return t.Ret.AssignableTo(dst.Ret)
 	case KindArray:
 		return t.Elem.AssignableTo(dst.Elem)
 	case KindTuple:
@@ -154,6 +176,15 @@ func (t *Type) AssignableTo(dst *Type) bool {
 		}
 		return true
 	case KindObject:
+		// Allow assigning object literals (with only explicit props) to map-like types
+		if dst.Index != nil && len(dst.Props) == 0 {
+			for _, prop := range t.Props {
+				if !prop.Type.AssignableTo(dst.Index) {
+					return false
+				}
+			}
+			return true
+		}
 		if len(t.Props) != len(dst.Props) {
 			return false
 		}
@@ -172,8 +203,81 @@ func (t *Type) AssignableTo(dst *Type) bool {
 			}
 		}
 		return true
+	case KindTypeParam:
+		return t == dst
 	default:
 		return t.Equals(dst)
+	}
+}
+
+func bindTypeParams(template, actual *Type, bindings map[string]*Type) bool {
+	if template == nil || actual == nil {
+		return template == actual
+	}
+	if template.Kind == KindTypeParam {
+		if bound, ok := bindings[template.Name]; ok {
+			return actual.Equals(bound)
+		}
+		bindings[template.Name] = actual
+		return true
+	}
+	if template.Kind != actual.Kind {
+		return false
+	}
+	switch template.Kind {
+	case KindArray:
+		return bindTypeParams(template.Elem, actual.Elem, bindings)
+	case KindFunc:
+		if len(template.Params) != len(actual.Params) {
+			return false
+		}
+		for i := range template.Params {
+			if !bindTypeParams(template.Params[i], actual.Params[i], bindings) {
+				return false
+			}
+		}
+		return bindTypeParams(template.Ret, actual.Ret, bindings)
+	case KindTuple:
+		if len(template.Tuple) != len(actual.Tuple) {
+			return false
+		}
+		for i := range template.Tuple {
+			if !bindTypeParams(template.Tuple[i], actual.Tuple[i], bindings) {
+				return false
+			}
+		}
+		return true
+	case KindObject:
+		if len(template.Props) != len(actual.Props) {
+			return false
+		}
+		for i := range template.Props {
+			if template.Props[i].Name != actual.Props[i].Name {
+				return false
+			}
+			if !bindTypeParams(template.Props[i].Type, actual.Props[i].Type, bindings) {
+				return false
+			}
+		}
+		if (template.Index == nil) != (actual.Index == nil) {
+			return false
+		}
+		if template.Index != nil {
+			return bindTypeParams(template.Index, actual.Index, bindings)
+		}
+		return true
+	case KindUnion:
+		if len(template.Union) != len(actual.Union) {
+			return false
+		}
+		for i := range template.Union {
+			if !bindTypeParams(template.Union[i], actual.Union[i], bindings) {
+				return false
+			}
+		}
+		return true
+	default:
+		return template.Equals(actual)
 	}
 }
 
@@ -250,6 +354,10 @@ func NewUnion(members []*Type) *Type {
 	return &Type{Kind: KindUnion, Union: unique}
 }
 
+func NewTypeParam(name string) *Type {
+	return &Type{Kind: KindTypeParam, Name: name}
+}
+
 var (
 	i64Type    = &Type{Kind: KindI64}
 	f64Type    = &Type{Kind: KindF64}
@@ -263,3 +371,7 @@ func F64() *Type    { return f64Type }
 func Bool() *Type   { return boolType }
 func String() *Type { return stringType }
 func Void() *Type   { return voidType }
+
+func Number() *Type {
+	return F64()
+}
