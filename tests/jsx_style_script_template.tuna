@@ -1,0 +1,10 @@
+// expect: <html><head><style>body { color: red; }</style><script>const cfg = { ok: true };</script></head><body>Hello</body></html>
+import { log } from "prelude";
+
+function page(): string {
+  return <html><head><style>{`body { color: red; }`}</style><script>{`const cfg = { ok: true };`}</script></head><body>Hello</body></html>;
+}
+
+export function main(): void {
+  log(page());
+}

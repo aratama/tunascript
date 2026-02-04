@@ -1398,6 +1398,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if isJSXComponentTag(e.Tag) {
 			return c.checkJSXComponent(env, e)
 		}
+		c.checkStyleScriptJSXChildren(e)
 		// JSX element returns string
 		// Check attribute expressions
 		for _, attr := range e.Attributes {
@@ -1427,6 +1428,27 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		return String()
 	default:
 		return nil
+	}
+}
+
+func (c *Checker) checkStyleScriptJSXChildren(e *ast.JSXElement) {
+	if !strings.EqualFold(e.Tag, "style") && !strings.EqualFold(e.Tag, "script") {
+		return
+	}
+
+	if len(e.Children) != 1 {
+		c.errorf(e.Span, "<%s> must contain exactly one child expression in the form {`...`}", e.Tag)
+		return
+	}
+
+	child := e.Children[0]
+	if child.Kind != ast.JSXChildExpr || child.Expr == nil {
+		c.errorf(child.Span, "<%s> child must be a template literal expression: {`...`}", e.Tag)
+		return
+	}
+
+	if _, ok := child.Expr.(*ast.TemplateLit); !ok {
+		c.errorf(child.Span, "<%s> child must be a template literal expression: {`...`}", e.Tag)
 	}
 }
 

@@ -1,7 +1,7 @@
 import { type JSX } from "prelude";
 
 export function Styles(): JSX {
-  return <style>
+  return <style>{`
     * {
       box-sizing: border-box;
       margin: 0;
@@ -97,5 +97,5 @@ export function Styles(): JSX {
       padding: 40px;
       font-size: 16px;
     }
-  </style>;
+  `}</style>;
 }

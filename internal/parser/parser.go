@@ -1342,18 +1342,6 @@ func (p *Parser) parseJSXFragment(start lexer.Position) ast.Expr {
 
 // parseJSXChildren parses children of a JSX element until the closing tag
 func (p *Parser) parseJSXChildren(tag string) []ast.JSXChild {
-	// Raw text tags: style, script - their content should not be parsed as JSX
-	// textarea is parsed as normal JSX children so {expr} can be embedded.
-	if tag == "style" || tag == "script" {
-		children := p.parseJSXRawContent(tag)
-		// Expect closing tag: </tag> (raw content parsing leaves us at the closing tag)
-		p.expect(lexer.TokenLT)
-		p.expect(lexer.TokenSlash)
-		p.expect(lexer.TokenIdent) // tag name
-		p.expect(lexer.TokenGT)
-		return children
-	}
-
 	var children []ast.JSXChild
 	for {
 		if p.isJSXClosingTag(tag) {
@@ -1459,69 +1447,6 @@ func (p *Parser) parseJSXText() *ast.JSXChild {
 	}
 
 	return &ast.JSXChild{Kind: ast.JSXChildText, Text: text.String(), Span: spanFrom(start, p.curr.Pos)}
-}
-
-// parseJSXRawContent parses raw content for tags like style, script, textarea
-// that should not have their content parsed as JSX
-func (p *Parser) parseJSXRawContent(tag string) []ast.JSXChild {
-	start := p.curr.Pos
-	closingTag := "</" + tag + ">"
-	closingTagLower := strings.ToLower(closingTag)
-
-	// Get raw source from lexer and find the closing tag
-	src := p.lex.GetSource()
-	// Calculate the byte position for the start of content
-	// The current token position tells us where we are in terms of line/col,
-	// but we need the byte position. We'll scan forward from lexer's position.
-	bytePos := p.lex.GetBytePosition()
-
-	// If there's a peeked token, we need to account for it
-	// Actually, the current token (p.curr) was already consumed from lexer,
-	// so bytePos might be past it. We need to find position from token position.
-
-	// Find closing tag in source starting from current lexer position
-	// But we need to include the current token's content too
-
-	// Simpler approach: search for closing tag from current byte position backwards
-	// adjusted to start of current token
-
-	// We need to find where the content starts. Since p.curr points to the first
-	// token inside the raw content tag, we need to read raw text until </tag>
-
-	// Use lexer method to read raw content
-	content, _ := p.lex.ReadRawUntilClosingTag(tag)
-
-	// The content from ReadRawUntilClosingTag starts at lexer's current position
-	// but we already have p.curr which contains the first token
-	// So we need to prepend that token's literal representation
-
-	// Actually, let's take a different approach:
-	// Find the closing tag position in source and extract everything before it
-	searchStart := bytePos
-	// Adjust for any peeked token that was consumed
-	if searchStart > 0 && searchStart < len(src) {
-		idx := strings.Index(strings.ToLower(src[searchStart:]), closingTagLower)
-		if idx >= 0 {
-			// But we also need to include the current token which was already lexed
-			// The current token text is p.curr.Text, prepend it
-			rawContent := p.curr.Text + src[searchStart:searchStart+idx]
-			content = strings.TrimSpace(rawContent)
-		}
-	}
-
-	// Re-sync the parser's current token after reading raw content
-	p.next()
-
-	// If content is empty, return empty children
-	if content == "" {
-		return nil
-	}
-
-	return []ast.JSXChild{{
-		Kind: ast.JSXChildText,
-		Text: content,
-		Span: spanFrom(start, p.curr.Pos),
-	}}
 }
 
 // isJSXAttributeName checks if the current token can be used as a JSX attribute name.

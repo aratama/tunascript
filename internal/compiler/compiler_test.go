@@ -234,6 +234,26 @@ export function main(): void {
 `)
 }
 
+func TestJSXStyleAndScriptRequireTemplateLiteralExpression(t *testing.T) {
+	compileExpectError(t, `import { responseHtml } from "http";
+export function main(): void {
+  responseHtml(<style>body color red</style>);
+}
+`)
+
+	compileExpectError(t, `import { responseHtml } from "http";
+export function main(): void {
+  responseHtml(<style>{"body { color: red; }"}</style>);
+}
+`)
+
+	compileExpectError(t, `import { responseHtml } from "http";
+export function main(): void {
+  responseHtml(<script>{"const x = 1;"}</script>);
+}
+`)
+}
+
 func TestModuleImport(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b; }`,
