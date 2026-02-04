@@ -38,20 +38,20 @@ func TestMapInferenceHandlesObjectAndStringResults(t *testing.T) {
 	const src = `
 import { map, toString } from "prelude";
 
-function wrap(item: { "value": integer }): { "value": integer } {
+function wrap(item: { value: integer }): { value: integer } {
   return { "value": item.value };
 }
 
-function label(item: { "value": integer }): string {
+function label(item: { value: integer }): string {
   return toString(item.value);
 }
 
-const raw: { "value": integer }[] = [
+const raw: { value: integer }[] = [
   { "value": 1 },
   { "value": 2 }
 ];
 
-const wrapped: { "value": integer }[] = map(raw, wrap);
+const wrapped: { value: integer }[] = map(raw, wrap);
 const labels: string[] = raw.map(label);
 `
 
@@ -138,6 +138,24 @@ const msg: string = switch (v) {
 	assertTypeKind(t, checker.ExprTypes[msg.Init], KindString, "msg")
 }
 
+func TestIfExprTypeInference(t *testing.T) {
+	const src = `
+const a: integer | undefined = if (true) { 42 };
+const b: integer | string = if (true) { 42 } else { "42" };
+`
+
+	mod := mustParseModule(t, "if_expr.tuna", src)
+	checker := runChecker(t, mod)
+
+	a := findConstDecl(t, mod, "a")
+	assertUnionContainsBaseKind(t, checker.ExprTypes[a.Init], KindI64, "a")
+	assertUnionContainsKind(t, checker.ExprTypes[a.Init], KindUndefined, "a")
+
+	b := findConstDecl(t, mod, "b")
+	assertUnionContainsBaseKind(t, checker.ExprTypes[b.Init], KindI64, "b")
+	assertUnionContainsBaseKind(t, checker.ExprTypes[b.Init], KindString, "b")
+}
+
 func mustParseModule(t *testing.T, path, src string) *ast.Module {
 	t.Helper()
 	p := parser.New(path, src)
@@ -193,4 +211,36 @@ func assertTypeKind(t *testing.T, typ *Type, kind Kind, label string) {
 	if typ.Kind != kind {
 		t.Fatalf("%s expected kind %v, got %v", label, kind, typ.Kind)
 	}
+}
+
+func assertUnionContainsKind(t *testing.T, typ *Type, kind Kind, label string) {
+	t.Helper()
+	if typ == nil {
+		t.Fatalf("%s has no inferred type", label)
+	}
+	if typ.Kind != KindUnion {
+		t.Fatalf("%s expected union type, got %v", label, typ.Kind)
+	}
+	for _, member := range typ.Union {
+		if member != nil && member.Kind == kind {
+			return
+		}
+	}
+	t.Fatalf("%s expected union to contain %v", label, kind)
+}
+
+func assertUnionContainsBaseKind(t *testing.T, typ *Type, kind Kind, label string) {
+	t.Helper()
+	if typ == nil {
+		t.Fatalf("%s has no inferred type", label)
+	}
+	if typ.Kind != KindUnion {
+		t.Fatalf("%s expected union type, got %v", label, typ.Kind)
+	}
+	for _, member := range typ.Union {
+		if member != nil && member.Kind == kind && !member.Literal {
+			return
+		}
+	}
+	t.Fatalf("%s expected union to contain base %v", label, kind)
 }

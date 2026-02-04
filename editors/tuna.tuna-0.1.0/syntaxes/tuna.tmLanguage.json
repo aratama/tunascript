@@ -33,6 +33,18 @@
     "strings": {
       "patterns": [
         {
+          "name": "string.quoted.template.tuna",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            {
+              "name": "constant.character.escape.tuna",
+              "match": "\\\\."
+            },
+            { "include": "#template-interpolation" }
+          ]
+        },
+        {
           "name": "string.quoted.double.tuna",
           "begin": "\"",
           "end": "\"",
@@ -40,6 +52,34 @@
             {
               "name": "constant.character.escape.tuna",
               "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "template-interpolation": {
+      "patterns": [
+        {
+          "name": "meta.embedded.expression.template.tuna",
+          "begin": "(\\$\\{)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.section.embedded.begin.tuna" }
+          },
+          "end": "(\\})",
+          "endCaptures": {
+            "1": { "name": "punctuation.section.embedded.end.tuna" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            { "include": "#keywords" },
+            { "include": "#constants" },
+            { "include": "#operators" },
+            { "include": "#punctuation" },
+            {
+              "name": "variable.other.readwrite.tuna",
+              "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
             }
           ]
         }
@@ -94,7 +134,7 @@
         },
         {
           "name": "support.type.primitive.tuna",
-          "match": "\\b(integer|number|boolean|string|void)\\b"
+          "match": "\\b(integer|number|boolean|string|json|void)\\b"
         },
         {
           "name": "storage.type.tuna",
@@ -107,6 +147,10 @@
         {
           "name": "constant.language.boolean.tuna",
           "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.tuna",
+          "match": "\\b(null|undefined)\\b"
         }
       ]
     },
@@ -308,7 +352,7 @@
           "match": "\\.\\.\\."
         },
         {
-          "name": "keyword.operator.ternary.tuna",
+          "name": "keyword.operator.result.tuna",
           "match": "\\?"
         }
       ]

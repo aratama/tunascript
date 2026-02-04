@@ -1,0 +1,20 @@
+// expect: error
+// expect: $.age: missing field
+
+import { log, parse, decode, type Error } from "prelude";
+
+type Person = { name: string, age: number };
+
+export function main(): void {
+  const j: json = parse("{\"name\":\"Alice\"}");
+  const decoded = decode<Person>(j);
+  switch (decoded) {
+    case decoded as Error: {
+      log("error");
+      log(decoded.message);
+    }
+    case decoded as Person: {
+      log("ok");
+    }
+  };
+}

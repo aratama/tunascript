@@ -1,0 +1,23 @@
+// expect: ok
+// expect: Alice
+// expect: 30
+
+import { log, toString, parse, decode, type Error } from "prelude";
+
+type Person = { name: string, age: number };
+
+export function main(): void {
+  const j: json = parse("{\"name\":\"Alice\",\"age\":30}");
+  const decoded = decode<Person>(j);
+  switch (decoded) {
+    case decoded as Error: {
+      log("error");
+      log(decoded.message);
+    }
+    case decoded as Person: {
+      log("ok");
+      log(decoded.name);
+      log(toString(decoded.age));
+    }
+  };
+}

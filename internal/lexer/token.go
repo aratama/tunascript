@@ -10,6 +10,7 @@ const (
 	TokenInt
 	TokenFloat
 	TokenString
+	TokenTemplate
 	TokenImport
 	TokenFrom
 	TokenExport
@@ -21,6 +22,8 @@ const (
 	TokenReturn
 	TokenTrue
 	TokenFalse
+	TokenNull
+	TokenUndefined
 	TokenFunction
 	TokenLParen
 	TokenRParen
@@ -85,7 +88,7 @@ type Token struct {
 	Kind      TokenKind
 	Text      string
 	Pos       Position
-	SQLParams []string // For SQLBlock tokens: parameter expressions extracted from {expr}
+	SQLParams []string // Embedded parameter expressions extracted from {expr} (SQL/template)
 }
 
 func (k TokenKind) String() string {
@@ -100,6 +103,8 @@ func (k TokenKind) String() string {
 		return "float"
 	case TokenString:
 		return "string"
+	case TokenTemplate:
+		return "template"
 	case TokenImport:
 		return "import"
 	case TokenFrom:
@@ -122,6 +127,10 @@ func (k TokenKind) String() string {
 		return "true"
 	case TokenFalse:
 		return "false"
+	case TokenNull:
+		return "null"
+	case TokenUndefined:
+		return "undefined"
 	case TokenFunction:
 		return "function"
 	case TokenLParen:
@@ -242,6 +251,8 @@ var keywords = map[string]TokenKind{
 	"return":         TokenReturn,
 	"true":           TokenTrue,
 	"false":          TokenFalse,
+	"null":           TokenNull,
+	"undefined":      TokenUndefined,
 	"function":       TokenFunction,
 	"switch":         TokenSwitch,
 	"case":           TokenCase,

@@ -1,14 +1,14 @@
 // expect: ready
 
-import { log, type Result } from "prelude";
+import { log, type Result, type Error } from "prelude";
 
 function describe(response: Result<string>): string {
   return switch (response) {
-    case response as { "type": "ok", "value": string }: response.value
-    case response as { "type": "error", "message": string }: response.message
+    case value as string: value
+    case { message } as Error: message
   }
 }
 
 export function main(): void {
-  log(describe({ "type": "ok", "value": "ready" }));
+  log(describe("ready"));
 }

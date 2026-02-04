@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -73,6 +74,7 @@ func buildCmd(args []string) {
 
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	sandbox := fs.Bool("sandbox", false, "サンドボックスモードで実行する")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "入力ファイルが必要です")
@@ -81,6 +83,10 @@ func runCmd(args []string) {
 	entry := fs.Arg(0)
 	// Remaining arguments after the entry file are passed to the script
 	scriptArgs := fs.Args()[1:]
+	if *sandbox {
+		runSandbox(entry, scriptArgs)
+		return
+	}
 	comp := compiler.New()
 	res, err := comp.Compile(entry)
 	if err != nil {
@@ -96,10 +102,34 @@ func runCmd(args []string) {
 	fmt.Print(out)
 }
 
+func runSandbox(entry string, scriptArgs []string) {
+	result := runtime.SandboxResult{ExitCode: 0}
+	comp := compiler.New()
+	res, err := comp.Compile(entry)
+	if err != nil {
+		result.ExitCode = 1
+		result.Error = err.Error()
+		printSandboxJSON(result)
+		return
+	}
+	runner := runtime.NewRunner()
+	result = runner.RunSandboxWithArgs(res.Wasm, scriptArgs)
+	printSandboxJSON(result)
+}
+
+func printSandboxJSON(result runtime.SandboxResult) {
+	data, err := json.Marshal(result)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println(string(data))
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "使い方:")
 	fmt.Fprintln(os.Stderr, "  tuna build <entry.tuna> [-o <name>]")
-	fmt.Fprintln(os.Stderr, "  tuna run <entry.tuna> [args...]")
+	fmt.Fprintln(os.Stderr, "  tuna run [--sandbox] <entry.tuna> [args...]")
 	fmt.Fprintln(os.Stderr, "  tuna launch <entry.wasm> [args...]")
 	fmt.Fprintln(os.Stderr, "  tuna format <file.tuna> [--write]")
 }

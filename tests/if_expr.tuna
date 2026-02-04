@@ -1,0 +1,51 @@
+// expect: 42
+// expect: undefined
+// expect: 42
+// expect: 42
+// expect: 42
+// expect: undefined
+
+import { log, toString } from "prelude";
+
+export function main(): void {
+  const a = if (true) { 42 };
+  const b = if (false) { 42 };
+
+  const c = if (true) { 42 } else { "42" };
+  const d = if (false) { 42 } else { "42" };
+
+  const e = if (true) {
+    const base: integer = 40;
+    base + 2
+  } else {
+    0
+  };
+
+  const f = if (true) {
+    const x: integer = 1;
+  };
+
+  const aStr: string = switch (a) {
+    case a as integer: toString(a)
+    case a as undefined: "undefined"
+  };
+  const bStr: string = switch (b) {
+    case b as integer: toString(b)
+    case b as undefined: "undefined"
+  };
+  const cStr: string = switch (c) {
+    case c as integer: toString(c)
+    case c as string: c
+  };
+  const dStr: string = switch (d) {
+    case d as integer: toString(d)
+    case d as string: d
+  };
+
+  log(aStr);
+  log(bStr);
+  log(cStr);
+  log(dStr);
+  log(toString(e));
+  log(if (f == undefined) { "undefined" } else { "not" });
+}

@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -98,10 +99,144 @@ func (g *Generator) collectStrings() {
 		}
 	}
 	g.internString("")
+	// Built-in Result/Error relies on these strings even if user code doesn't reference them directly.
+	g.internString("type")
+	g.internString("Error")
 	// Generate and intern table definitions JSON if any tables exist
 	if len(g.tableDefs) > 0 {
 		jsonStr := g.generateTableDefsJSON()
 		g.internString(jsonStr)
+	}
+}
+
+type decodeSchema struct {
+	Kind    string           `json:"kind"`
+	Literal *decodeSchemaLit `json:"literal,omitempty"`
+	Elem    *decodeSchema    `json:"elem,omitempty"`
+	Tuple   []*decodeSchema  `json:"tuple,omitempty"`
+	Props   []decodeSchemaKV `json:"props,omitempty"`
+	Index   *decodeSchema    `json:"index,omitempty"`
+	Union   []*decodeSchema  `json:"union,omitempty"`
+}
+
+type decodeSchemaLit struct {
+	Kind  string      `json:"kind"`
+	Value interface{} `json:"value"`
+}
+
+type decodeSchemaKV struct {
+	Name string        `json:"name"`
+	Type *decodeSchema `json:"type"`
+}
+
+func decodeSchemaString(t *types.Type) string {
+	s, err := decodeSchemaFromType(t)
+	if err != nil {
+		panic(err)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+func decodeSchemaFromType(t *types.Type) (*decodeSchema, error) {
+	if t == nil {
+		return nil, fmt.Errorf("decode schema: nil type")
+	}
+
+	// Literal types (e.g. "ok", 1, true) are encoded as base kind + literal constraint.
+	if t.Literal {
+		base := &types.Type{Kind: t.Kind}
+		s, err := decodeSchemaFromType(base)
+		if err != nil {
+			return nil, err
+		}
+		s.Literal = &decodeSchemaLit{Kind: schemaKindForTypeKind(t.Kind), Value: t.LiteralValue}
+		return s, nil
+	}
+
+	switch t.Kind {
+	case types.KindI64:
+		return &decodeSchema{Kind: "integer"}, nil
+	case types.KindF64:
+		return &decodeSchema{Kind: "number"}, nil
+	case types.KindBool:
+		return &decodeSchema{Kind: "boolean"}, nil
+	case types.KindString:
+		return &decodeSchema{Kind: "string"}, nil
+	case types.KindNull:
+		return &decodeSchema{Kind: "null"}, nil
+	case types.KindUndefined:
+		return &decodeSchema{Kind: "undefined"}, nil
+	case types.KindJSON:
+		return &decodeSchema{Kind: "json"}, nil
+	case types.KindArray:
+		elem, err := decodeSchemaFromType(t.Elem)
+		if err != nil {
+			return nil, err
+		}
+		return &decodeSchema{Kind: "array", Elem: elem}, nil
+	case types.KindTuple:
+		elems := make([]*decodeSchema, 0, len(t.Tuple))
+		for _, e := range t.Tuple {
+			s, err := decodeSchemaFromType(e)
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, s)
+		}
+		return &decodeSchema{Kind: "tuple", Tuple: elems}, nil
+	case types.KindObject:
+		props := make([]decodeSchemaKV, 0, len(t.Props))
+		for _, p := range t.Props {
+			s, err := decodeSchemaFromType(p.Type)
+			if err != nil {
+				return nil, err
+			}
+			props = append(props, decodeSchemaKV{Name: p.Name, Type: s})
+		}
+		var index *decodeSchema
+		if t.Index != nil {
+			s, err := decodeSchemaFromType(t.Index)
+			if err != nil {
+				return nil, err
+			}
+			index = s
+		}
+		return &decodeSchema{Kind: "object", Props: props, Index: index}, nil
+	case types.KindUnion:
+		members := make([]*decodeSchema, 0, len(t.Union))
+		for _, m := range t.Union {
+			s, err := decodeSchemaFromType(m)
+			if err != nil {
+				return nil, err
+			}
+			members = append(members, s)
+		}
+		return &decodeSchema{Kind: "union", Union: members}, nil
+	default:
+		return nil, fmt.Errorf("decode schema: unsupported type kind %v", t.Kind)
+	}
+}
+
+func schemaKindForTypeKind(kind types.Kind) string {
+	switch kind {
+	case types.KindI64:
+		return "integer"
+	case types.KindF64:
+		return "number"
+	case types.KindBool:
+		return "boolean"
+	case types.KindString:
+		return "string"
+	case types.KindNull:
+		return "null"
+	case types.KindUndefined:
+		return "undefined"
+	default:
+		return "unknown"
 	}
 }
 
@@ -158,6 +293,24 @@ func (g *Generator) collectStringsDecl(decl ast.Decl) {
 func (g *Generator) collectStringsBlock(block *ast.BlockStmt) {
 	for _, stmt := range block.Stmts {
 		g.collectStringsStmt(stmt)
+	}
+}
+
+func (g *Generator) collectTypeGuardStrings(targetType *types.Type) {
+	if targetType == nil {
+		return
+	}
+	if targetType.Kind != types.KindObject {
+		return
+	}
+	for _, prop := range targetType.Props {
+		if prop.Type == nil || prop.Type.Kind != types.KindString || !prop.Type.Literal {
+			continue
+		}
+		g.internString(prop.Name)
+		if lit, ok := prop.Type.LiteralValue.(string); ok {
+			g.internString(lit)
+		}
 	}
 }
 
@@ -219,6 +372,13 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		g.internString(e.Value)
+	case *ast.TemplateLit:
+		for _, segment := range e.Segments {
+			g.internString(segment)
+		}
+		for _, part := range e.Exprs {
+			g.collectStringsExpr(part)
+		}
 	case *ast.SQLExpr:
 		g.internString(e.Query)
 		// Also collect strings from parameter expressions
@@ -240,8 +400,22 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 		}
 	case *ast.CallExpr:
 		g.collectStringsExpr(e.Callee)
+		for _, ta := range e.TypeArgs {
+			g.collectStringsType(ta)
+		}
 		for _, arg := range e.Args {
 			g.collectStringsExpr(arg)
+		}
+		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "decode" && len(e.TypeArgs) == 1 {
+			targetType := g.checker.TypeExprTypes[e.TypeArgs[0]]
+			if targetType != nil {
+				g.internString(decodeSchemaString(targetType))
+			}
+		}
+		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "Error" {
+			g.internString("message")
+			g.internString("type")
+			g.internString("Error")
 		}
 	case *ast.MemberExpr:
 		g.collectStringsExpr(e.Object)
@@ -249,18 +423,34 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 	case *ast.IndexExpr:
 		g.collectStringsExpr(e.Array)
 		g.collectStringsExpr(e.Index)
+	case *ast.TryExpr:
+		g.collectStringsExpr(e.Expr)
 	case *ast.UnaryExpr:
 		g.collectStringsExpr(e.Expr)
 	case *ast.AsExpr:
 		g.collectStringsExpr(e.Expr)
 		g.collectStringsType(e.Type)
+		g.collectTypeGuardStrings(g.checker.ExprTypes[e])
+	case *ast.ObjectPatternExpr:
+		for _, key := range e.Keys {
+			g.internString(key)
+		}
+		for _, t := range e.Types {
+			g.collectStringsType(t)
+		}
+	case *ast.ArrayPatternExpr:
+		for _, t := range e.Types {
+			g.collectStringsType(t)
+		}
 	case *ast.BinaryExpr:
 		g.collectStringsExpr(e.Left)
 		g.collectStringsExpr(e.Right)
-	case *ast.TernaryExpr:
+	case *ast.IfExpr:
 		g.collectStringsExpr(e.Cond)
 		g.collectStringsExpr(e.Then)
-		g.collectStringsExpr(e.Else)
+		if e.Else != nil {
+			g.collectStringsExpr(e.Else)
+		}
 	case *ast.SwitchExpr:
 		g.collectStringsExpr(e.Value)
 		for _, cas := range e.Cases {
@@ -467,10 +657,12 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 	case *ast.BinaryExpr:
 		g.collectFunctionNamesExpr(e.Left)
 		g.collectFunctionNamesExpr(e.Right)
-	case *ast.TernaryExpr:
+	case *ast.IfExpr:
 		g.collectFunctionNamesExpr(e.Cond)
 		g.collectFunctionNamesExpr(e.Then)
-		g.collectFunctionNamesExpr(e.Else)
+		if e.Else != nil {
+			g.collectFunctionNamesExpr(e.Else)
+		}
 	case *ast.SwitchExpr:
 		g.collectFunctionNamesExpr(e.Value)
 		for _, cas := range e.Cases {
@@ -480,6 +672,8 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 		if e.Default != nil {
 			g.collectFunctionNamesExpr(e.Default)
 		}
+	case *ast.TryExpr:
+		g.collectFunctionNamesExpr(e.Expr)
 	case *ast.BlockExpr:
 		for _, stmt := range e.Stmts {
 			g.collectFunctionNamesStmt(stmt)
@@ -577,6 +771,7 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "arr_new"},
 		{"prelude", "arr_set"},
 		{"prelude", "arr_get"},
+		{"prelude", "arr_get_result"},
 		{"prelude", "arr_len"},
 		{"prelude", "arr_join"},
 		{"prelude", "range"},
@@ -584,7 +779,9 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "log"},
 		{"prelude", "stringify"},
 		{"prelude", "parse"},
+		{"prelude", "decode"},
 		{"prelude", "toString"},
+		{"prelude", "escape_html_attr"},
 		{"prelude", "sql_exec"},
 		{"prelude", "sql_query"},
 		{"prelude", "sql_fetch_one"},
@@ -594,6 +791,7 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"sqlite", "db_open"},
 		{"prelude", "get_args"},
 		{"prelude", "get_env"},
+		{"prelude", "run_sandbox"},
 		{"prelude", "register_tables"},
 		{"http", "http_create_server"},
 		{"http", "http_add_route"},
@@ -649,6 +847,8 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.arr_set (param i32 i32 i32))", prefix)
 	case "arr_get":
 		return fmt.Sprintf("(func %s.arr_get (param i32 i32) (result i32))", prefix)
+	case "arr_get_result":
+		return fmt.Sprintf("(func %s.arr_get_result (param i32 i32) (result i32))", prefix)
 	case "arr_len":
 		return fmt.Sprintf("(func %s.arr_len (param i32) (result i32))", prefix)
 	case "arr_join":
@@ -663,8 +863,12 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.stringify (param i32) (result i32))", prefix)
 	case "parse":
 		return fmt.Sprintf("(func %s.parse (param i32) (result i32))", prefix)
+	case "decode":
+		return fmt.Sprintf("(func %s.decode (param i32 i32) (result i32))", prefix)
 	case "toString":
 		return fmt.Sprintf("(func %s.toString (param i32) (result i32))", prefix)
+	case "escape_html_attr":
+		return fmt.Sprintf("(func %s.escape_html_attr (param i32) (result i32))", prefix)
 	case "sql_exec":
 		return fmt.Sprintf("(func %s.sql_exec (param i32 i32) (result i32))", prefix)
 	case "sql_query":
@@ -683,6 +887,8 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.get_args (result i32))", prefix)
 	case "get_env":
 		return fmt.Sprintf("(func %s.get_env (param i32) (result i32))", prefix)
+	case "run_sandbox":
+		return fmt.Sprintf("(func %s.run_sandbox (param i32) (result i32))", prefix)
 	case "register_tables":
 		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
 	case "http_create_server":
@@ -1074,7 +1280,7 @@ func wasmType(t *types.Type) string {
 		return "f64"
 	case types.KindBool:
 		return "i32"
-	case types.KindString, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion:
+	case types.KindString, types.KindJSON, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion, types.KindNull, types.KindUndefined:
 		return "i32"
 	default:
 		return "i32"
@@ -1476,8 +1682,14 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 		} else {
 			f.emit("(i32.const 0)")
 		}
+	case *ast.NullLit:
+		f.emit("(i32.const 0)")
+	case *ast.UndefinedLit:
+		f.emit("(i32.const 1)")
 	case *ast.StringLit:
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(e.Value)))
+	case *ast.TemplateLit:
+		f.emitTemplateLit(e)
 	case *ast.IdentExpr:
 		sym := f.g.checker.IdentSymbols[e]
 		if local, ok := f.lookup(e.Name); ok {
@@ -1518,12 +1730,12 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 		f.emitUnboxIfPrimitive(targetType)
 	case *ast.BinaryExpr:
 		f.emitBinaryExpr(e, t)
-	case *ast.TernaryExpr:
-		f.emitTernaryExpr(e, t)
+	case *ast.IfExpr:
+		f.emitIfExpr(e, t)
 	case *ast.SwitchExpr:
 		f.emitSwitchExpr(e, t)
 	case *ast.BlockExpr:
-		f.emitBlockExpr(e)
+		f.emitBlockExpr(e, t)
 	case *ast.CallExpr:
 		f.emitCallExpr(e, t)
 	case *ast.MemberExpr:
@@ -1537,8 +1749,9 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 		f.emitExpr(e.Array, arrType)
 		f.emitExpr(e.Index, f.g.checker.ExprTypes[e.Index])
 		f.emit("(i32.wrap_i64)")
-		f.emit("(call $prelude.arr_get)")
-		f.emitUnboxIfPrimitive(t)
+		f.emit("(call $prelude.arr_get_result)")
+	case *ast.TryExpr:
+		f.emitTryExpr(e, t)
 	case *ast.ArrayLit:
 		f.emitArrayLit(e, t)
 	case *ast.ObjectLit:
@@ -1552,37 +1765,196 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 	}
 }
 
-func (f *funcEmitter) emitTernaryExpr(e *ast.TernaryExpr, t *types.Type) {
-	// 条件を評価
+func (f *funcEmitter) emitTemplateLit(e *ast.TemplateLit) {
+	if len(e.Segments) == 0 {
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("")))
+		return
+	}
+
+	f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(e.Segments[0])))
+	for i, part := range e.Exprs {
+		partType := f.g.checker.ExprTypes[part]
+		f.emitExpr(part, partType)
+		f.emitTemplatePartToString(partType)
+		f.emit("(call $prelude.str_concat)")
+
+		nextSegment := ""
+		if i+1 < len(e.Segments) {
+			nextSegment = e.Segments[i+1]
+		}
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(nextSegment)))
+		f.emit("(call $prelude.str_concat)")
+	}
+}
+
+func (f *funcEmitter) emitTemplatePartToString(t *types.Type) {
+	if t == nil {
+		return
+	}
+	if t.Kind != types.KindUnion {
+		f.emitBoxIfPrimitive(t)
+	}
+	f.emit("(call $prelude.toString)")
+}
+
+func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
+	// Condition
 	f.emitExpr(e.Cond, f.g.checker.ExprTypes[e.Cond])
-	// if-then-else構造を生成
-	wt := wasmType(t)
-	f.emit(fmt.Sprintf("(if (result %s)", wt))
+
+	isVoid := t != nil && t.Kind == types.KindVoid
+	if isVoid {
+		f.emit("(if")
+	} else {
+		f.emit(fmt.Sprintf("(if (result %s)", wasmType(t)))
+	}
 	f.indent++
+
+	// Then branch
 	f.emit("(then")
 	f.indent++
 	thenType := f.g.checker.ExprTypes[e.Then]
 	f.emitExpr(e.Then, thenType)
-	f.emitCoerce(thenType, t)
+	if !isVoid {
+		if thenType != nil && thenType.Kind == types.KindVoid {
+			// No value produced; treat as undefined
+			f.emit("(i32.const 1)")
+			f.emitCoerce(types.Undefined(), t)
+		} else {
+			f.emitCoerce(thenType, t)
+		}
+	}
+	f.indent--
+	f.emit(")")
+
+	// Else branch (else is optional)
+	f.emit("(else")
+	f.indent++
+	if e.Else != nil {
+		elseType := f.g.checker.ExprTypes[e.Else]
+		f.emitExpr(e.Else, elseType)
+		if !isVoid {
+			if elseType != nil && elseType.Kind == types.KindVoid {
+				f.emit("(i32.const 1)")
+				f.emitCoerce(types.Undefined(), t)
+			} else {
+				f.emitCoerce(elseType, t)
+			}
+		}
+	} else if !isVoid {
+		// else omitted: undefined
+		f.emit("(i32.const 1)")
+		f.emitCoerce(types.Undefined(), t)
+	}
+	f.indent--
+	f.emit(")")
+
+	f.indent--
+	f.emit(")")
+}
+
+func splitResultMembers(t *types.Type) (success *types.Type, err *types.Type) {
+	if t == nil || t.Kind != types.KindUnion {
+		return nil, nil
+	}
+	isError := func(member *types.Type) bool {
+		if member == nil || member.Kind != types.KindObject {
+			return false
+		}
+		typeProp := member.PropType("type")
+		msgProp := member.PropType("message")
+		if typeProp == nil || msgProp == nil {
+			return false
+		}
+		return typeProp.Equals(types.LiteralString("Error")) && msgProp.AssignableTo(types.String())
+	}
+	var successMembers []*types.Type
+	var errMembers []*types.Type
+	for _, member := range t.Union {
+		if isError(member) {
+			errMembers = append(errMembers, member)
+		} else {
+			successMembers = append(successMembers, member)
+		}
+	}
+	if len(successMembers) == 0 || len(errMembers) == 0 {
+		return nil, nil
+	}
+	return types.NewUnion(successMembers), types.NewUnion(errMembers)
+}
+
+func (f *funcEmitter) emitTryExpr(e *ast.TryExpr, t *types.Type) {
+	resultType := f.g.checker.ExprTypes[e.Expr]
+	successType, errType := splitResultMembers(resultType)
+	if resultType == nil || successType == nil || errType == nil {
+		f.emitExpr(e.Expr, resultType)
+		return
+	}
+
+	valueLocal := f.addLocalRaw(wasmType(resultType))
+	f.emitExpr(e.Expr, resultType)
+	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
+
+	f.emitTypeGuard(valueLocal, errType)
+	f.emit(fmt.Sprintf("(if (result %s)", wasmType(successType)))
+	f.indent++
+	f.emit("(then")
+	f.indent++
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	f.emitCoerce(resultType, f.ret)
+	f.emit("return")
+	if wasmType(successType) == "i64" {
+		f.emit("(i64.const 0)")
+	} else if wasmType(successType) == "f64" {
+		f.emit("(f64.const 0)")
+	} else {
+		f.emit("(i32.const 0)")
+	}
 	f.indent--
 	f.emit(")")
 	f.emit("(else")
 	f.indent++
-	elseType := f.g.checker.ExprTypes[e.Else]
-	f.emitExpr(e.Else, elseType)
-	f.emitCoerce(elseType, t)
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	f.emitCoerce(resultType, successType)
 	f.indent--
 	f.emit(")")
 	f.indent--
 	f.emit(")")
 }
 
-func (f *funcEmitter) emitBlockExpr(e *ast.BlockExpr) {
-	// Execute all statements in the block (returns void)
+func (f *funcEmitter) emitBlockExpr(e *ast.BlockExpr, t *types.Type) {
+	// Execute all statements in the block and return the last expression statement's value.
 	f.pushScope()
-	for _, stmt := range e.Stmts {
-		f.emitStmt(stmt)
+
+	if len(e.Stmts) == 0 {
+		f.popScope()
+		return
 	}
+
+	for i, stmt := range e.Stmts {
+		isLast := i == len(e.Stmts)-1
+		if !isLast || t == nil || t.Kind == types.KindVoid {
+			f.emitStmt(stmt)
+			continue
+		}
+		// Last statement decides the value.
+		if es, ok := stmt.(*ast.ExprStmt); ok {
+			exprType := f.g.checker.ExprTypes[es.Expr]
+			f.emitExpr(es.Expr, exprType)
+			f.emitCoerce(exprType, t)
+			continue
+		}
+		// Fallback: execute statement and return zero/undefined.
+		f.emitStmt(stmt)
+		switch wasmType(t) {
+		case "i64":
+			f.emit("(i64.const 0)")
+		case "f64":
+			f.emit("(f64.const 0)")
+		default:
+			f.emit("(i32.const 1)") // undefined
+		}
+	}
+
 	f.popScope()
 }
 
@@ -1594,11 +1966,16 @@ func (f *funcEmitter) emitSwitchExpr(e *ast.SwitchExpr, t *types.Type) {
 	f.emitExpr(e.Value, valueType)
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
 
+	switchIdentName := ""
+	if ident, ok := e.Value.(*ast.IdentExpr); ok {
+		switchIdentName = ident.Name
+	}
+
 	// Generate nested if-else chain
-	f.emitSwitchCases(e.Cases, e.Default, valueLocal, valueType, t, 0)
+	f.emitSwitchCases(e.Cases, e.Default, valueLocal, valueType, t, 0, switchIdentName)
 }
 
-func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Expr, valueLocal string, valueType, resultType *types.Type, idx int) {
+func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Expr, valueLocal string, valueType, resultType *types.Type, idx int, switchIdentName string) {
 	isVoid := resultType.Kind == types.KindVoid
 
 	if idx >= len(cases) {
@@ -1624,16 +2001,8 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 
 	cas := cases[idx]
 	if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
-		// Type guard: check runtime kind
 		targetType := f.g.checker.ExprTypes[asExpr]
-		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
-		f.emit("(call $prelude.val_kind)")
-		if kindConst, okKind := runtimeKindConst(targetType); okKind {
-			f.emit(fmt.Sprintf("(i32.const %d)", kindConst))
-		} else {
-			f.emit("(i32.const -1)")
-		}
-		f.emit("i32.eq")
+		f.emitTypeGuard(valueLocal, targetType)
 	} else {
 		patternType := f.g.checker.ExprTypes[cas.Pattern]
 
@@ -1661,15 +2030,160 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 	f.indent++
 	f.emit("(then")
 	f.indent++
+	f.pushScope()
+	if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
+		targetType := f.g.checker.ExprTypes[asExpr]
+		f.emitSwitchCaseBindings(asExpr, valueLocal, targetType, switchIdentName)
+	}
 	bodyType := f.g.checker.ExprTypes[cas.Body]
 	f.emitExpr(cas.Body, bodyType)
 	f.emitCoerce(bodyType, resultType)
+	f.popScope()
 	f.indent--
 	f.emit(")")
 	f.emit("(else")
 	f.indent++
 	// Recursively emit remaining cases
-	f.emitSwitchCases(cases, defaultExpr, valueLocal, valueType, resultType, idx+1)
+	f.emitSwitchCases(cases, defaultExpr, valueLocal, valueType, resultType, idx+1, switchIdentName)
+	f.indent--
+	f.emit(")")
+	f.indent--
+	f.emit(")")
+}
+
+func (f *funcEmitter) emitSwitchCaseBindings(asExpr *ast.AsExpr, valueLocal string, targetType *types.Type, switchIdentName string) {
+	if asExpr == nil || targetType == nil {
+		return
+	}
+
+	switch bind := asExpr.Expr.(type) {
+	case *ast.IdentExpr:
+		if switchIdentName != "" && bind.Name == switchIdentName {
+			// Reuse the switch variable itself (type is already narrowed by checker).
+			return
+		}
+		local := f.addLocal(bind.Name, targetType)
+		f.bindLocal(bind.Name, local)
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		f.emitUnboxIfPrimitive(targetType)
+		f.emit(fmt.Sprintf("(local.set %s)", local))
+	case *ast.ObjectPatternExpr:
+		if targetType.Kind != types.KindObject {
+			return
+		}
+		for i, key := range bind.Keys {
+			propType := targetType.PropType(key)
+			if propType == nil {
+				continue
+			}
+			var varType *types.Type
+			if i < len(bind.Types) && bind.Types[i] != nil {
+				varType = f.g.checker.TypeExprTypes[bind.Types[i]]
+			}
+			if varType == nil {
+				varType = propType
+			}
+			if varType == nil {
+				continue
+			}
+			local := f.addLocal(key, varType)
+			f.bindLocal(key, local)
+			f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(key)))
+			f.emit("(call $prelude.obj_get)")
+			f.emitUnboxIfPrimitive(varType)
+			f.emit(fmt.Sprintf("(local.set %s)", local))
+		}
+	case *ast.ArrayPatternExpr:
+		var elemTypes []*types.Type
+		switch targetType.Kind {
+		case types.KindArray:
+			for range bind.Names {
+				elemTypes = append(elemTypes, targetType.Elem)
+			}
+		case types.KindTuple:
+			if len(bind.Names) > len(targetType.Tuple) {
+				return
+			}
+			elemTypes = targetType.Tuple[:len(bind.Names)]
+		default:
+			return
+		}
+		for i, name := range bind.Names {
+			if i >= len(elemTypes) {
+				break
+			}
+			var varType *types.Type
+			if i < len(bind.Types) && bind.Types[i] != nil {
+				varType = f.g.checker.TypeExprTypes[bind.Types[i]]
+			}
+			if varType == nil {
+				varType = elemTypes[i]
+			}
+			if varType == nil {
+				continue
+			}
+			local := f.addLocal(name, varType)
+			f.bindLocal(name, local)
+			f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+			f.emit(fmt.Sprintf("(i32.const %d)", i))
+			f.emit("(call $prelude.arr_get)")
+			f.emitUnboxIfPrimitive(varType)
+			f.emit(fmt.Sprintf("(local.set %s)", local))
+		}
+	}
+}
+
+func (f *funcEmitter) emitTypeGuard(valueLocal string, targetType *types.Type) {
+	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+	f.emit("(call $prelude.val_kind)")
+	if kindConst, okKind := runtimeKindConst(targetType); okKind {
+		f.emit(fmt.Sprintf("(i32.const %d)", kindConst))
+		f.emit("i32.eq")
+	} else {
+		f.emit("(i32.const 0)")
+		return
+	}
+
+	if targetType == nil || targetType.Kind != types.KindObject {
+		return
+	}
+	var literalProps []types.Prop
+	for _, prop := range targetType.Props {
+		if prop.Type == nil || prop.Type.Kind != types.KindString || !prop.Type.Literal {
+			continue
+		}
+		lit, ok := prop.Type.LiteralValue.(string)
+		if !ok {
+			continue
+		}
+		_ = lit
+		literalProps = append(literalProps, prop)
+	}
+	if len(literalProps) == 0 {
+		return
+	}
+
+	// Only check object properties when kind check succeeded.
+	f.emit("(if (result i32)")
+	f.indent++
+	f.emit("(then")
+	f.indent++
+	f.emit("(i32.const 1)")
+	for _, prop := range literalProps {
+		lit, _ := prop.Type.LiteralValue.(string)
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(prop.Name)))
+		f.emit("(call $prelude.obj_get)")
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(lit)))
+		f.emit("(call $prelude.val_eq)")
+		f.emit("i32.and")
+	}
+	f.indent--
+	f.emit(")")
+	f.emit("(else")
+	f.indent++
+	f.emit("(i32.const 0)")
 	f.indent--
 	f.emit(")")
 	f.indent--
@@ -1860,6 +2374,38 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.parse)", module))
 		f.emitUnboxIfPrimitive(t)
+	case "decode":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		var schemaStr string
+		if len(call.TypeArgs) > 0 {
+			if targetType := f.g.checker.TypeExprTypes[call.TypeArgs[0]]; targetType != nil {
+				schemaStr = decodeSchemaString(targetType)
+			}
+		}
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(schemaStr)))
+		f.emit(fmt.Sprintf("(call $%s.decode)", module))
+	case "Error":
+		arg := call.Args[0]
+		argType := f.g.checker.ExprTypes[arg]
+		objLocal := f.addLocalRaw("i32")
+		f.emit("(call $prelude.obj_new (i32.const 2))")
+		f.emit(fmt.Sprintf("(local.set %s)", objLocal))
+
+		// message: <arg>
+		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("message")))
+		f.emitExpr(arg, argType)
+		f.emitBoxIfPrimitive(argType)
+		f.emit("(call $prelude.obj_set)")
+
+		// type: "Error"
+		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("type")))
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("Error")))
+		f.emit("(call $prelude.obj_set)")
+
+		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
 	case "toString":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -1887,6 +2433,10 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.get_env)", module))
+	case "runSandbox":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.run_sandbox)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
 	case "createServer":
@@ -2683,6 +3233,10 @@ func runtimeKindConst(t *types.Type) (int32, bool) {
 		return 4, true
 	case types.KindArray, types.KindTuple:
 		return 5, true
+	case types.KindNull:
+		return 6, true
+	case types.KindUndefined:
+		return 7, true
 	default:
 		return 0, false
 	}
@@ -2702,8 +3256,8 @@ func elemType(t *types.Type) *types.Type {
 
 func builtinModule(name string) (string, bool) {
 	switch name {
-	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"getEnv", "responseText", "getPath", "getMethod":
+	case "log", "stringify", "parse", "decode", "Error", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
+		"getEnv", "runSandbox", "responseText", "getPath", "getMethod":
 		return "prelude", true
 	case "dbOpen":
 		return "sqlite", true
@@ -2782,6 +3336,7 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 			if attrType != nil && attrType.Kind != types.KindString {
 				f.emit("(call $prelude.toString)")
 			}
+			f.emit("(call $prelude.escape_html_attr)")
 			f.emit("(call $prelude.str_concat)")
 		}
 

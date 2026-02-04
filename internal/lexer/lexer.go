@@ -118,6 +118,9 @@ func (l *Lexer) Next() Token {
 	case '"', '\'':
 		text := l.readString(ch)
 		return Token{Kind: TokenString, Text: text, Pos: startPos}
+	case '`':
+		text, exprs := l.readTemplateLiteral()
+		return Token{Kind: TokenTemplate, Text: text, Pos: startPos, SQLParams: exprs}
 	case '(':
 		l.advance()
 		return Token{Kind: TokenLParen, Text: "(", Pos: startPos}
@@ -340,6 +343,75 @@ func (l *Lexer) readString(quote rune) string {
 		l.advance()
 	}
 	return b.String()
+}
+
+func (l *Lexer) readTemplateLiteral() (string, []string) {
+	l.advance() // consume opening backtick
+	var segment strings.Builder
+	var segments []string
+	var exprs []string
+
+	for !l.eof() {
+		ch := l.peek()
+		switch ch {
+		case '`':
+			l.advance()
+			segments = append(segments, segment.String())
+			return strings.Join(segments, "\x00"), exprs
+		case '\\':
+			l.advance()
+			if l.eof() {
+				break
+			}
+			esc := l.peek()
+			l.advance()
+			switch esc {
+			case 'n':
+				segment.WriteByte('\n')
+			case 'r':
+				segment.WriteByte('\r')
+			case 't':
+				segment.WriteByte('\t')
+			case '\\':
+				segment.WriteByte('\\')
+			case '\'':
+				segment.WriteByte('\'')
+			case '"':
+				segment.WriteByte('"')
+			case '`':
+				segment.WriteByte('`')
+			case 'u':
+				var hex strings.Builder
+				for i := 0; i < 4 && !l.eof(); i++ {
+					hex.WriteRune(l.peek())
+					l.advance()
+				}
+				code, ok := parseHex(hex.String())
+				if ok {
+					segment.WriteRune(rune(code))
+				}
+			default:
+				segment.WriteRune(esc)
+			}
+		case '$':
+			if l.peekN(1) == '{' {
+				l.advance() // $
+				l.advance() // {
+				segments = append(segments, segment.String())
+				segment.Reset()
+				exprs = append(exprs, l.readParamExpr())
+				continue
+			}
+			segment.WriteRune(ch)
+			l.advance()
+		default:
+			segment.WriteRune(ch)
+			l.advance()
+		}
+	}
+
+	segments = append(segments, segment.String())
+	return strings.Join(segments, "\x00"), exprs
 }
 
 // readSQLBlock reads raw SQL content until matching closing brace

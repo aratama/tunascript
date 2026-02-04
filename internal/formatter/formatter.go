@@ -349,10 +349,14 @@ func (f *Formatter) formatExpr(expr ast.Expr) {
 		} else {
 			f.buf.WriteString("false")
 		}
+	case *ast.NullLit:
+		f.buf.WriteString("null")
 	case *ast.StringLit:
 		f.buf.WriteString("\"")
 		f.buf.WriteString(escapeString(e.Value))
 		f.buf.WriteString("\"")
+	case *ast.TemplateLit:
+		f.formatTemplateLit(e)
 	case *ast.ArrayLit:
 		f.formatArrayLit(e)
 	case *ast.ObjectLit:
@@ -368,6 +372,9 @@ func (f *Formatter) formatExpr(expr ast.Expr) {
 		f.buf.WriteString("[")
 		f.formatExpr(e.Index)
 		f.buf.WriteString("]")
+	case *ast.TryExpr:
+		f.formatExpr(e.Expr)
+		f.buf.WriteString("?")
 	case *ast.UnaryExpr:
 		f.buf.WriteString(e.Op)
 		f.formatExpr(e.Expr)
@@ -377,12 +384,15 @@ func (f *Formatter) formatExpr(expr ast.Expr) {
 		f.formatType(e.Type)
 	case *ast.BinaryExpr:
 		f.formatBinaryExpr(e)
-	case *ast.TernaryExpr:
+	case *ast.IfExpr:
+		f.buf.WriteString("if (")
 		f.formatExpr(e.Cond)
-		f.buf.WriteString(" ? ")
+		f.buf.WriteString(") ")
 		f.formatExpr(e.Then)
-		f.buf.WriteString(" : ")
-		f.formatExpr(e.Else)
+		if e.Else != nil {
+			f.buf.WriteString(" else ")
+			f.formatExpr(e.Else)
+		}
 	case *ast.SwitchExpr:
 		f.formatSwitchExpr(e)
 	case *ast.BlockExpr:
@@ -595,6 +605,19 @@ func (f *Formatter) formatArrayLit(e *ast.ArrayLit) {
 		f.formatExpr(entry.Value)
 	}
 	f.buf.WriteString("]")
+}
+
+func (f *Formatter) formatTemplateLit(e *ast.TemplateLit) {
+	f.buf.WriteString("`")
+	for i, segment := range e.Segments {
+		f.buf.WriteString(escapeTemplateSegment(segment))
+		if i < len(e.Exprs) {
+			f.buf.WriteString("${")
+			f.formatExpr(e.Exprs[i])
+			f.buf.WriteString("}")
+		}
+	}
+	f.buf.WriteString("`")
 }
 
 func (f *Formatter) formatObjectLit(e *ast.ObjectLit) {
@@ -928,4 +951,11 @@ func escapeString(s string) string {
 		}
 	}
 	return result.String()
+}
+
+func escapeTemplateSegment(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "`", "\\`")
+	s = strings.ReplaceAll(s, "${", "\\${")
+	return s
 }

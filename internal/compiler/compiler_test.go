@@ -75,8 +75,8 @@ func TestObjectSpreadAndStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, stringify } from "prelude";
 export function main(): void {
-  const a: { "x": integer, "y": integer } = { "x": 1, "y": 2 };
-  const b: { "x": integer, "y": integer } = { ...a, "x": 1 };
+  const a: { x: integer, y: integer } = { "x": 1, "y": 2 };
+  const b: { x: integer, y: integer } = { ...a, "x": 1 };
   log(stringify(b));
 }
 `,
@@ -188,10 +188,19 @@ export function main(): void {
 func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, toString } from "prelude";
+import { type Error } from "prelude";
 export function main(): void {
   const t: [integer, string] = [1, "a"];
-  log(toString(t[0]));
-  log(t[1]);
+  const v0 = switch (t[0]) {
+    case n as integer: toString(n)
+    case e as Error: e.message
+  };
+  const v1 = switch (t[1]) {
+    case s as string: s
+    case e as Error: e.message
+  };
+  log(v0);
+  log(v1);
 }
 `,
 	}, "main.ts")
@@ -205,7 +214,7 @@ func TestParseStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { parse, stringify, log } from "prelude";
 export function main(): void {
-  const v: { "a": integer, "b": string } = parse("{\"a\":1,\"b\":\"x\"}");
+  const v: json = parse("{\"a\":1,\"b\":\"x\"}");
   log(stringify(v));
 }
 `,
@@ -214,6 +223,15 @@ export function main(): void {
 	if out != want {
 		t.Fatalf("output mismatch: %q", out)
 	}
+}
+
+func TestTernaryOperatorIsSyntaxError(t *testing.T) {
+	compileExpectError(t, `import { log, toString } from "prelude";
+export function main(): void {
+  const x: integer = true ? 1 : 2;
+  log(toString(x));
+}
+`)
 }
 
 func TestModuleImport(t *testing.T) {
@@ -251,10 +269,14 @@ export function main(): void {
 `)
 
 	compileExpectError(t, `import { parse, log } from "prelude";
-export function main(): void {
-  log(parse("{\"a\":1}"));
-}
-`)
+	export function main(): void {
+	  const v: json = parse("{\"a\":1}");
+	  switch (v) {
+	    case v as integer: { }
+	  };
+	  log("x");
+	}
+	`)
 
 	compileExpectError(t, `import { log } from "prelude";
 export function main(): void {
@@ -266,7 +288,7 @@ export function main(): void {
 
 	compileExpectError(t, `import { log } from "prelude";
 export function main(): void {
-  const a: { "x": integer } = { "x": "invalid" };
+  const a: { x: integer } = { "x": "invalid" };
   log("x");
 }
 `)

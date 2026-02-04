@@ -164,6 +164,10 @@ func annotateExpr(expr ast.Expr, checker *ttypes.Checker) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr, *ast.IntLit, *ast.FloatLit, *ast.BoolLit, *ast.StringLit:
 		return
+	case *ast.TemplateLit:
+		for _, part := range e.Exprs {
+			annotateExpr(part, checker)
+		}
 	case *ast.ArrayLit:
 		for _, entry := range e.Entries {
 			annotateExpr(entry.Value, checker)
@@ -182,6 +186,8 @@ func annotateExpr(expr ast.Expr, checker *ttypes.Checker) {
 	case *ast.IndexExpr:
 		annotateExpr(e.Array, checker)
 		annotateExpr(e.Index, checker)
+	case *ast.TryExpr:
+		annotateExpr(e.Expr, checker)
 	case *ast.UnaryExpr:
 		annotateExpr(e.Expr, checker)
 	case *ast.AsExpr:
@@ -189,10 +195,12 @@ func annotateExpr(expr ast.Expr, checker *ttypes.Checker) {
 	case *ast.BinaryExpr:
 		annotateExpr(e.Left, checker)
 		annotateExpr(e.Right, checker)
-	case *ast.TernaryExpr:
+	case *ast.IfExpr:
 		annotateExpr(e.Cond, checker)
 		annotateExpr(e.Then, checker)
-		annotateExpr(e.Else, checker)
+		if e.Else != nil {
+			annotateExpr(e.Else, checker)
+		}
 	case *ast.SwitchExpr:
 		annotateExpr(e.Value, checker)
 		for _, c := range e.Cases {

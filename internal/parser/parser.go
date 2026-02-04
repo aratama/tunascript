@@ -481,15 +481,6 @@ func (p *Parser) parseFunctionLiteral() ast.Expr {
 func (p *Parser) parseExpr(precedence int) ast.Expr {
 	expr := p.parseUnary()
 	for {
-		// 三項演算子のチェック (最低優先度)
-		if p.curr.Kind == lexer.TokenQuestion && precedence <= 0 {
-			p.next()
-			thenExpr := p.parseExpr(0)
-			p.expect(lexer.TokenColon)
-			elseExpr := p.parseExpr(0)
-			expr = &ast.TernaryExpr{Cond: expr, Then: thenExpr, Else: elseExpr, Span: spanFromPos(expr.GetSpan().Start, elseExpr.GetSpan().End)}
-			continue
-		}
 		prec := p.binaryPrecedence(p.curr.Kind)
 		if prec < precedence {
 			break
@@ -517,11 +508,20 @@ func (p *Parser) parseUnary() ast.Expr {
 
 func (p *Parser) parsePostfix() ast.Expr {
 	expr := p.parsePrimary()
+	var pendingTypeArgs []ast.TypeExpr
 	for {
 		switch p.curr.Kind {
+		case lexer.TokenLT:
+			// Generic call: callee<TypeArgs>(args)
+			if typeArgs, ok := p.tryParseCallTypeArgs(); ok {
+				pendingTypeArgs = typeArgs
+				continue
+			}
+			return expr
 		case lexer.TokenLParen:
 			args := p.parseArgs()
-			expr = &ast.CallExpr{Callee: expr, Args: args, Span: spanFromPos(expr.GetSpan().Start, argsEnd(args, expr.GetSpan().End))}
+			expr = &ast.CallExpr{Callee: expr, TypeArgs: pendingTypeArgs, Args: args, Span: spanFromPos(expr.GetSpan().Start, argsEnd(args, expr.GetSpan().End))}
+			pendingTypeArgs = nil
 		case lexer.TokenDot:
 			p.next()
 			propTok := p.expect(lexer.TokenIdent)
@@ -531,6 +531,11 @@ func (p *Parser) parsePostfix() ast.Expr {
 			idx := p.parseExpr(0)
 			p.expect(lexer.TokenRBracket)
 			expr = &ast.IndexExpr{Array: expr, Index: idx, Span: spanFromPos(expr.GetSpan().Start, idx.GetSpan().End)}
+		case lexer.TokenQuestion:
+			spanStart := expr.GetSpan().Start
+			spanEnd := posFromLex(p.curr.Pos)
+			p.next()
+			expr = &ast.TryExpr{Expr: expr, Span: spanFromPos(spanStart, spanEnd)}
 		case lexer.TokenAs:
 			p.next()
 			typeExpr := p.parseType()
@@ -539,6 +544,52 @@ func (p *Parser) parsePostfix() ast.Expr {
 			return expr
 		}
 	}
+}
+
+func (p *Parser) tryParseCallTypeArgs() ([]ast.TypeExpr, bool) {
+	if p.curr.Kind != lexer.TokenLT {
+		return nil, false
+	}
+
+	// Snapshot state for backtracking (so `<` can still be parsed as a binary operator).
+	savedLex := *p.lex
+	savedCurr := p.curr
+	savedErrs := len(p.errs)
+
+	p.next() // consume '<'
+
+	if p.curr.Kind == lexer.TokenGT {
+		// Empty type arg list is not allowed.
+		*p.lex = savedLex
+		p.curr = savedCurr
+		p.errs = p.errs[:savedErrs]
+		return nil, false
+	}
+
+	var args []ast.TypeExpr
+	args = append(args, p.parseType())
+	for p.curr.Kind == lexer.TokenComma {
+		p.next()
+		args = append(args, p.parseType())
+	}
+	if p.curr.Kind != lexer.TokenGT {
+		// Not a generic call; restore.
+		*p.lex = savedLex
+		p.curr = savedCurr
+		p.errs = p.errs[:savedErrs]
+		return nil, false
+	}
+	p.next() // consume '>'
+
+	if p.curr.Kind != lexer.TokenLParen {
+		// It's only treated as generic call if immediately followed by '('.
+		*p.lex = savedLex
+		p.curr = savedCurr
+		p.errs = p.errs[:savedErrs]
+		return nil, false
+	}
+
+	return args, true
 }
 
 func (p *Parser) parsePrimary() ast.Expr {
@@ -561,10 +612,36 @@ func (p *Parser) parsePrimary() ast.Expr {
 		tok := p.curr
 		p.next()
 		return &ast.BoolLit{Value: tok.Kind == lexer.TokenTrue, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenNull:
+		tok := p.curr
+		p.next()
+		return &ast.NullLit{Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenUndefined:
+		tok := p.curr
+		p.next()
+		return &ast.UndefinedLit{Span: spanFrom(tok.Pos, tok.Pos)}
 	case lexer.TokenString:
 		tok := p.curr
 		p.next()
 		return &ast.StringLit{Value: tok.Text, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenTemplate:
+		tok := p.curr
+		p.next()
+		segments := strings.Split(tok.Text, "\x00")
+		exprs := make([]ast.Expr, 0, len(tok.SQLParams))
+		for _, paramStr := range tok.SQLParams {
+			paramLexer := lexer.New(paramStr)
+			paramParser := &Parser{lex: paramLexer, curr: paramLexer.Next(), path: p.path}
+			paramExpr := paramParser.parseExpr(0)
+			exprs = append(exprs, paramExpr)
+		}
+		if len(segments) == 0 {
+			segments = []string{""}
+		}
+		for len(segments) < len(exprs)+1 {
+			segments = append(segments, "")
+		}
+		return &ast.TemplateLit{Segments: segments, Exprs: exprs, Span: spanFrom(tok.Pos, tok.Pos)}
 	case lexer.TokenExecuteBlock:
 		tok := p.curr
 		p.next()
@@ -633,6 +710,8 @@ func (p *Parser) parsePrimary() ast.Expr {
 		return p.parseObjectLit()
 	case lexer.TokenSwitch:
 		return p.parseSwitchExpr()
+	case lexer.TokenIf:
+		return p.parseIfExpr()
 	case lexer.TokenLT:
 		// JSX element: <div>...</div> or <div />
 		return p.parseJSXElement()
@@ -641,6 +720,31 @@ func (p *Parser) parsePrimary() ast.Expr {
 		p.next()
 		return &ast.IdentExpr{Name: "", Span: spanFrom(p.curr.Pos, p.curr.Pos)}
 	}
+}
+
+func (p *Parser) parseIfExpr() ast.Expr {
+	start := p.curr.Pos
+	p.expect(lexer.TokenIf)
+	p.expect(lexer.TokenLParen)
+	cond := p.parseExpr(0)
+	p.expect(lexer.TokenRParen)
+
+	thenExpr := p.parseIfExprClause()
+	var elseExpr ast.Expr
+	if p.curr.Kind == lexer.TokenElse {
+		p.next()
+		elseExpr = p.parseIfExprClause()
+	}
+	end := p.curr.Pos
+	return &ast.IfExpr{Cond: cond, Then: thenExpr, Else: elseExpr, Span: spanFrom(start, end)}
+}
+
+func (p *Parser) parseIfExprClause() ast.Expr {
+	if p.curr.Kind != lexer.TokenLBrace {
+		p.err("expected '{' in if expression")
+		return p.parseExpr(0)
+	}
+	return p.parseBlockExpr()
 }
 
 func (p *Parser) parseArrayLit() ast.Expr {
@@ -724,7 +828,7 @@ func (p *Parser) parseSwitchExpr() ast.Expr {
 		if p.curr.Kind == lexer.TokenCase {
 			caseStart := p.curr.Pos
 			p.next()
-			pattern := p.parseExpr(0)
+			pattern := p.parseSwitchCasePattern()
 			p.expect(lexer.TokenColon)
 			body := p.parseSwitchCaseBody()
 			cases = append(cases, ast.SwitchCase{
@@ -745,6 +849,47 @@ func (p *Parser) parseSwitchExpr() ast.Expr {
 	p.expect(lexer.TokenRBrace)
 	end := p.curr.Pos
 	return &ast.SwitchExpr{Value: value, Cases: cases, Default: defaultExpr, Span: spanFrom(start, end)}
+}
+
+func (p *Parser) parseSwitchCasePattern() ast.Expr {
+	// Try parsing binding patterns like:
+	//   case name as T:
+	//   case { a, b } as T:
+	//   case [a, b] as T:
+	// Falls back to a normal expression pattern.
+	savedLex := *p.lex
+	savedCurr := p.curr
+	savedErrs := len(p.errs)
+
+	var bind ast.Expr
+	switch p.curr.Kind {
+	case lexer.TokenIdent:
+		tok := p.curr
+		p.next()
+		bind = &ast.IdentExpr{Name: tok.Text, Span: spanFrom(tok.Pos, tok.Pos)}
+	case lexer.TokenLBrace:
+		patternStart := p.curr.Pos
+		keys, types := p.parseObjectPatternKeys()
+		bind = &ast.ObjectPatternExpr{Keys: keys, Types: types, Span: spanFrom(patternStart, p.curr.Pos)}
+	case lexer.TokenLBracket:
+		patternStart := p.curr.Pos
+		names, types := p.parseArrayPatternNames()
+		bind = &ast.ArrayPatternExpr{Names: names, Types: types, Span: spanFrom(patternStart, p.curr.Pos)}
+	default:
+		return p.parseExpr(0)
+	}
+
+	if p.curr.Kind != lexer.TokenAs {
+		// Not a binding-as pattern; restore and parse as normal expression.
+		*p.lex = savedLex
+		p.curr = savedCurr
+		p.errs = p.errs[:savedErrs]
+		return p.parseExpr(0)
+	}
+
+	p.next() // consume 'as'
+	typeExpr := p.parseType()
+	return &ast.AsExpr{Expr: bind, Type: typeExpr, Span: spanFromPos(bind.GetSpan().Start, typeExpr.GetSpan().End)}
 }
 
 // parseSwitchCaseBody parses the body of a switch case (either a block or an expression)
@@ -812,6 +957,16 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 		base := ast.TypeExpr(&ast.NamedType{Name: name, Span: spanFrom(start, start)})
 		base = p.parseTypeApplication(base)
 		return p.parseTypeSuffix(base)
+	case lexer.TokenNull:
+		start := p.curr.Pos
+		p.next()
+		base := ast.TypeExpr(&ast.NamedType{Name: "null", Span: spanFrom(start, start)})
+		return p.parseTypeSuffix(base)
+	case lexer.TokenUndefined:
+		start := p.curr.Pos
+		p.next()
+		base := ast.TypeExpr(&ast.NamedType{Name: "undefined", Span: spanFrom(start, start)})
+		return p.parseTypeSuffix(base)
 	case lexer.TokenLBracket:
 		start := p.curr.Pos
 		p.next()
@@ -849,11 +1004,21 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 		p.next()
 		var props []ast.TypeProp
 		if p.curr.Kind != lexer.TokenRBrace {
+		propsLoop:
 			for {
 				keyTok := p.curr
-				if keyTok.Kind != lexer.TokenString {
-					p.err("type key must be string literal")
-					break
+				switch keyTok.Kind {
+				case lexer.TokenString, lexer.TokenIdent,
+					lexer.TokenImport, lexer.TokenFrom, lexer.TokenExport, lexer.TokenConst, lexer.TokenType,
+					lexer.TokenIf, lexer.TokenElse, lexer.TokenFor, lexer.TokenOf, lexer.TokenReturn,
+					lexer.TokenTrue, lexer.TokenFalse, lexer.TokenNull, lexer.TokenUndefined, lexer.TokenFunction,
+					lexer.TokenSwitch, lexer.TokenCase, lexer.TokenDefault,
+					lexer.TokenTable, lexer.TokenExecute, lexer.TokenFetchOptional, lexer.TokenFetchOne,
+					lexer.TokenFetch, lexer.TokenFetchAll, lexer.TokenAs:
+					// ok
+				default:
+					p.err("type key must be identifier or string literal")
+					break propsLoop
 				}
 				p.next()
 				key := keyTok.Text
@@ -1177,8 +1342,9 @@ func (p *Parser) parseJSXFragment(start lexer.Position) ast.Expr {
 
 // parseJSXChildren parses children of a JSX element until the closing tag
 func (p *Parser) parseJSXChildren(tag string) []ast.JSXChild {
-	// Raw text tags: style, script, textarea - their content should not be parsed as JSX
-	if tag == "style" || tag == "script" || tag == "textarea" {
+	// Raw text tags: style, script - their content should not be parsed as JSX
+	// textarea is parsed as normal JSX children so {expr} can be embedded.
+	if tag == "style" || tag == "script" {
 		children := p.parseJSXRawContent(tag)
 		// Expect closing tag: </tag> (raw content parsing leaves us at the closing tag)
 		p.expect(lexer.TokenLT)

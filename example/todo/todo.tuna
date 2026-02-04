@@ -1,4 +1,4 @@
-import { log, stringify, getArgs, length } from "prelude";
+import { log, stringify, getArgs, length, type Error } from "prelude";
 import { dbOpen } from "sqlite";
 
 // TODOリスト CLIツール
@@ -35,12 +35,12 @@ function listAllTodos(): void {
   };
   log("ID\tStatus\tTitle\tCreated");
   log("--\t------\t-----\t-------");
-  for (const row of todos) {
-    const { id, title, completed, created_at } = row;
-    const status = completed == "1" ? "[x]" : "[ ]";
-    log(id + "\t" + status + "\t" + title + "\t" + created_at);
-  }
-}
+	  for (const row of todos) {
+	    const { id, title, completed, created_at } = row;
+	    const status = if (completed == "1") { "[x]" } else { "[ ]" };
+	    log(id + "\t" + status + "\t" + title + "\t" + created_at);
+	  }
+	}
 
 function openTodo(title: string): void {
   execute {
@@ -87,13 +87,25 @@ export function main(): void {
     return;
   }
 
-  const cmd = args[0];
+  const cmd = switch (args[0]) {
+    case c as string: c
+    case e as Error: {
+      log("エラー: " + e.message);
+      ""
+    }
+  };
 
   // switch式でコマンドを分岐
   switch (cmd) {
     case "list": {
       if (argc >= 2) {
-        const opt = args[1];
+        const opt = switch (args[1]) {
+          case o as string: o
+          case e as Error: {
+            log("エラー: " + e.message);
+            ""
+          }
+        };
         if(opt == "--all") {
           listAllTodos();
         } else {
@@ -106,7 +118,14 @@ export function main(): void {
     }
     case "open": {
       if (argc >= 2) {
-        openTodo(args[1]);
+        const title = switch (args[1]) {
+          case t as string: t
+          case e as Error: {
+            log("エラー: " + e.message);
+            ""
+          }
+        };
+        openTodo(title);
       } else {
         log("エラー: タイトルを指定してください");
         showUsage();
@@ -114,7 +133,14 @@ export function main(): void {
     }
     case "close": {
       if (argc >= 2) {
-        closeTodo(args[1]);
+        const id = switch (args[1]) {
+          case i as string: i
+          case e as Error: {
+            log("エラー: " + e.message);
+            ""
+          }
+        };
+        closeTodo(id);
       } else {
         log("エラー: IDを指定してください");
         showUsage();

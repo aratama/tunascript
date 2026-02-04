@@ -2,5 +2,6 @@
 - Gitの操作は禁じられています。決してコミットしたりプッシュしたりしてはいけません。
 - すべてのファイルはUTF-8(BOMなし)で保存してください。BOM付きUTF-8は禁止されています。
 - タスクが完了したらテストを実行し、もしテストが失敗していたら修正してください。
-- TunaScriptの構文を変更したら、必ずspec.mdに反映させてください。
+- TunaScriptの構文を変更したら、必ず`docs/spec.md`に反映させてください。
 - TunaScriptの構文を変更したり、拡張の再インストールを求められたら、`.vscode/tasks.json`の`Install VSCode Tuna Extension`のコマンドで拡張を再インストールしてください
+- TuneScriptの組み込みライブラリを変更したら、`docs/library.md`に反映してください

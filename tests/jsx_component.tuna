@@ -2,7 +2,7 @@
 
 import { log, type JSX } from "prelude";
 
-function Card(props: { "title": string, "children": JSX }): JSX {
+function Card(props: { title: string, children: JSX }): JSX {
   return <section><h2>{props.title}</h2>{props.children}</section>;
 }
 

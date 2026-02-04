@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +22,7 @@ import (
 
 	"github.com/bytecodealliance/wasmtime-go"
 	_ "modernc.org/sqlite"
+	"tuna/internal/compiler"
 )
 
 type Kind int
@@ -30,6 +34,8 @@ const (
 	KindString
 	KindObject
 	KindArray
+	KindNull
+	KindUndefined
 )
 
 type Value struct {
@@ -64,6 +70,26 @@ type ColumnDef struct {
 	Constraints string `json:"constraints"`
 }
 
+type decodeSchema struct {
+	Kind    string           `json:"kind"`
+	Literal *decodeSchemaLit `json:"literal,omitempty"`
+	Elem    *decodeSchema    `json:"elem,omitempty"`
+	Tuple   []*decodeSchema  `json:"tuple,omitempty"`
+	Props   []decodeSchemaKV `json:"props,omitempty"`
+	Index   *decodeSchema    `json:"index,omitempty"`
+	Union   []*decodeSchema  `json:"union,omitempty"`
+}
+
+type decodeSchemaLit struct {
+	Kind  string      `json:"kind"`
+	Value interface{} `json:"value"`
+}
+
+type decodeSchemaKV struct {
+	Name string        `json:"name"`
+	Type *decodeSchema `json:"type"`
+}
+
 // HTTPServer represents an HTTP server instance
 type HTTPServer struct {
 	mux    *http.ServeMux
@@ -81,11 +107,16 @@ type HTTPResponse struct {
 	Body        string
 	ContentType string
 	StatusCode  int
+	RedirectURL string
 }
 
 type Runtime struct {
 	heap            []Value
 	output          bytes.Buffer
+	sandboxStdout   bytes.Buffer
+	sandboxHTML     string
+	sandbox         bool
+	maxOutputBytes  int
 	db              *sql.DB
 	handlerMu       sync.Mutex
 	currentTx       *sql.Tx
@@ -96,6 +127,7 @@ type Runtime struct {
 	store           *wasmtime.Store
 	instance        *wasmtime.Instance
 	internedStrings map[uint64]int32 // 文字列リテラルのインターンキャッシュ
+	decodeSchemas   map[string]*decodeSchema
 	// pendingServer is set when http_listen is called, actual server starts after WASM execution
 	pendingServer *pendingHTTPServer
 }
@@ -148,8 +180,10 @@ func NewRuntime() *Runtime {
 	r := &Runtime{
 		httpServers:     make(map[int32]*HTTPServer),
 		internedStrings: make(map[uint64]int32),
+		decodeSchemas:   make(map[string]*decodeSchema),
 	}
-	r.heap = append(r.heap, Value{})
+	// index 0 is reserved for null, index 1 is reserved for undefined
+	r.heap = append(r.heap, Value{Kind: KindNull}, Value{Kind: KindUndefined})
 	return r
 }
 
@@ -161,6 +195,15 @@ func (r *Runtime) SetWasmContext(store *wasmtime.Store, instance *wasmtime.Insta
 
 func (r *Runtime) Output() string {
 	return r.output.String()
+}
+
+func (r *Runtime) ConfigureSandbox(maxOutputBytes int) {
+	r.sandbox = true
+	r.maxOutputBytes = maxOutputBytes
+}
+
+func (r *Runtime) SandboxOutput() (string, string) {
+	return r.sandboxStdout.String(), r.sandboxHTML
 }
 
 func (r *Runtime) SetArgs(args []string) {
@@ -262,6 +305,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := define("arr_get_result", func(arrHandle int32, index int32) int32 {
+		return r.arrGetResult(arrHandle, index)
+	}); err != nil {
+		return err
+	}
 	if err := define("arr_len", func(arrHandle int32) int32 {
 		return must(r.arrLen(arrHandle))
 	}); err != nil {
@@ -297,8 +345,18 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := define("decode", func(jsonHandle int32, schemaHandle int32) int32 {
+		return must(r.decode(jsonHandle, schemaHandle))
+	}); err != nil {
+		return err
+	}
 	if err := define("toString", func(handle int32) int32 {
 		return must(r.toString(handle))
+	}); err != nil {
+		return err
+	}
+	if err := define("escape_html_attr", func(handle int32) int32 {
+		return must(r.escapeHTMLAttr(handle))
 	}); err != nil {
 		return err
 	}
@@ -324,6 +382,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}
 	if err := define("get_env", func(nameHandle int32) int32 {
 		return must(r.getEnv(nameHandle))
+	}); err != nil {
+		return err
+	}
+	if err := define("run_sandbox", func(sourceHandle int32) int32 {
+		return must(r.runSandbox(sourceHandle))
 	}); err != nil {
 		return err
 	}
@@ -424,6 +487,28 @@ func must0(err error) {
 	}
 }
 
+func (r *Runtime) checkSandboxOutputSize(extra int) error {
+	if !r.sandbox || r.maxOutputBytes <= 0 {
+		return nil
+	}
+	total := r.sandboxStdout.Len() + len(r.sandboxHTML) + extra
+	if total > r.maxOutputBytes {
+		return fmt.Errorf("sandbox output limit exceeded: %d bytes", r.maxOutputBytes)
+	}
+	return nil
+}
+
+func (r *Runtime) setSandboxHTML(html string) error {
+	delta := len(html) - len(r.sandboxHTML)
+	if delta > 0 {
+		if err := r.checkSandboxOutputSize(delta); err != nil {
+			return err
+		}
+	}
+	r.sandboxHTML = html
+	return nil
+}
+
 func (r *Runtime) newValue(v Value) int32 {
 	r.heap = append(r.heap, v)
 	return int32(len(r.heap) - 1)
@@ -462,8 +547,60 @@ func (r *Runtime) getEnv(nameHandle int32) (int32, error) {
 	if valueHandle.Kind != KindString {
 		return 0, errors.New("getEnv expects string")
 	}
+	if r.sandbox {
+		return r.newValue(Value{Kind: KindString, Str: ""}), nil
+	}
 	value := os.Getenv(valueHandle.Str)
 	return r.newValue(Value{Kind: KindString, Str: value}), nil
+}
+
+func (r *Runtime) runSandbox(sourceHandle int32) (int32, error) {
+	sourceValue, err := r.getValue(sourceHandle)
+	if err != nil {
+		return 0, err
+	}
+	if sourceValue.Kind != KindString {
+		return 0, errors.New("runSandbox expects string")
+	}
+	if r.sandbox {
+		return 0, errors.New("runSandbox is not available in sandbox mode")
+	}
+
+	result := SandboxResult{}
+	tmpDir, err := os.MkdirTemp("", "tunascript-playground-*")
+	if err != nil {
+		result.ExitCode = 1
+		result.Error = fmt.Sprintf("temp dir error: %v", err)
+		return r.sandboxResultString(result)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	entry := filepath.Join(tmpDir, "main.tuna")
+	if err := os.WriteFile(entry, []byte(sourceValue.Str), 0644); err != nil {
+		result.ExitCode = 1
+		result.Error = fmt.Sprintf("write source error: %v", err)
+		return r.sandboxResultString(result)
+	}
+
+	comp := compiler.New()
+	compiled, err := comp.Compile(entry)
+	if err != nil {
+		result.ExitCode = 1
+		result.Error = err.Error()
+		return r.sandboxResultString(result)
+	}
+
+	runner := NewRunner()
+	result = runner.RunSandboxWithArgs(compiled.Wasm, nil)
+	return r.sandboxResultString(result)
+}
+
+func (r *Runtime) sandboxResultString(result SandboxResult) (int32, error) {
+	data, err := json.Marshal(result)
+	if err != nil {
+		return 0, err
+	}
+	return r.newValue(Value{Kind: KindString, Str: string(data)}), nil
 }
 
 // internString は文字列リテラル（offset, length）をヒープハンドルに変換します。
@@ -668,6 +805,14 @@ func (r *Runtime) arrGet(arrHandle int32, index int32) (int32, error) {
 	return arrVal.Arr.Elems[index], nil
 }
 
+func (r *Runtime) arrGetResult(arrHandle int32, index int32) int32 {
+	val, err := r.arrGet(arrHandle, index)
+	if err != nil {
+		return r.decodeError(err.Error())
+	}
+	return val
+}
+
 func (r *Runtime) arrLen(arrHandle int32) (int32, error) {
 	arrVal, err := r.getValue(arrHandle)
 	if err != nil {
@@ -793,6 +938,10 @@ func (r *Runtime) valueEqual(a *Value, b *Value) bool {
 			}
 		}
 		return true
+	case KindNull:
+		return true
+	case KindUndefined:
+		return true
 	default:
 		return false
 	}
@@ -803,18 +952,26 @@ func (r *Runtime) log(handle int32) error {
 	if err != nil {
 		return err
 	}
-	if v.Kind == KindString {
-		r.output.WriteString(v.Str)
-		r.output.WriteString("\n")
+	appendLine := func(s string) error {
+		line := s + "\n"
+		if r.sandbox {
+			if err := r.checkSandboxOutputSize(len(line)); err != nil {
+				return err
+			}
+			r.sandboxStdout.WriteString(line)
+			return nil
+		}
+		r.output.WriteString(line)
 		return nil
+	}
+	if v.Kind == KindString {
+		return appendLine(v.Str)
 	}
 	text, err := r.stringifyValue(handle)
 	if err != nil {
 		return err
 	}
-	r.output.WriteString(text)
-	r.output.WriteString("\n")
-	return nil
+	return appendLine(text)
 }
 
 func (r *Runtime) stringify(handle int32) (int32, error) {
@@ -850,6 +1007,17 @@ func (r *Runtime) toString(handle int32) (int32, error) {
 	}
 }
 
+func (r *Runtime) escapeHTMLAttr(handle int32) (int32, error) {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return 0, err
+	}
+	if v.Kind != KindString {
+		return 0, errors.New("escape_html_attr expects string")
+	}
+	return r.newValue(Value{Kind: KindString, Str: html.EscapeString(v.Str)}), nil
+}
+
 func (r *Runtime) parse(handle int32) (int32, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
@@ -864,7 +1032,263 @@ func (r *Runtime) parse(handle int32) (int32, error) {
 	if err := dec.Decode(&data); err != nil {
 		return 0, err
 	}
+	// JSON.parse と同様に、末尾に余計なトークンがあればエラーにする
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return 0, errors.New("invalid json")
+		}
+		return 0, err
+	}
 	return r.fromInterface(data)
+}
+
+func (r *Runtime) decode(jsonHandle int32, schemaHandle int32) (int32, error) {
+	sv, err := r.getValue(schemaHandle)
+	if err != nil {
+		return r.decodeError("invalid schema"), nil
+	}
+	if sv.Kind != KindString {
+		return r.decodeError("decode expects schema string"), nil
+	}
+
+	schema, err := r.getDecodeSchema(sv.Str)
+	if err != nil {
+		return r.decodeError("invalid schema"), nil
+	}
+
+	decoded, err := r.decodeWithSchema(jsonHandle, schema, "$")
+	if err != nil {
+		return r.decodeError(err.Error()), nil
+	}
+	return decoded, nil
+}
+
+func (r *Runtime) getDecodeSchema(schemaJSON string) (*decodeSchema, error) {
+	if cached, ok := r.decodeSchemas[schemaJSON]; ok {
+		return cached, nil
+	}
+	var s decodeSchema
+	if err := json.Unmarshal([]byte(schemaJSON), &s); err != nil {
+		return nil, err
+	}
+	r.decodeSchemas[schemaJSON] = &s
+	return &s, nil
+}
+
+func (r *Runtime) decodeError(message string) int32 {
+	props := map[string]int32{
+		"message": r.newValue(Value{Kind: KindString, Str: message}),
+		"type":    r.newValue(Value{Kind: KindString, Str: "Error"}),
+	}
+	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}})
+}
+
+func sortedKeys(m map[string]int32) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func (r *Runtime) decodeWithSchema(handle int32, schema *decodeSchema, path string) (int32, error) {
+	if schema == nil {
+		return 0, fmt.Errorf("%s: invalid schema", path)
+	}
+	v, err := r.getValue(handle)
+	if err != nil {
+		return 0, err
+	}
+
+	switch schema.Kind {
+	case "json":
+		return handle, nil
+	case "undefined":
+		if v.Kind != KindUndefined {
+			return 0, fmt.Errorf("%s: undefined expected", path)
+		}
+		return handle, nil
+	case "null":
+		if v.Kind != KindNull {
+			return 0, fmt.Errorf("%s: null expected", path)
+		}
+		return handle, nil
+	case "string":
+		if v.Kind != KindString {
+			return 0, fmt.Errorf("%s: string expected", path)
+		}
+		if schema.Literal != nil {
+			want, _ := schema.Literal.Value.(string)
+			if v.Str != want {
+				return 0, fmt.Errorf("%s: string literal mismatch", path)
+			}
+		}
+		return handle, nil
+	case "boolean":
+		if v.Kind != KindBool {
+			return 0, fmt.Errorf("%s: boolean expected", path)
+		}
+		if schema.Literal != nil {
+			want, _ := schema.Literal.Value.(bool)
+			if v.Bool != want {
+				return 0, fmt.Errorf("%s: boolean literal mismatch", path)
+			}
+		}
+		return handle, nil
+	case "integer":
+		var out int32
+		switch v.Kind {
+		case KindI64:
+			out = handle
+		case KindF64:
+			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
+				return 0, fmt.Errorf("%s: invalid number", path)
+			}
+			if math.Trunc(v.F64) != v.F64 {
+				return 0, fmt.Errorf("%s: integer expected", path)
+			}
+			if v.F64 < float64(math.MinInt64) || v.F64 > float64(math.MaxInt64) {
+				return 0, fmt.Errorf("%s: integer out of range", path)
+			}
+			out = r.newValue(Value{Kind: KindI64, I64: int64(v.F64)})
+		default:
+			return 0, fmt.Errorf("%s: integer expected", path)
+		}
+		if schema.Literal != nil {
+			wantNum, _ := schema.Literal.Value.(float64)
+			outVal, _ := r.getValue(out)
+			if outVal.I64 != int64(wantNum) {
+				return 0, fmt.Errorf("%s: integer literal mismatch", path)
+			}
+		}
+		return out, nil
+	case "number":
+		var out int32
+		switch v.Kind {
+		case KindF64:
+			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
+				return 0, fmt.Errorf("%s: invalid number", path)
+			}
+			out = handle
+		case KindI64:
+			out = r.newValue(Value{Kind: KindF64, F64: float64(v.I64)})
+		default:
+			return 0, fmt.Errorf("%s: number expected", path)
+		}
+		if schema.Literal != nil {
+			wantNum, _ := schema.Literal.Value.(float64)
+			outVal, _ := r.getValue(out)
+			if outVal.Kind != KindF64 || outVal.F64 != wantNum {
+				return 0, fmt.Errorf("%s: number literal mismatch", path)
+			}
+		}
+		return out, nil
+	case "array":
+		if v.Kind != KindArray {
+			return 0, fmt.Errorf("%s: array expected", path)
+		}
+		if schema.Elem == nil {
+			return 0, fmt.Errorf("%s: invalid schema", path)
+		}
+		elems := make([]int32, len(v.Arr.Elems))
+		for i, child := range v.Arr.Elems {
+			decoded, err := r.decodeWithSchema(child, schema.Elem, fmt.Sprintf("%s[%d]", path, i))
+			if err != nil {
+				return 0, err
+			}
+			elems[i] = decoded
+		}
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
+	case "tuple":
+		if v.Kind != KindArray {
+			return 0, fmt.Errorf("%s: array expected", path)
+		}
+		if len(v.Arr.Elems) != len(schema.Tuple) {
+			return 0, fmt.Errorf("%s: tuple length mismatch", path)
+		}
+		elems := make([]int32, len(schema.Tuple))
+		for i, elemSchema := range schema.Tuple {
+			decoded, err := r.decodeWithSchema(v.Arr.Elems[i], elemSchema, fmt.Sprintf("%s[%d]", path, i))
+			if err != nil {
+				return 0, err
+			}
+			elems[i] = decoded
+		}
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
+	case "object":
+		if v.Kind != KindObject {
+			return 0, fmt.Errorf("%s: object expected", path)
+		}
+
+		props := map[string]int32{}
+		for _, p := range schema.Props {
+			if p.Type == nil {
+				return 0, fmt.Errorf("%s: invalid schema", path)
+			}
+			child, ok := v.Obj.Props[p.Name]
+			if !ok {
+				if schemaAllowsUndefined(p.Type) {
+					props[p.Name] = 1 // undefined
+					continue
+				}
+				return 0, fmt.Errorf("%s.%s: missing field", path, p.Name)
+			}
+			decoded, err := r.decodeWithSchema(child, p.Type, path+"."+p.Name)
+			if err != nil {
+				return 0, err
+			}
+			props[p.Name] = decoded
+		}
+
+		if schema.Index != nil {
+			for key, child := range v.Obj.Props {
+				if _, ok := props[key]; ok {
+					continue
+				}
+				decoded, err := r.decodeWithSchema(child, schema.Index, path+"."+key)
+				if err != nil {
+					return 0, err
+				}
+				props[key] = decoded
+			}
+		}
+
+		return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}}), nil
+	case "union":
+		var lastErr error
+		for _, m := range schema.Union {
+			decoded, err := r.decodeWithSchema(handle, m, path)
+			if err == nil {
+				return decoded, nil
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return 0, lastErr
+		}
+		return 0, fmt.Errorf("%s: union expected", path)
+	default:
+		return 0, fmt.Errorf("%s: unsupported schema kind", path)
+	}
+}
+
+func schemaAllowsUndefined(schema *decodeSchema) bool {
+	if schema == nil {
+		return false
+	}
+	if schema.Kind == "undefined" {
+		return true
+	}
+	if schema.Kind == "union" {
+		for _, m := range schema.Union {
+			if schemaAllowsUndefined(m) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *Runtime) fromInterface(v interface{}) (int32, error) {
@@ -916,6 +1340,8 @@ func (r *Runtime) fromInterface(v interface{}) (int32, error) {
 			props[k] = child
 		}
 		return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: keys, Props: props}}), nil
+	case nil:
+		return r.newValue(Value{Kind: KindNull}), nil
 	default:
 		return 0, errors.New("unsupported json")
 	}
@@ -963,18 +1389,31 @@ func (r *Runtime) writeJSON(handle int32, buf *bytes.Buffer) error {
 		buf.WriteByte(']')
 	case KindObject:
 		buf.WriteByte('{')
-		for i, key := range v.Obj.Order {
-			if i > 0 {
+		wrote := 0
+		for _, key := range v.Obj.Order {
+			child := v.Obj.Props[key]
+			childVal, err := r.getValue(child)
+			if err != nil {
+				return err
+			}
+			if childVal.Kind == KindUndefined {
+				continue
+			}
+			if wrote > 0 {
 				buf.WriteByte(',')
 			}
+			wrote++
 			buf.WriteString(strconv.Quote(key))
 			buf.WriteByte(':')
-			child := v.Obj.Props[key]
 			if err := r.writeJSON(child, buf); err != nil {
 				return err
 			}
 		}
 		buf.WriteByte('}')
+	case KindNull:
+		buf.WriteString("null")
+	case KindUndefined:
+		buf.WriteString("null")
 	default:
 		return errors.New("unsupported type")
 	}
@@ -1120,6 +1559,9 @@ func (r *Runtime) execModifyQuery(query string) (int32, error) {
 
 // dbOpenHandle opens a database file using a string handle from the heap
 func (r *Runtime) dbOpenHandle(strHandle int32) error {
+	if r.sandbox {
+		return nil
+	}
 	val, err := r.getValue(strHandle)
 	if err != nil {
 		return err
@@ -1736,6 +2178,12 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, path
 	}
 	path := string(data[start:end])
 
+	if r.sandbox && path == "/" {
+		if _, exists := server.routes[path]; exists {
+			return errors.New(`addRoute(server, "/", handler) may only be called once in sandbox mode`)
+		}
+	}
+
 	server.routes[path] = handlerHandle
 	return nil
 }
@@ -1763,6 +2211,14 @@ func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portHa
 	}
 	port := portVal.Str
 
+	if r.sandbox {
+		response, err := r.invokeRouteHandler(server, "/", "GET", map[string]string{}, map[string]string{})
+		if err != nil {
+			return err
+		}
+		return r.setSandboxHTML(response.Body)
+	}
+
 	// Store pending server info - actual startup happens after WASM execution completes
 	r.pendingServer = &pendingHTTPServer{
 		server: server,
@@ -1770,6 +2226,168 @@ func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portHa
 	}
 
 	return nil
+}
+
+func (r *Runtime) buildRequestObject(path string, method string, query map[string]string, form map[string]string) (int32, error) {
+	reqObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	pathHandle := r.newValue(Value{Kind: KindString, Str: path})
+	methodHandle := r.newValue(Value{Kind: KindString, Str: method})
+	pathKeyHandle := r.newValue(Value{Kind: KindString, Str: "path"})
+	methodKeyHandle := r.newValue(Value{Kind: KindString, Str: "method"})
+	if err := r.objSet(reqObj, pathKeyHandle, pathHandle); err != nil {
+		return 0, err
+	}
+	if err := r.objSet(reqObj, methodKeyHandle, methodHandle); err != nil {
+		return 0, err
+	}
+
+	queryObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	queryKeys := make([]string, 0, len(query))
+	for key := range query {
+		queryKeys = append(queryKeys, key)
+	}
+	sort.Strings(queryKeys)
+	for _, key := range queryKeys {
+		keyHandle := r.newValue(Value{Kind: KindString, Str: key})
+		valueHandle := r.newValue(Value{Kind: KindString, Str: query[key]})
+		if err := r.objSet(queryObj, keyHandle, valueHandle); err != nil {
+			return 0, err
+		}
+	}
+	queryKeyHandle := r.newValue(Value{Kind: KindString, Str: "query"})
+	if err := r.objSet(reqObj, queryKeyHandle, queryObj); err != nil {
+		return 0, err
+	}
+
+	formObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	formKeys := make([]string, 0, len(form))
+	for key := range form {
+		formKeys = append(formKeys, key)
+	}
+	sort.Strings(formKeys)
+	for _, key := range formKeys {
+		keyHandle := r.newValue(Value{Kind: KindString, Str: key})
+		valueHandle := r.newValue(Value{Kind: KindString, Str: form[key]})
+		if err := r.objSet(formObj, keyHandle, valueHandle); err != nil {
+			return 0, err
+		}
+	}
+	formKeyHandle := r.newValue(Value{Kind: KindString, Str: "form"})
+	if err := r.objSet(reqObj, formKeyHandle, formObj); err != nil {
+		return 0, err
+	}
+
+	return reqObj, nil
+}
+
+func (r *Runtime) invokeRouteHandler(server *HTTPServer, path string, method string, query map[string]string, form map[string]string) (*HTTPResponse, error) {
+	r.handlerMu.Lock()
+	defer r.handlerMu.Unlock()
+
+	r.httpMu.Lock()
+	handlerHandle, ok := server.routes[path]
+	r.httpMu.Unlock()
+	if !ok {
+		return nil, fmt.Errorf("route not found: %s", path)
+	}
+
+	reqObj, err := r.buildRequestObject(path, method, query, form)
+	if err != nil {
+		return nil, err
+	}
+	if r.db == nil {
+		return nil, errors.New("database not initialized")
+	}
+	if r.instance == nil || r.store == nil {
+		return nil, errors.New("no instance")
+	}
+
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("transaction begin error: %w", err)
+	}
+	r.currentTx = tx
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+		r.currentTx = nil
+	}()
+
+	handlerVal, err := r.getValue(handlerHandle)
+	if err != nil {
+		return nil, err
+	}
+	if handlerVal.Kind != KindString {
+		return nil, fmt.Errorf("handler is not a string, kind=%d", handlerVal.Kind)
+	}
+	handlerFunc := r.instance.GetFunc(r.store, handlerVal.Str)
+	if handlerFunc == nil {
+		return nil, fmt.Errorf("handler function not found: %s", handlerVal.Str)
+	}
+
+	result, err := handlerFunc.Call(r.store, reqObj)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, errors.New("handler returned nil")
+	}
+	resHandle, ok := result.(int32)
+	if !ok {
+		return nil, fmt.Errorf("handler result is not int32: %T", result)
+	}
+	resVal, err := r.getValue(resHandle)
+	if err != nil {
+		return nil, err
+	}
+	if resVal.Kind != KindObject {
+		return nil, fmt.Errorf("handler result is not object, kind=%d", resVal.Kind)
+	}
+
+	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
+	bodyHandle, err := r.objGet(resHandle, bodyKey)
+	if err != nil {
+		return nil, err
+	}
+	bodyVal, err := r.getValue(bodyHandle)
+	if err != nil {
+		return nil, err
+	}
+	if bodyVal.Kind != KindString {
+		return nil, fmt.Errorf("response body is not string, kind=%d", bodyVal.Kind)
+	}
+
+	contentType := "text/plain; charset=utf-8"
+	contentTypeKey := r.newValue(Value{Kind: KindString, Str: "contentType"})
+	if ctHandle, err := r.objGet(resHandle, contentTypeKey); err == nil {
+		if ctVal, err := r.getValue(ctHandle); err == nil && ctVal.Kind == KindString {
+			contentType = ctVal.Str
+		}
+	}
+
+	redirectURL := ""
+	if contentType == "redirect" {
+		redirectURLKey := r.newValue(Value{Kind: KindString, Str: "redirectUrl"})
+		if urlHandle, err := r.objGet(resHandle, redirectURLKey); err == nil {
+			if urlVal, err := r.getValue(urlHandle); err == nil && urlVal.Kind == KindString {
+				redirectURL = urlVal.Str
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("transaction commit error: %w", err)
+	}
+	committed = true
+
+	return &HTTPResponse{
+		Body:        bodyVal.Str,
+		ContentType: contentType,
+		StatusCode:  http.StatusOK,
+		RedirectURL: redirectURL,
+	}, nil
 }
 
 // StartPendingServer starts the HTTP server if one was registered via http_listen
@@ -1787,176 +2405,42 @@ func (r *Runtime) StartPendingServer() error {
 	server := r.pendingServer.server
 	port := r.pendingServer.port
 
-	// Set up handler for all routes
 	server.mux.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		r.handlerMu.Lock()
-		defer r.handlerMu.Unlock()
-		// Look up the handler for this path
-		r.httpMu.Lock()
-		handlerHandle, ok := server.routes[req.URL.Path]
-		r.httpMu.Unlock()
-
-		if !ok {
-			http.NotFound(w, req)
-			return
-		}
-
-		// Create request object
-		reqObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
-		pathHandle := r.newValue(Value{Kind: KindString, Str: req.URL.Path})
-		methodHandle := r.newValue(Value{Kind: KindString, Str: req.Method})
-		pathKeyHandle := r.newValue(Value{Kind: KindString, Str: "path"})
-		methodKeyHandle := r.newValue(Value{Kind: KindString, Str: "method"})
-		_ = r.objSet(reqObj, pathKeyHandle, pathHandle)
-		_ = r.objSet(reqObj, methodKeyHandle, methodHandle)
-
-		// Add query parameters as an object
-		queryObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+		query := make(map[string]string)
 		for key, values := range req.URL.Query() {
 			if len(values) > 0 {
-				keyHandle := r.newValue(Value{Kind: KindString, Str: key})
-				valueHandle := r.newValue(Value{Kind: KindString, Str: values[0]})
-				_ = r.objSet(queryObj, keyHandle, valueHandle)
+				query[key] = values[0]
 			}
 		}
-		queryKeyHandle := r.newValue(Value{Kind: KindString, Str: "query"})
-		_ = r.objSet(reqObj, queryKeyHandle, queryObj)
 
-		// Add form data as an object (for POST requests)
-		formObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+		form := make(map[string]string)
 		if req.Method == "POST" {
-			req.ParseForm()
+			_ = req.ParseForm()
 			for key, values := range req.PostForm {
 				if len(values) > 0 {
-					keyHandle := r.newValue(Value{Kind: KindString, Str: key})
-					valueHandle := r.newValue(Value{Kind: KindString, Str: values[0]})
-					_ = r.objSet(formObj, keyHandle, valueHandle)
+					form[key] = values[0]
 				}
 			}
 		}
-		formKeyHandle := r.newValue(Value{Kind: KindString, Str: "form"})
-		_ = r.objSet(reqObj, formKeyHandle, formObj)
 
-		if r.db == nil {
-			http.Error(w, "Internal Server Error: database not initialized", http.StatusInternalServerError)
-			return
-		}
-		tx, err := r.db.Begin()
+		response, err := r.invokeRouteHandler(server, req.URL.Path, req.Method, query, form)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Transaction begin error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "HTTP handler error: %v\n", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			return
 		}
-		r.currentTx = tx
-		committed := false
-		defer func() {
-			if !committed {
-				tx.Rollback()
-			}
-			r.currentTx = nil
-		}()
-
-		// Call the handler function
-		if r.instance != nil && r.store != nil {
-			handlerVal, err := r.getValue(handlerHandle)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting handler value: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			if handlerVal.Kind != KindString {
-				fmt.Fprintf(os.Stderr, "Handler is not a string, kind=%d\n", handlerVal.Kind)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			handlerName := handlerVal.Str
-			handlerFunc := r.instance.GetFunc(r.store, handlerName)
-			if handlerFunc == nil {
-				fmt.Fprintf(os.Stderr, "Handler function not found: %s\n", handlerName)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			result, err := handlerFunc.Call(r.store, reqObj)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Handler call error: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			if result == nil {
-				fmt.Fprintf(os.Stderr, "Handler returned nil\n")
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			resHandle, ok := result.(int32)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Result is not int32: %T\n", result)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			resVal, err := r.getValue(resHandle)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting result value: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			if resVal.Kind != KindObject {
-				fmt.Fprintf(os.Stderr, "Result is not object, kind=%d\n", resVal.Kind)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			// Get body from response object
-			bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
-			bodyHandle, err := r.objGet(resHandle, bodyKey)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting body: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			bodyVal, err := r.getValue(bodyHandle)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error getting body value: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			if bodyVal.Kind != KindString {
-				fmt.Fprintf(os.Stderr, "Body is not string, kind=%d\n", bodyVal.Kind)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			// Get contentType from response object (default to text/plain if not set)
-			contentType := "text/plain; charset=utf-8"
-			contentTypeKey := r.newValue(Value{Kind: KindString, Str: "contentType"})
-			if ctHandle, err := r.objGet(resHandle, contentTypeKey); err == nil {
-				if ctVal, err := r.getValue(ctHandle); err == nil && ctVal.Kind == KindString {
-					contentType = ctVal.Str
-				}
-			}
-
-			// Check if it's a redirect response
-			if err := tx.Commit(); err != nil {
-				fmt.Fprintf(os.Stderr, "Transaction commit error: %v\n", err)
-				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
-				return
-			}
-			committed = true
-			if contentType == "redirect" {
-				redirectUrlKey := r.newValue(Value{Kind: KindString, Str: "redirectUrl"})
-				if urlHandle, err := r.objGet(resHandle, redirectUrlKey); err == nil {
-					if urlVal, err := r.getValue(urlHandle); err == nil && urlVal.Kind == KindString {
-						http.Redirect(w, req, urlVal.Str, http.StatusFound)
-						return
-					}
-				}
+		if response.ContentType == "redirect" {
+			if response.RedirectURL == "" {
 				http.Error(w, "Invalid redirect response", http.StatusInternalServerError)
 				return
 			}
-
-			w.Header().Set("Content-Type", contentType)
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(bodyVal.Str))
+			http.Redirect(w, req, response.RedirectURL, http.StatusFound)
 			return
 		}
-		http.Error(w, "Internal Server Error: no instance", http.StatusInternalServerError)
+
+		w.Header().Set("Content-Type", response.ContentType)
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write([]byte(response.Body))
 	})
 
 	// Flush accumulated output to stdout before blocking on ListenAndServe

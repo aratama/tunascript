@@ -230,6 +230,20 @@ type BoolLit struct {
 func (*BoolLit) exprNode()       {}
 func (e *BoolLit) GetSpan() Span { return e.Span }
 
+type NullLit struct {
+	Span Span
+}
+
+func (*NullLit) exprNode()       {}
+func (e *NullLit) GetSpan() Span { return e.Span }
+
+type UndefinedLit struct {
+	Span Span
+}
+
+func (*UndefinedLit) exprNode()       {}
+func (e *UndefinedLit) GetSpan() Span { return e.Span }
+
 type StringLit struct {
 	Value string
 	Span  Span
@@ -237,6 +251,39 @@ type StringLit struct {
 
 func (*StringLit) exprNode()       {}
 func (e *StringLit) GetSpan() Span { return e.Span }
+
+// TemplateLit represents a template literal: `hello ${name}`
+// Segments length is always len(Exprs)+1.
+type TemplateLit struct {
+	Segments []string
+	Exprs    []Expr
+	Span     Span
+}
+
+func (*TemplateLit) exprNode()       {}
+func (e *TemplateLit) GetSpan() Span { return e.Span }
+
+// ArrayPatternExpr represents a destructuring binding pattern used in switch-as patterns:
+// case [a, b] as [integer, string]: ...
+type ArrayPatternExpr struct {
+	Names []string
+	Types []TypeExpr
+	Span  Span
+}
+
+func (*ArrayPatternExpr) exprNode()       {}
+func (e *ArrayPatternExpr) GetSpan() Span { return e.Span }
+
+// ObjectPatternExpr represents a destructuring binding pattern used in switch-as patterns:
+// case { message } as Error: ...
+type ObjectPatternExpr struct {
+	Keys  []string
+	Types []TypeExpr
+	Span  Span
+}
+
+func (*ObjectPatternExpr) exprNode()       {}
+func (e *ObjectPatternExpr) GetSpan() Span { return e.Span }
 
 type ArrayEntryKind int
 
@@ -282,9 +329,10 @@ type ObjectEntry struct {
 }
 
 type CallExpr struct {
-	Callee Expr
-	Args   []Expr
-	Span   Span
+	Callee   Expr
+	TypeArgs []TypeExpr
+	Args     []Expr
+	Span     Span
 }
 
 func (*CallExpr) exprNode()       {}
@@ -307,6 +355,16 @@ type IndexExpr struct {
 
 func (*IndexExpr) exprNode()       {}
 func (e *IndexExpr) GetSpan() Span { return e.Span }
+
+// TryExpr represents Result short-hand operator: expr?
+// If expr is Error at runtime, it returns from the current function.
+type TryExpr struct {
+	Expr Expr
+	Span Span
+}
+
+func (*TryExpr) exprNode()       {}
+func (e *TryExpr) GetSpan() Span { return e.Span }
 
 type UnaryExpr struct {
 	Op   string
@@ -337,16 +395,17 @@ type BinaryExpr struct {
 func (*BinaryExpr) exprNode()       {}
 func (e *BinaryExpr) GetSpan() Span { return e.Span }
 
-// TernaryExpr represents a ternary conditional expression: cond ? then : else
-type TernaryExpr struct {
+// IfExpr represents an if expression: if (cond) thenExpr else elseExpr
+// else is optional; if omitted the expression evaluates to undefined when the condition is false.
+type IfExpr struct {
 	Cond Expr
 	Then Expr
-	Else Expr
+	Else Expr // optional
 	Span Span
 }
 
-func (*TernaryExpr) exprNode()       {}
-func (e *TernaryExpr) GetSpan() Span { return e.Span }
+func (*IfExpr) exprNode()       {}
+func (e *IfExpr) GetSpan() Span { return e.Span }
 
 // SwitchExpr represents a switch expression (like Rust's match)
 // switch(expr) { case value: result, case value2: result2, default: result3 }

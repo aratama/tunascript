@@ -60,6 +60,18 @@
         "panel": "shared"
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Run Playground Example",
+      "type": "shell",
+      "command": "go run ./cmd/tuna/ run example/playground/playground.tuna",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      },
+      "problemMatcher": [],
+      "isBackground": true
     }
   ]
 }

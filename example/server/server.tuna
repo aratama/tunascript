@@ -1,4 +1,4 @@
-import { log, getArgs, getEnv, length, map, type JSX } from "prelude"
+import { log, getArgs, getEnv, length, map, type JSX, type Error } from "prelude"
 import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
 import { Styles } from "./style.tuna"
@@ -17,13 +17,13 @@ function TodoList(): JSX {
   if (rows.length() == 0) {
     return <p class="empty-message">タスクがありません</p>
   }
-  return <ul class="todo-list">{rows.map(function (row) {
-    const isCompleted = row.completed == "1"
-    const itemClass = isCompleted ? "todo-item completed" : "todo-item"
-    return <li class={itemClass}>
-      <form method="POST" action="/toggle" style="display:contents">
-        <input type="hidden" name="id" value={row.id} />
-        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
+	  return <ul class="todo-list">{rows.map(function (row) {
+	    const isCompleted = row.completed == "1"
+	    const itemClass = if (isCompleted) { "todo-item completed" } else { "todo-item" }
+	    return <li class={itemClass}>
+	      <form method="POST" action="/toggle" style="display:contents">
+	        <input type="hidden" name="id" value={row.id} />
+	        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
       </form>
       <span class="todo-title">{row.title}</span>
       <span class="todo-date">{row.created_at}</span>
@@ -65,29 +65,34 @@ function handleAdd(req: Request): Response {
 
 function handleToggle(req: Request): Response {
   const { id } = req.form
-  const { completed } = fetch_one {
-    SELECT completed FROM todos WHERE id = {id}
-  }
-  const newCompleted = completed == "1" ? 0 : 1
-  execute {
-    UPDATE todos SET completed = {newCompleted} WHERE id = {id}
-  }
-  return responseRedirect("/")
+	  const { completed } = fetch_one {
+	    SELECT completed FROM todos WHERE id = {id}
+	  }
+	  const newCompleted = if (completed == "1") { 0 } else { 1 }
+	  execute {
+	    UPDATE todos SET completed = {newCompleted} WHERE id = {id}
+	  }
+	  return responseRedirect("/")
 }
 
 export function main(): void {
-  // Open or create the database
-  const args = getArgs()
-  const dbPath = args.length() > 0 ? args[0] : ":memory:"
-  dbOpen(dbPath)
+	  // Open or create the database
+	  const args = getArgs()
+  const dbPath = if (args.length() > 0) {
+    switch (args[0]) {
+      case path as string: path
+      case e as Error: ":memory:"
+    }
+  } else { ":memory:" }
+	  dbOpen(dbPath)
 
   // Create server and define routes
   const server = createServer()
   server.addRoute("/", handleRoot)
-  server.addRoute("/add", handleAdd)
-  server.addRoute("/toggle", handleToggle)
-  const portEnv = getEnv("PORT")
-  const port = portEnv != "" ? portEnv : "8888"
-  log("TODO App starting on http://localhost:" + port)
-  server.listen(":" + port)
-}
+	  server.addRoute("/add", handleAdd)
+	  server.addRoute("/toggle", handleToggle)
+	  const portEnv = getEnv("PORT")
+	  const port = if (portEnv != "") { portEnv } else { "8888" }
+	  log("TODO App starting on http://localhost:" + port)
+	  server.listen(":" + port)
+	}

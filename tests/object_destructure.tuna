@@ -12,7 +12,7 @@ export function main(): void {
   log("Age: " + toString(age));
 
   // 型注釈付きのdestructuring
-  const person2: { "city": string, "zip": integer } = { "city": "Tokyo", "zip": 1000001 };
+  const person2: { city: string, zip: integer } = { "city": "Tokyo", "zip": 1000001 };
   const { city: string, zip: integer } = person2;
   log("City: " + city);
   log("Zip: " + toString(zip));

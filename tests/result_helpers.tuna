@@ -1,0 +1,32 @@
+// expect: ok
+// expect: ready
+// expect: error
+// expect: oops
+
+import { log, Error, type Result, type Error } from "prelude";
+
+export function main(): void {
+  const a: Result<string> = "ready";
+  switch (a) {
+    case a as string: {
+      log("ok");
+      log(a);
+    }
+    case a as Error: {
+      log("error");
+      log(a.message);
+    }
+  };
+
+  const b: Result<string> = Error("oops");
+  switch (b) {
+    case b as string: {
+      log("ok");
+      log(b);
+    }
+    case b as Error: {
+      log("error");
+      log(b.message);
+    }
+  };
+}

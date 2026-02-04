@@ -459,6 +459,7 @@ func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) *Type {
 
 func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStmt, sig *Type) {
 	fnEnv := env.child()
+	fnEnv.retType = sig.Ret
 	for i, p := range params {
 		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: sig.Params[i], StorageType: sig.Params[i]}
 	}
@@ -475,6 +476,7 @@ type returnInfo struct {
 
 func (c *Checker) checkFuncBodyInfer(env *Env, params []ast.Param, body *ast.BlockStmt, paramTypes []*Type, expectedRet *Type) *Type {
 	fnEnv := env.child()
+	fnEnv.retType = expectedRet
 	for i, p := range params {
 		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: paramTypes[i], StorageType: paramTypes[i]}
 	}
@@ -953,8 +955,35 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		typ := LiteralBool(e.Value)
 		c.ExprTypes[expr] = typ
 		return typ
+	case *ast.NullLit:
+		typ := Null()
+		c.ExprTypes[expr] = typ
+		return typ
+	case *ast.UndefinedLit:
+		typ := Undefined()
+		c.ExprTypes[expr] = typ
+		return typ
 	case *ast.StringLit:
 		typ := LiteralString(e.Value)
+		c.ExprTypes[expr] = typ
+		return typ
+	case *ast.TemplateLit:
+		for _, part := range e.Exprs {
+			partType := c.checkExpr(env, part, nil)
+			if partType == nil {
+				return nil
+			}
+			if !isTemplateStringConvertible(partType) {
+				c.errorf(part.GetSpan(), "template interpolation must be string, integer, number, or boolean")
+				return nil
+			}
+		}
+		if len(e.Exprs) == 0 && len(e.Segments) == 1 {
+			typ := LiteralString(e.Segments[0])
+			c.ExprTypes[expr] = typ
+			return typ
+		}
+		typ := String()
 		c.ExprTypes[expr] = typ
 		return typ
 	case *ast.IdentExpr:
@@ -998,6 +1027,10 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			c.errorf(e.Span, "as target must be non-union")
 			return nil
 		}
+		if targetType.Kind == KindJSON {
+			c.errorf(e.Span, "as target must not be json")
+			return nil
+		}
 		exprType := c.checkExpr(env, e.Expr, nil)
 		if exprType == nil {
 			return nil
@@ -1021,27 +1054,40 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		result := c.checkBinary(e, left, right)
 		c.ExprTypes[expr] = result
 		return result
-	case *ast.TernaryExpr:
+	case *ast.IfExpr:
 		condType := c.checkExpr(env, e.Cond, Bool())
-		if condType == nil || condType.Kind != KindBool {
-			c.errorf(e.Cond.GetSpan(), "ternary condition must be boolean")
-			return nil
+		if condType != nil && condType.Kind != KindBool {
+			c.errorf(e.Cond.GetSpan(), "boolean required")
 		}
+
 		thenType := c.checkExpr(env, e.Then, expected)
-		elseType := c.checkExpr(env, e.Else, expected)
-		if thenType == nil || elseType == nil {
+		if thenType == nil {
 			return nil
 		}
-		if typesEqual(baseType(thenType), baseType(elseType)) {
-			c.ExprTypes[expr] = thenType
-			return thenType
+		thenValueType := baseType(thenType)
+		if thenValueType.Kind == KindVoid {
+			thenValueType = Undefined()
 		}
-		if expected != nil && thenType.AssignableTo(expected) && elseType.AssignableTo(expected) {
-			c.ExprTypes[expr] = expected
-			return expected
+
+		elseValueType := Undefined()
+		if e.Else != nil {
+			elseType := c.checkExpr(env, e.Else, expected)
+			if elseType == nil {
+				return nil
+			}
+			elseValueType = baseType(elseType)
+			if elseValueType.Kind == KindVoid {
+				elseValueType = Undefined()
+			}
 		}
-		c.errorf(e.Span, "ternary branches must have same type")
-		return nil
+
+		resultType := NewUnion([]*Type{thenValueType, elseValueType})
+		if expected != nil && resultType != nil && !resultType.AssignableTo(expected) {
+			c.errorf(e.Span, "if expression type mismatch")
+			return nil
+		}
+		c.ExprTypes[expr] = resultType
+		return resultType
 	case *ast.SwitchExpr:
 		// Check the value being switched on
 		valueType := c.checkExpr(env, e.Value, nil)
@@ -1054,36 +1100,98 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		for _, cas := range e.Cases {
 			caseEnv := env
 			if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
-				ident, ok := asExpr.Expr.(*ast.IdentExpr)
-				if !ok {
-					c.errorf(asExpr.Span, "as pattern requires identifier")
-				} else {
-					if switchIdent, ok := e.Value.(*ast.IdentExpr); ok {
-						if ident.Name != switchIdent.Name {
-							c.errorf(asExpr.Span, "as pattern must match switch value")
-						}
-					} else {
-						c.errorf(asExpr.Span, "as pattern requires identifier switch value")
+				targetType := c.resolveType(asExpr.Type, env.mod)
+				if targetType != nil {
+					if targetType.Kind == KindUnion {
+						c.errorf(asExpr.Span, "as target must be non-union")
 					}
-					targetType := c.resolveType(asExpr.Type, env.mod)
-					if targetType != nil {
-						if targetType.Kind == KindUnion {
-							c.errorf(asExpr.Span, "as target must be non-union")
-						}
-						if valueType.Kind != KindUnion {
-							c.errorf(asExpr.Span, "as pattern requires union switch value")
-						} else if !targetType.AssignableTo(valueType) {
-							c.errorf(asExpr.Span, "as target not in union")
-						}
-						c.ExprTypes[asExpr] = targetType
-						if sym := env.lookup(ident.Name); sym != nil {
-							caseEnv = env.child()
+					if targetType.Kind == KindJSON {
+						c.errorf(asExpr.Span, "as target must not be json")
+					}
+					if valueType.Kind != KindUnion {
+						c.errorf(asExpr.Span, "as pattern requires union switch value")
+					} else if !targetType.AssignableTo(valueType) {
+						c.errorf(asExpr.Span, "as target not in union")
+					}
+					c.ExprTypes[asExpr] = targetType
+
+					// Create a scope for bindings within this case.
+					caseEnv = env.child()
+
+					// Narrow the switch variable itself when switching on an identifier.
+					if switchIdent, ok := e.Value.(*ast.IdentExpr); ok {
+						if sym := env.lookup(switchIdent.Name); sym != nil {
 							storageType := sym.StorageType
 							if storageType == nil {
 								storageType = sym.Type
 							}
-							caseEnv.vars[ident.Name] = &Symbol{Name: sym.Name, Kind: sym.Kind, Type: targetType, StorageType: storageType, Decl: sym.Decl}
+							caseEnv.vars[switchIdent.Name] = &Symbol{Name: sym.Name, Kind: sym.Kind, Type: targetType, StorageType: storageType, Decl: sym.Decl}
 						}
+					}
+
+					// Bind a new name or destructure from the narrowed value.
+					switch bind := asExpr.Expr.(type) {
+					case *ast.IdentExpr:
+						if switchIdent, ok := e.Value.(*ast.IdentExpr); ok && bind.Name == switchIdent.Name {
+							// Already narrowed above.
+							break
+						}
+						caseEnv.vars[bind.Name] = &Symbol{Name: bind.Name, Kind: SymVar, Type: targetType, StorageType: targetType}
+					case *ast.ObjectPatternExpr:
+						if targetType.Kind != KindObject {
+							c.errorf(asExpr.Span, "object destructuring requires object type")
+							break
+						}
+						for i, key := range bind.Keys {
+							propType := targetType.PropType(key)
+							if propType == nil {
+								c.errorf(asExpr.Span, "property '%s' not found in object", key)
+								continue
+							}
+							declType := propType
+							if i < len(bind.Types) && bind.Types[i] != nil {
+								declType = c.resolveType(bind.Types[i], env.mod)
+								if declType != nil && !propType.AssignableTo(declType) {
+									c.errorf(asExpr.Span, "destructuring type mismatch for %s", key)
+								}
+							}
+							caseEnv.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
+						}
+					case *ast.ArrayPatternExpr:
+						var elemTypes []*Type
+						switch targetType.Kind {
+						case KindArray:
+							for range bind.Names {
+								elemTypes = append(elemTypes, targetType.Elem)
+							}
+						case KindTuple:
+							if len(bind.Names) > len(targetType.Tuple) {
+								c.errorf(asExpr.Span, "destructuring has more elements than tuple")
+								break
+							}
+							elemTypes = targetType.Tuple[:len(bind.Names)]
+						default:
+							c.errorf(asExpr.Span, "destructuring requires array or tuple type")
+							break
+						}
+
+						for i, name := range bind.Names {
+							if i >= len(elemTypes) {
+								break
+							}
+							var declType *Type
+							if i < len(bind.Types) && bind.Types[i] != nil {
+								declType = c.resolveType(bind.Types[i], env.mod)
+								if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
+									c.errorf(asExpr.Span, "destructuring type mismatch for %s", name)
+								}
+							} else {
+								declType = elemTypes[i]
+							}
+							caseEnv.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
+						}
+					default:
+						c.errorf(asExpr.Span, "as pattern requires identifier or destructuring pattern")
 					}
 				}
 			} else {
@@ -1160,8 +1268,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			return nil
 		}
 		if arrType.Kind == KindArray {
-			c.ExprTypes[expr] = arrType.Elem
-			return arrType.Elem
+			ret := NewUnion([]*Type{arrType.Elem, resultErrorType()})
+			c.ExprTypes[expr] = ret
+			return ret
 		}
 		if arrType.Kind == KindTuple {
 			if lit, ok := e.Index.(*ast.IntLit); ok {
@@ -1170,18 +1279,40 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 					return nil
 				}
 				t := arrType.Tuple[int(lit.Value)]
-				c.ExprTypes[expr] = t
-				return t
+				ret := NewUnion([]*Type{t, resultErrorType()})
+				c.ExprTypes[expr] = ret
+				return ret
 			}
 			if elem := arrayElemType(arrType); elem != nil {
-				c.ExprTypes[expr] = elem
-				return elem
+				ret := NewUnion([]*Type{elem, resultErrorType()})
+				c.ExprTypes[expr] = ret
+				return ret
 			}
 			c.errorf(e.Span, "tuple element types differ")
 			return nil
 		}
 		c.errorf(e.Span, "array required")
 		return nil
+	case *ast.TryExpr:
+		resultType := c.checkExpr(env, e.Expr, nil)
+		if resultType == nil {
+			return nil
+		}
+		successType, errType := splitResultType(resultType)
+		if successType == nil || errType == nil {
+			c.errorf(e.Span, "? expects Result<T> expression")
+			return nil
+		}
+		if env.retType == nil || !errType.AssignableTo(env.retType) {
+			c.errorf(e.Span, "? requires function return type to include Error")
+			return nil
+		}
+		if expected != nil && !successType.AssignableTo(expected) {
+			c.errorf(e.Span, "type mismatch")
+			return nil
+		}
+		c.ExprTypes[expr] = successType
+		return successType
 	case *ast.ArrowFunc:
 		rootEnv := env.root()
 		moduleEnv := rootEnv.clone()
@@ -1192,9 +1323,28 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		c.ExprTypes[expr] = sig
 		return sig
 	case *ast.BlockExpr:
-		// Block expression executes statements and returns void
+		// Block expression executes statements and returns the value of the last expression statement.
+		// If the last statement is not an expression statement, the block evaluates to void.
 		blockEnv := env.child()
-		for _, stmt := range e.Stmts {
+		if len(e.Stmts) == 0 {
+			c.ExprTypes[expr] = Void()
+			return Void()
+		}
+		for i, stmt := range e.Stmts {
+			if i == len(e.Stmts)-1 {
+				// Last statement decides the value.
+				if es, ok := stmt.(*ast.ExprStmt); ok {
+					valType := c.checkExpr(blockEnv, es.Expr, expected)
+					if valType == nil {
+						return nil
+					}
+					c.ExprTypes[expr] = valType
+					return valType
+				}
+				c.checkStmt(blockEnv, stmt, Void())
+				c.ExprTypes[expr] = Void()
+				return Void()
+			}
 			c.checkStmt(blockEnv, stmt, Void())
 		}
 		c.ExprTypes[expr] = Void()
@@ -1227,9 +1377,11 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			// execute returns void (no result)
 			resultType = Void()
 		case ast.SQLQueryFetchOptional:
-			// fetch_optional returns RowType | null (for now, just RowType)
-			// TODO: Add proper nullable/optional type support
-			resultType = rowType
+			if rowType == nil {
+				resultType = Null()
+			} else {
+				resultType = NewUnion([]*Type{rowType, Null()})
+			}
 		case ast.SQLQueryFetchOne:
 			// fetch_one returns RowType directly
 			resultType = rowType
@@ -1471,6 +1623,29 @@ func (c *Checker) checkBinary(e *ast.BinaryExpr, left, right *Type) *Type {
 	}
 }
 
+func isTemplateStringConvertible(t *Type) bool {
+	if t == nil {
+		return false
+	}
+	t = baseType(t)
+	switch t.Kind {
+	case KindI64, KindF64, KindBool, KindString:
+		return true
+	case KindUnion:
+		if len(t.Union) == 0 {
+			return false
+		}
+		for _, member := range t.Union {
+			if !isTemplateStringConvertible(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type {
 	// Handle method-style call: obj.func(args) => func(obj, args)
 	if member, ok := call.Callee.(*ast.MemberExpr); ok {
@@ -1489,6 +1664,10 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 	}
 	if sym.Kind == SymBuiltin {
 		return c.checkBuiltinCall(env, ident.Name, call, expected)
+	}
+	if len(call.TypeArgs) != 0 {
+		c.errorf(call.Span, "type arguments are only supported for builtin functions")
+		return nil
 	}
 	if sym.Kind != SymFunc || sym.Type == nil || sym.Type.Kind != KindFunc {
 		c.errorf(call.Span, "%s is not function", ident.Name)
@@ -1743,12 +1922,57 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "parse expects string")
 			return nil
 		}
-		if expected == nil {
-			c.errorf(call.Span, "parse needs expected type")
+		c.ExprTypes[call] = JSON()
+		return JSON()
+	case "decode":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "decode expects 1 arg")
 			return nil
 		}
-		c.ExprTypes[call] = expected
-		return expected
+		if len(call.TypeArgs) != 1 {
+			c.errorf(call.Span, "decode expects 1 type argument")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], JSON())
+		if argType == nil || argType.Kind != KindJSON {
+			c.errorf(call.Span, "decode expects json")
+			return nil
+		}
+		target := c.resolveType(call.TypeArgs[0], env.mod)
+		if target == nil {
+			return nil
+		}
+		if !isDecodableType(target, nil) {
+			c.errorf(call.Span, "decode target type not supported")
+			return nil
+		}
+		errorObj := NewObject([]Prop{
+			{Name: "message", Type: String()},
+			{Name: "type", Type: LiteralString("Error")},
+		})
+		ret := NewUnion([]*Type{target, errorObj})
+		c.ExprTypes[call] = ret
+		return ret
+	case "Error":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "Error expects 1 arg")
+			return nil
+		}
+		if len(call.TypeArgs) != 0 {
+			c.errorf(call.Span, "Error does not take type arguments")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "Error expects string")
+			return nil
+		}
+		errorObj := NewObject([]Prop{
+			{Name: "message", Type: String()},
+			{Name: "type", Type: LiteralString("Error")},
+		})
+		c.ExprTypes[call] = errorObj
+		return errorObj
 	case "toString":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "toString expects 1 arg")
@@ -1936,6 +2160,18 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = String()
 		return String()
+	case "runSandbox":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "runSandbox expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "runSandbox expects string")
+			return nil
+		}
+		c.ExprTypes[call] = String()
+		return String()
 	case "sqlQuery":
 		if len(call.Args) != 2 {
 			c.errorf(call.Span, "sqlQuery expects 2 args: query string and params array")
@@ -2096,6 +2332,61 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 	default:
 		c.errorf(call.Span, "unknown builtin")
 		return nil
+	}
+}
+
+func isDecodableType(t *Type, stack map[*Type]bool) bool {
+	if t == nil {
+		return false
+	}
+	if t.Literal {
+		switch t.Kind {
+		case KindI64, KindF64, KindBool, KindString, KindNull:
+			return true
+		default:
+			return false
+		}
+	}
+	if stack == nil {
+		stack = map[*Type]bool{}
+	}
+	if stack[t] {
+		return false
+	}
+	stack[t] = true
+	defer delete(stack, t)
+
+	switch t.Kind {
+	case KindI64, KindF64, KindBool, KindString, KindNull, KindUndefined, KindJSON:
+		return true
+	case KindArray:
+		return isDecodableType(t.Elem, stack)
+	case KindTuple:
+		for _, e := range t.Tuple {
+			if !isDecodableType(e, stack) {
+				return false
+			}
+		}
+		return true
+	case KindObject:
+		for _, p := range t.Props {
+			if !isDecodableType(p.Type, stack) {
+				return false
+			}
+		}
+		if t.Index != nil && !isDecodableType(t.Index, stack) {
+			return false
+		}
+		return true
+	case KindUnion:
+		for _, m := range t.Union {
+			if !isDecodableType(m, stack) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2310,8 +2601,14 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			return c.recordType(expr, Bool())
 		case "string":
 			return c.recordType(expr, String())
+		case "json":
+			return c.recordType(expr, JSON())
 		case "void":
 			return c.recordType(expr, Void())
+		case "null":
+			return c.recordType(expr, Null())
+		case "undefined":
+			return c.recordType(expr, Undefined())
 		case "number":
 			return c.recordType(expr, Number())
 		default:
@@ -2848,8 +3145,8 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "log", "stringify", "parse", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"getEnv", "responseText", "getPath", "getMethod":
+	case "log", "stringify", "parse", "decode", "Error", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
+		"getEnv", "runSandbox", "responseText", "getPath", "getMethod":
 		return true
 	default:
 		return false
@@ -2880,17 +3177,19 @@ func getPreludeTypeAlias(name string) *TypeAlias {
 	case "JSX":
 		// JSX is a string alias for server-rendered fragments
 		return newTypeAlias(nil, String(), nil)
+	case "Error":
+		errorObj := NewObject([]Prop{
+			{Name: "message", Type: String()},
+			{Name: "type", Type: LiteralString("Error")},
+		})
+		return newTypeAlias(nil, errorObj, nil)
 	case "Result":
 		param := NewTypeParam("T")
 		errorObj := NewObject([]Prop{
 			{Name: "message", Type: String()},
-			{Name: "type", Type: LiteralString("error")},
+			{Name: "type", Type: LiteralString("Error")},
 		})
-		okObj := NewObject([]Prop{
-			{Name: "type", Type: LiteralString("ok")},
-			{Name: "value", Type: param},
-		})
-		template := NewUnion([]*Type{errorObj, okObj})
+		template := NewUnion([]*Type{param, errorObj})
 		return newTypeAlias([]string{"T"}, template, map[string]*Type{"T": param})
 	default:
 		return nil
@@ -2924,15 +3223,57 @@ func getSQLiteTypeAlias(name string) *TypeAlias {
 	return nil
 }
 
+func resultErrorType() *Type {
+	return NewObject([]Prop{
+		{Name: "message", Type: String()},
+		{Name: "type", Type: LiteralString("Error")},
+	})
+}
+
+func isResultErrorType(t *Type) bool {
+	if t == nil || t.Kind != KindObject {
+		return false
+	}
+	typ := t.PropType("type")
+	msg := t.PropType("message")
+	if typ == nil || msg == nil {
+		return false
+	}
+	if !typ.Equals(LiteralString("Error")) {
+		return false
+	}
+	return msg.AssignableTo(String())
+}
+
+func splitResultType(t *Type) (success *Type, err *Type) {
+	if t == nil || t.Kind != KindUnion {
+		return nil, nil
+	}
+	var successMembers []*Type
+	var errMembers []*Type
+	for _, member := range t.Union {
+		if isResultErrorType(member) {
+			errMembers = append(errMembers, member)
+		} else {
+			successMembers = append(successMembers, member)
+		}
+	}
+	if len(errMembers) == 0 || len(successMembers) == 0 {
+		return nil, nil
+	}
+	return NewUnion(successMembers), NewUnion(errMembers)
+}
+
 type Env struct {
 	checker *Checker
 	mod     *ModuleInfo
 	parent  *Env
 	vars    map[string]*Symbol
+	retType *Type
 }
 
 func (e *Env) child() *Env {
-	return &Env{checker: e.checker, mod: e.mod, parent: e, vars: map[string]*Symbol{}}
+	return &Env{checker: e.checker, mod: e.mod, parent: e, vars: map[string]*Symbol{}, retType: e.retType}
 }
 
 func (e *Env) root() *Env {
@@ -2948,7 +3289,7 @@ func (e *Env) clone() *Env {
 	for k, v := range e.vars {
 		vars[k] = v
 	}
-	return &Env{checker: e.checker, mod: e.mod, vars: vars}
+	return &Env{checker: e.checker, mod: e.mod, vars: vars, retType: e.retType}
 }
 
 func (e *Env) lookup(name string) *Symbol {

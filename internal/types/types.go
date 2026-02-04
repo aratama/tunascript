@@ -10,9 +10,12 @@ const (
 	KindF64
 	KindBool
 	KindString
+	KindJSON
 	KindVoid
 	KindFunc
 	KindArray
+	KindNull
+	KindUndefined
 	KindTuple
 	KindObject
 	KindUnion
@@ -457,14 +460,22 @@ var (
 	f64Type    = &Type{Kind: KindF64}
 	boolType   = &Type{Kind: KindBool}
 	stringType = &Type{Kind: KindString}
+	jsonType   = &Type{Kind: KindJSON}
 	voidType   = &Type{Kind: KindVoid}
+	nullType   = &Type{Kind: KindNull}
+	undefType  = &Type{Kind: KindUndefined}
 )
 
 func I64() *Type    { return i64Type }
 func F64() *Type    { return f64Type }
 func Bool() *Type   { return boolType }
 func String() *Type { return stringType }
+func JSON() *Type   { return jsonType }
 func Void() *Type   { return voidType }
+func Null() *Type   { return nullType }
+func Undefined() *Type {
+	return undefType
+}
 
 func Number() *Type {
 	return F64()
