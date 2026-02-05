@@ -1,5 +1,6 @@
-import { log, toString, type Error } from "prelude"
+import { log, toString, getArgs, getEnv, type Error } from "prelude"
 import { parse, decode } from "json"
+import { length } from "array"
 import { runSandbox, runFormatter } from "runtime"
 import { createServer, addRoute, listen, responseHtml, responseRedirect, type JSX, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
@@ -186,7 +187,14 @@ function runSource(source: string, runPath: string, pagePath: string): Response 
 }
 
 export function main(): void {
-  const opened = dbOpen("playground.sqlite3")
+  const args = getArgs()
+  const dbPath = if (args.length() > 0) {
+    switch (args[0]) {
+      case path as string: path
+      case e as Error: "playground.sqlite3"
+    }
+  } else { "playground.sqlite3" }
+  const opened = dbOpen(dbPath)
   if (opened as Error) {
     log("db open error: " + opened.message)
     return
@@ -198,6 +206,8 @@ export function main(): void {
   server.addRoute("get", "/assets/tunascript.grammar", handleGrammar)
   server.addRoute("get", "/:id", handleSnippet)
   server.addRoute("post", "/run/:id", handleRunByID)
-  log("Playground starting on http://localhost:8787")
-  server.listen(":8787")
+  const portEnv = getEnv("PORT")
+  const port = if (portEnv != "") { portEnv } else { "8787" }
+  log("Playground starting on http://localhost:" + port)
+  server.listen(":" + port)
 }

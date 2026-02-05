@@ -50,6 +50,12 @@ TODO リストの Web サービスのサンプルを起動するには、以下�
 go run ./cmd/tuna run example/server/server.tuna example/server/todo.sqlite3
 ```
 
+Playground サンプルを起動するには、以下のコマンドを実行します。
+
+```shell
+go run ./cmd/tuna run example/playground/playground.tuna example/playground/playground.sqlite3
+```
+
 ## コンパイラオプション
 
 ### `tuna format --write --type <file.tuna>`
@@ -68,12 +74,12 @@ go run ./cmd/tuna run example/server/server.tuna example/server/todo.sqlite3
 ### コンテナ画像構成
 
 - `Dockerfile` はマルチステージ構成で Go 1.24.0 のビルド環境から `tuna` バイナリを生成し、distroless イメージへコピーします。
-- `example/server` フォルダと Web UI に必要なファイルもコンテナに含めるので、`docker build -t tuna-server .` でローカルでビルド／`docker run --rm -p 8888:8888 tuna-server` でサービスを直接確認できます（サーバーは `:8888` で待ち受けます）。
+- `example/server` と `example/playground` をビルド済み WASM ごとコンテナに含めるので、`docker build -t tuna-server .` でローカルでビルドできます。`docker run --rm -p 8888:8888 tuna-server` は TODO サンプルを起動し、Playground を起動したい場合は `docker run --rm -p 8888:8888 tuna-server launch example/playground/playground.wasm /tmp/playground.sqlite3` を使います。
 
 ### Cloud Build + Cloud Run 自動デプロイ
 
-- `cloudbuild.yaml` を使えば `gcloud builds submit --config cloudbuild.yaml --substitutions=_SERVICE_NAME=tuna-server,_REGION=asia-northeast1` のようにコマンドを打つだけで、イメージのビルド・コンテナレジストリへのプッシュ・Cloud Run へのデプロイが順番に実施されます。
-- 同構成では `--port 8888` を指定しており、Cloud Run サービスは `tuna run example/server/server.tuna example/server/todo.sqlite3` を自動で起動します。`gcloud config set project <YOUR_PROJECT>` を済ませてから上記コマンドを実行し、必要に応じて `_SERVICE_NAME`／`_REGION` を上書きしてください。
+- `cloudbuild.yaml` を使えば `gcloud builds submit --config cloudbuild.yaml --substitutions=_TODO_SERVICE_NAME=tuna-todo,_PLAYGROUND_SERVICE_NAME=tuna-playground,_REGION=asia-northeast1` のようにコマンドを打つだけで、単一イメージのビルド後に TODO 用 Cloud Run と Playground 用 Cloud Run を順番にデプロイできます。
+- 同構成では `--port 8888` を指定し、TODO サービスは `launch example/server/server.wasm /tmp/todo.sqlite3`、Playground サービスは `launch example/playground/playground.wasm /tmp/playground.sqlite3` で起動します。`gcloud config set project <YOUR_PROJECT>` を済ませてから実行し、必要に応じて `_TODO_SERVICE_NAME`／`_PLAYGROUND_SERVICE_NAME`／`_REGION`／`_PORT` を上書きしてください。
 
 ## TODO
 
