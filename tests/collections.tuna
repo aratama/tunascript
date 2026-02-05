@@ -2,21 +2,23 @@
 // expect: [2,4]
 // expect: 10
 
-import { log, map, filter, reduce, stringify } from "prelude";
+import { log } from "prelude"
+import { stringify } from "json"
+import { map, filter, reduce } from "array"
 
-const nums: integer[] = [1, 2, 3, 4];
+const nums: integer[] = [1, 2, 3, 4]
 const doubled: integer[] = map(nums, function (n: integer): integer {
-  return n * 2;
-});
+  return n * 2
+})
 const even: integer[] = filter(nums, function (n: integer): boolean {
-  return n % 2 == 0;
-});
+  return n % 2 == 0
+})
 const sum: integer = reduce(nums, function (acc: integer, n: integer): integer {
-  return acc + n;
-}, 0);
+  return acc + n
+}, 0)
 
 export function main(): void {
-  log(stringify(doubled));
-  log(stringify(even));
-  log(sum);
+  log(stringify(doubled))
+  log(stringify(even))
+  log(sum)
 }

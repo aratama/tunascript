@@ -1,15 +1,16 @@
 // expect: <div><span>Hello</span></div>
 
-import { log, type JSX } from "prelude";
+import { log } from "prelude"
+import { type JSX } from "http"
 
 function Greeting(): JSX {
-  return <span>Hello</span>;
+  return <span>Hello</span>
 }
 
 function Page(): JSX {
-  return <div><Greeting /></div>;
+  return <div><Greeting /></div>
 }
 
 export function main(): void {
-  log(Page());
+  log(Page())
 }

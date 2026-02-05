@@ -1,4 +1,6 @@
-import { log, stringify, getArgs, length, type Error } from "prelude";
+import { log, getArgs, type Error } from "prelude";
+import { stringify } from "json";
+import { length } from "array";
 import { dbOpen } from "sqlite";
 
 // TODOリスト CLIツール
@@ -18,44 +20,87 @@ create_table todos {
 }
 
 function listTodos(): void {
-  const todos = fetch_all {
+  const fetched = fetch_all {
     SELECT id, title, created_at FROM todos WHERE completed = 0 ORDER BY id
   };
-  log("ID\tTitle\tCreated");
-  log("--\t-----\t-------");
-  for (const row of todos) {
-    const { id, title, created_at } = row;
-    log(id + "\t" + title + "\t" + created_at);
-  }
+  switch (fetched) {
+    case e as Error: {
+      log("エラー: " + e.message);
+      return;
+    }
+    case todos as { id: string, title: string, created_at: string }[]: {
+      log("ID\tTitle\tCreated");
+      log("--\t-----\t-------");
+      for (const row of todos) {
+        const { id, title, created_at } = row;
+        log(id + "\t" + title + "\t" + created_at);
+      }
+      return;
+    }
+  };
 }
 
 function listAllTodos(): void {
-  const todos = fetch_all {
+  const fetched = fetch_all {
     SELECT id, title, completed, created_at FROM todos ORDER BY id
   };
-  log("ID\tStatus\tTitle\tCreated");
-  log("--\t------\t-----\t-------");
-	  for (const row of todos) {
-	    const { id, title, completed, created_at } = row;
-	    const status = if (completed == "1") { "[x]" } else { "[ ]" };
-	    log(id + "\t" + status + "\t" + title + "\t" + created_at);
-	  }
-	}
+  switch (fetched) {
+    case e as Error: {
+      log("エラー: " + e.message);
+      return;
+    }
+    case todos as { id: string, title: string, completed: string, created_at: string }[]: {
+      log("ID\tStatus\tTitle\tCreated");
+      log("--\t------\t-----\t-------");
+      for (const row of todos) {
+        const { id, title, completed, created_at } = row;
+        const status = if (completed == "1") { "[x]" } else { "[ ]" };
+        log(id + "\t" + status + "\t" + title + "\t" + created_at);
+      }
+      return;
+    }
+  };
+}
 
 function openTodo(title: string): void {
-  execute {
+  const inserted = execute {
     INSERT INTO todos (title) VALUES ({title})
   };
-  const { id } = fetch_one {
+  const insertError = switch (inserted) {
+    case e as Error: e.message
+    case ok as undefined: ""
+  };
+  if (insertError != "") {
+    log("エラー: " + insertError);
+    return;
+  }
+  const fetched = fetch_one {
     SELECT last_insert_rowid() AS id
   };
-  log("Task #" + id + " created: " + title);
+  switch (fetched) {
+    case e as Error: {
+      log("エラー: " + e.message);
+      return;
+    }
+    case row as { id: string }: {
+      log("Task #" + row.id + " created: " + title);
+      return;
+    }
+  };
 }
 
 function closeTodo(id: string): void {
-  execute {
+  const updated = execute {
     UPDATE todos SET completed = 1 WHERE id = {id}
   };
+  const updateError = switch (updated) {
+    case e as Error: e.message
+    case ok as undefined: ""
+  };
+  if (updateError != "") {
+    log("エラー: " + updateError);
+    return;
+  }
   log("Task #" + id + " completed!");
 }
 
@@ -80,7 +125,15 @@ export function main(): void {
   const argc = args.length();
 
   // データベースを開く（テーブル定義に基づいて自動作成・検証）
-  dbOpen("todo.sqlite3");
+  const opened = dbOpen("todo.sqlite3");
+  const openError = switch (opened) {
+    case e as Error: e.message
+    case ok as undefined: ""
+  };
+  if (openError != "") {
+    log("エラー: " + openError);
+    return;
+  }
 
   if (argc == 0) {
     showUsage();

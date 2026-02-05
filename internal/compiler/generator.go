@@ -99,9 +99,11 @@ func (g *Generator) collectStrings() {
 		}
 	}
 	g.internString("")
-	// Built-in Result/Error relies on these strings even if user code doesn't reference them directly.
+	// Built-in Error handling relies on these strings even if user code doesn't reference them directly.
 	g.internString("type")
 	g.internString("Error")
+	// addRoute のメソッド省略時に使うワイルドカード。
+	g.internString("*")
 	// Generate and intern table definitions JSON if any tables exist
 	if len(g.tableDefs) > 0 {
 		jsonStr := g.generateTableDefsJSON()
@@ -618,13 +620,17 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 
 		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "addRoute" {
 			isAddRoute = true
-			if len(e.Args) >= 3 {
+			if len(e.Args) >= 4 {
+				handlerArg = e.Args[3]
+			} else if len(e.Args) >= 3 {
 				handlerArg = e.Args[2]
 			}
 		} else if member, ok := e.Callee.(*ast.MemberExpr); ok && member.Property == "addRoute" {
 			// Method-style: server.addRoute("/", handler)
 			isAddRoute = true
-			if len(e.Args) >= 2 {
+			if len(e.Args) >= 3 {
+				handlerArg = e.Args[2] // Handler is third arg when method is provided
+			} else if len(e.Args) >= 2 {
 				handlerArg = e.Args[1] // Handler is second arg in method style
 			}
 			// Also recurse into the object
@@ -774,12 +780,12 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "arr_get_result"},
 		{"prelude", "arr_len"},
 		{"prelude", "arr_join"},
-		{"prelude", "range"},
+		{"array", "range"},
 		{"prelude", "val_eq"},
 		{"prelude", "log"},
-		{"prelude", "stringify"},
-		{"prelude", "parse"},
-		{"prelude", "decode"},
+		{"json", "stringify"},
+		{"json", "parse"},
+		{"json", "decode"},
 		{"prelude", "toString"},
 		{"prelude", "escape_html_attr"},
 		{"prelude", "sql_exec"},
@@ -791,7 +797,8 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"sqlite", "db_open"},
 		{"prelude", "get_args"},
 		{"prelude", "get_env"},
-		{"prelude", "run_sandbox"},
+		{"runtime", "run_sandbox"},
+		{"runtime", "run_formatter"},
 		{"prelude", "register_tables"},
 		{"http", "http_create_server"},
 		{"http", "http_add_route"},
@@ -878,23 +885,25 @@ func importSig(module, name string) string {
 	case "sql_fetch_optional":
 		return fmt.Sprintf("(func %s.sql_fetch_optional (param i32 i32 i32) (result i32))", prefix)
 	case "sql_execute":
-		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 i32))", prefix)
+		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 i32) (result i32))", prefix)
 	case "intern_string":
 		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result i32))", prefix)
 	case "db_open":
-		return fmt.Sprintf("(func %s.db_open (param i32))", prefix)
+		return fmt.Sprintf("(func %s.db_open (param i32) (result i32))", prefix)
 	case "get_args":
 		return fmt.Sprintf("(func %s.get_args (result i32))", prefix)
 	case "get_env":
 		return fmt.Sprintf("(func %s.get_env (param i32) (result i32))", prefix)
 	case "run_sandbox":
 		return fmt.Sprintf("(func %s.run_sandbox (param i32) (result i32))", prefix)
+	case "run_formatter":
+		return fmt.Sprintf("(func %s.run_formatter (param i32) (result i32))", prefix)
 	case "register_tables":
 		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
 	case "http_create_server":
 		return fmt.Sprintf("(func %s.http_create_server (result i32))", prefix)
 	case "http_add_route":
-		return fmt.Sprintf("(func %s.http_add_route (param i32 i32 i32 i32))", prefix)
+		return fmt.Sprintf("(func %s.http_add_route (param i32 i32 i32 i32 i32))", prefix)
 	case "http_listen":
 		return fmt.Sprintf("(func %s.http_listen (param i32 i32))", prefix)
 	case "http_response_text":
@@ -938,6 +947,9 @@ func (g *Generator) emitMemory(w *watBuilder) {
 
 func (g *Generator) emitGlobals(w *watBuilder) {
 	w.line("(global $__inited (mut i32) (i32.const 0))")
+	// Entry main() result storage.
+	// void main の場合は undefined(=1) のまま。main が (void | Error) を返す場合に実行結果が格納される。
+	w.line("(global $__main_result (mut i32) (i32.const 1))")
 	for _, d := range g.stringData {
 		w.line(fmt.Sprintf("(global %s (mut i32) (i32.const 0))", d.name))
 	}
@@ -1056,11 +1068,24 @@ func (g *Generator) emitStart(w *watBuilder, entryAbs string) {
 	w.line("(call $__ensure_init)")
 	mainSym := g.findExportedMain(entryAbs)
 	if mainSym != nil {
-		w.line(fmt.Sprintf("(call %s)", g.funcImplName(mainSym)))
+		if mainSym.Type.Ret.Kind == types.KindVoid {
+			w.line(fmt.Sprintf("(call %s)", g.funcImplName(mainSym)))
+		} else {
+			w.line(fmt.Sprintf("(call %s)", g.funcImplName(mainSym)))
+			w.line("(global.set $__main_result)")
+		}
 	}
 	w.indent--
 	w.line(")")
 	w.line("(export \"_start\" (func $_start))")
+
+	// Runner が main の (void | Error) を検査するためのアクセサ。
+	w.line("(func $__get_main_result (result i32)")
+	w.indent++
+	w.line("(global.get $__main_result)")
+	w.indent--
+	w.line(")")
+	w.line("(export \"__main_result\" (func $__get_main_result))")
 }
 
 func (g *Generator) findExportedMain(entryAbs string) *types.Symbol {
@@ -1078,7 +1103,7 @@ func (g *Generator) findExportedMain(entryAbs string) *types.Symbol {
 		if sym.Type == nil || sym.Type.Kind != types.KindFunc {
 			return nil
 		}
-		if len(sym.Type.Params) != 0 || sym.Type.Ret.Kind != types.KindVoid {
+		if len(sym.Type.Params) != 0 || !isMainReturnType(sym.Type.Ret) {
 			return nil
 		}
 		if !g.funcExports[sym] {
@@ -1087,6 +1112,42 @@ func (g *Generator) findExportedMain(entryAbs string) *types.Symbol {
 		return sym
 	}
 	return nil
+}
+
+func isMainReturnType(ret *types.Type) bool {
+	if ret == nil {
+		return false
+	}
+	if ret.Kind == types.KindVoid {
+		return true
+	}
+	success, err := splitResultMembers(ret)
+	if success == nil || err == nil {
+		return false
+	}
+	return isVoidLikeType(success)
+}
+
+func isVoidLikeType(t *types.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case types.KindVoid, types.KindUndefined:
+		return true
+	case types.KindUnion:
+		if len(t.Union) == 0 {
+			return false
+		}
+		for _, member := range t.Union {
+			if !isVoidLikeType(member) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 func (g *Generator) emitFunc(w *watBuilder, sym *types.Symbol, fn *ast.ArrowFunc, isEntry bool) {
@@ -1122,6 +1183,11 @@ func (g *Generator) emitFuncBody(w *watBuilder, sym *types.Symbol, params []ast.
 		emitter.bindLocal(p.Name, localName)
 	}
 	emitter.emitBlock(body)
+	if funcType.Ret != nil && funcType.Ret.Kind != types.KindVoid && canOmitReturnValue(funcType.Ret) {
+		emitter.emit("(i32.const 1)")
+		emitter.emitCoerce(types.Undefined(), funcType.Ret)
+		emitter.emit("return")
+	}
 
 	w.line(fmt.Sprintf("(func %s%s", actualImplName, emitter.signature()))
 	w.indent++
@@ -1138,6 +1204,23 @@ func (g *Generator) emitFuncBody(w *watBuilder, sym *types.Symbol, params []ast.
 	if g.httpHandlerFuncs[sym] {
 		g.emitHttpHandlerWrapper(w, sym, funcType)
 	}
+}
+
+func canOmitReturnValue(t *types.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case types.KindVoid, types.KindUndefined:
+		return true
+	case types.KindUnion:
+		for _, member := range t.Union {
+			if canOmitReturnValue(member) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // emitHttpHandlerWrapper creates a wrapper function for HTTP handlers that ensures initialization
@@ -1427,10 +1510,13 @@ func (f *funcEmitter) emitStmt(stmt ast.Stmt) {
 			valType := f.g.checker.ExprTypes[s.Value]
 			f.emitExpr(s.Value, valType)
 			f.emitCoerce(valType, f.ret)
+		} else if f.ret != nil && f.ret.Kind != types.KindVoid {
+			f.emit("(i32.const 1)")
+			f.emitCoerce(types.Undefined(), f.ret)
 		}
 		f.emit("return")
 	case *ast.IfStmt:
-		f.emitExpr(s.Cond, f.g.checker.ExprTypes[s.Cond])
+		f.emitIfCond(s.Cond)
 		f.emit("(if")
 		f.indent++
 		f.emit("(then")
@@ -1799,7 +1885,7 @@ func (f *funcEmitter) emitTemplatePartToString(t *types.Type) {
 
 func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
 	// Condition
-	f.emitExpr(e.Cond, f.g.checker.ExprTypes[e.Cond])
+	f.emitIfCond(e.Cond)
 
 	isVoid := t != nil && t.Kind == types.KindVoid
 	if isVoid {
@@ -1850,6 +1936,19 @@ func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
 
 	f.indent--
 	f.emit(")")
+}
+
+func (f *funcEmitter) emitIfCond(cond ast.Expr) {
+	if asExpr, ok := cond.(*ast.AsExpr); ok {
+		valueType := f.g.checker.ExprTypes[asExpr.Expr]
+		targetType := f.g.checker.ExprTypes[asExpr]
+		valueLocal := f.addLocalRaw(wasmType(valueType))
+		f.emitExpr(asExpr.Expr, valueType)
+		f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
+		f.emitTypeGuard(valueLocal, targetType)
+		return
+	}
+	f.emitExpr(cond, f.g.checker.ExprTypes[cond])
 }
 
 func splitResultMembers(t *types.Type) (success *types.Type, err *types.Type) {
@@ -2135,6 +2234,12 @@ func (f *funcEmitter) emitSwitchCaseBindings(asExpr *ast.AsExpr, valueLocal stri
 }
 
 func (f *funcEmitter) emitTypeGuard(valueLocal string, targetType *types.Type) {
+	if targetType != nil && targetType.Kind == types.KindJSON {
+		// json は実行時にあらゆる値を受け入れるため、型ガードは常に真。
+		f.emit("(i32.const 1)")
+		return
+	}
+
 	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
 	f.emit("(call $prelude.val_kind)")
 	if kindConst, okKind := runtimeKindConst(targetType); okKind {
@@ -2437,6 +2542,10 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.run_sandbox)", module))
+	case "runFormatter":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.run_formatter)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
 	case "createServer":
@@ -2534,13 +2643,38 @@ func (f *funcEmitter) emitHttpListen(call *ast.CallExpr, module string) {
 
 func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 	serverArg := call.Args[0]
-	pathArg := call.Args[1]
-	handlerArg := call.Args[2]
 	serverType := f.g.checker.ExprTypes[serverArg]
+	var methodArg ast.Expr
+	var pathArg ast.Expr
+	var handlerArg ast.Expr
+
+	if len(call.Args) == 4 {
+		methodArg = call.Args[1]
+		pathArg = call.Args[2]
+		handlerArg = call.Args[3]
+	} else {
+		methodArg = nil
+		pathArg = call.Args[1]
+		handlerArg = call.Args[2]
+	}
+
+	var methodType *types.Type
+	if methodArg != nil {
+		methodType = f.g.checker.ExprTypes[methodArg]
+	}
 	handlerType := f.g.checker.ExprTypes[handlerArg]
 
 	// Emit server handle
 	f.emitExpr(serverArg, serverType)
+
+	// Emit method string handle ("get" / "post" or wildcard)
+	if methodArg == nil {
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("*")))
+	} else if strLit, ok := methodArg.(*ast.StringLit); ok {
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(strLit.Value)))
+	} else {
+		f.emitExpr(methodArg, methodType)
+	}
 
 	// Handle path string
 	if strLit, ok := pathArg.(*ast.StringLit); ok {
@@ -3256,9 +3390,15 @@ func elemType(t *types.Type) *types.Type {
 
 func builtinModule(name string) (string, bool) {
 	switch name {
-	case "log", "stringify", "parse", "decode", "Error", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"getEnv", "runSandbox", "responseText", "getPath", "getMethod":
+	case "log", "Error", "toString", "getArgs", "sqlQuery",
+		"getEnv", "responseText", "getPath", "getMethod":
 		return "prelude", true
+	case "stringify", "parse", "decode":
+		return "json", true
+	case "range", "length", "map", "filter", "reduce":
+		return "array", true
+	case "runSandbox", "runFormatter":
+		return "runtime", true
 	case "dbOpen":
 		return "sqlite", true
 	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":

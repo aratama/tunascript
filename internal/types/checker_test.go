@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"testing"
 
 	"tuna/internal/ast"
@@ -9,19 +10,19 @@ import (
 
 func TestMapInferenceFromArrayLiteral(t *testing.T) {
 	const src = `
-import { map } from "prelude";
+import { map } from "array"
 
 function double(value: integer): integer {
-  return value * 2;
+  return value * 2
 }
 
 function triple(value: integer): integer {
-  return value * 3;
+  return value * 3
 }
 
-const nums: integer[] = [1, 2, 3];
-const doubled: integer[] = nums.map(double);
-const tripled: integer[] = map(nums, triple);
+const nums: integer[] = [1, 2, 3]
+const doubled: integer[] = nums.map(double)
+const tripled: integer[] = map(nums, triple)
 `
 
 	mod := mustParseModule(t, "map_array_literal.tuna", src)
@@ -36,23 +37,24 @@ const tripled: integer[] = map(nums, triple);
 
 func TestMapInferenceHandlesObjectAndStringResults(t *testing.T) {
 	const src = `
-import { map, toString } from "prelude";
+import { toString } from "prelude"
+import { map } from "array"
 
 function wrap(item: { value: integer }): { value: integer } {
-  return { "value": item.value };
+  return { "value": item.value }
 }
 
 function label(item: { value: integer }): string {
-  return toString(item.value);
+  return toString(item.value)
 }
 
 const raw: { value: integer }[] = [
   { "value": 1 },
   { "value": 2 }
-];
+]
 
-const wrapped: { value: integer }[] = map(raw, wrap);
-const labels: string[] = raw.map(label);
+const wrapped: { value: integer }[] = map(raw, wrap)
+const labels: string[] = raw.map(label)
 `
 
 	mod := mustParseModule(t, "map_object.tuna", src)
@@ -67,15 +69,15 @@ const labels: string[] = raw.map(label);
 
 func TestReduceInferenceFromRange(t *testing.T) {
 	const src = `
-import { reduce, range } from "prelude";
+import { reduce, range } from "array"
 
 function sumValues(acc: integer, value: integer): integer {
-  return acc + value;
+  return acc + value
 }
 
-const nums: integer[] = range(1, 5);
-const sum: integer = nums.reduce(sumValues, 0);
-const sum2: integer = reduce(nums, sumValues, 0);
+const nums: integer[] = range(1, 5)
+const sum: integer = nums.reduce(sumValues, 0)
+const sum2: integer = reduce(nums, sumValues, 0)
 `
 
 	mod := mustParseModule(t, "reduce_infer.tuna", src)
@@ -90,15 +92,15 @@ const sum2: integer = reduce(nums, sumValues, 0);
 
 func TestFilterInferenceFromRange(t *testing.T) {
 	const src = `
-import { filter, range } from "prelude";
+import { filter, range } from "array"
 
 function isEven(value: integer): boolean {
-  return value % 2 == 0;
+  return value % 2 == 0
 }
 
-const nums: integer[] = range(1, 6);
-const evens: integer[] = nums.filter(isEven);
-const evens2: integer[] = filter(nums, isEven);
+const nums: integer[] = range(1, 6)
+const evens: integer[] = nums.filter(isEven)
+const evens2: integer[] = filter(nums, isEven)
 `
 
 	mod := mustParseModule(t, "filter_infer.tuna", src)
@@ -113,11 +115,11 @@ const evens2: integer[] = filter(nums, isEven);
 
 func TestUnionSwitchAs(t *testing.T) {
 	const src = `
-const v: integer | string = 42;
+const v: integer | string = 42
 const msg: string = switch (v) {
   case v as integer: "int"
   case v as string: "str"
-};
+}
 `
 
 	mod := mustParseModule(t, "union_switch.tuna", src)
@@ -140,8 +142,8 @@ const msg: string = switch (v) {
 
 func TestIfExprTypeInference(t *testing.T) {
 	const src = `
-const a: integer | undefined = if (true) { 42 };
-const b: integer | string = if (true) { 42 } else { "42" };
+const a: integer | undefined = if (true) { 42 }
+const b: integer | string = if (true) { 42 } else { "42" }
 `
 
 	mod := mustParseModule(t, "if_expr.tuna", src)
@@ -154,6 +156,66 @@ const b: integer | string = if (true) { 42 } else { "42" };
 	b := findConstDecl(t, mod, "b")
 	assertUnionContainsBaseKind(t, checker.ExprTypes[b.Init], KindI64, "b")
 	assertUnionContainsBaseKind(t, checker.ExprTypes[b.Init], KindString, "b")
+}
+
+func TestShadowingIsCompileError(t *testing.T) {
+	const src = `
+const x: integer = 1
+
+function f(x: integer): void {
+  const y: integer = 2
+  if (true) {
+    const y: integer = 3
+  }
+}
+`
+	mod := mustParseModule(t, "shadowing_error.tuna", src)
+	checker := NewChecker()
+	checker.AddModule(mod)
+	if checker.Check() {
+		t.Fatalf("expected shadowing error, but check succeeded")
+	}
+	if !hasErrorContaining(checker.Errors, "shadowing is not allowed: x") {
+		t.Fatalf("expected shadowing error for x, got: %v", checker.Errors)
+	}
+	if !hasErrorContaining(checker.Errors, "shadowing is not allowed: y") {
+		t.Fatalf("expected shadowing error for y, got: %v", checker.Errors)
+	}
+}
+
+func TestSwitchAsSameNameAsSwitchTargetIsNotShadowing(t *testing.T) {
+	const src = `
+const x: integer | string = 1
+const msg: string = switch (x) {
+  case x as integer: "int"
+  case x as string: x
+}
+`
+	mod := mustParseModule(t, "switch_as_same_name.tuna", src)
+	checker := runChecker(t, mod)
+
+	msg := findConstDecl(t, mod, "msg")
+	assertTypeKind(t, checker.ExprTypes[msg.Init], KindString, "msg")
+}
+
+func TestSwitchAsDifferentNameShadowingIsCompileError(t *testing.T) {
+	const src = `
+const x: integer | string = 1
+const y: integer = 100
+const msg: string = switch (x) {
+  case y as integer: "int"
+  case s as string: s
+}
+`
+	mod := mustParseModule(t, "switch_as_shadowing_error.tuna", src)
+	checker := NewChecker()
+	checker.AddModule(mod)
+	if checker.Check() {
+		t.Fatalf("expected shadowing error, but check succeeded")
+	}
+	if !hasErrorContaining(checker.Errors, "shadowing is not allowed: y") {
+		t.Fatalf("expected shadowing error for y, got: %v", checker.Errors)
+	}
 }
 
 func mustParseModule(t *testing.T, path, src string) *ast.Module {
@@ -243,4 +305,13 @@ func assertUnionContainsBaseKind(t *testing.T, typ *Type, kind Kind, label strin
 		}
 	}
 	t.Fatalf("%s expected union to contain base %v", label, kind)
+}
+
+func hasErrorContaining(errs []error, needle string) bool {
+	for _, err := range errs {
+		if strings.Contains(err.Error(), needle) {
+			return true
+		}
+	}
+	return false
 }

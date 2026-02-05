@@ -137,6 +137,10 @@ func (t *Type) AssignableTo(dst *Type) bool {
 	if t == nil || dst == nil {
 		return false
 	}
+	// void と undefined は成功時に値を持たない型として相互代入を許可する。
+	if (t.Kind == KindVoid && dst.Kind == KindUndefined) || (t.Kind == KindUndefined && dst.Kind == KindVoid) {
+		return true
+	}
 	if dst.Kind == KindUnion {
 		if t.Kind == KindUnion {
 			for _, tMember := range t.Union {

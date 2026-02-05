@@ -1,5 +1,12 @@
-import { log, parse, decode, runSandbox, toString, type JSX, type Result, type Error } from "prelude"
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { log, toString, type Error } from "prelude"
+import { parse, decode } from "json"
+import { runSandbox, runFormatter } from "runtime"
+import { createServer, addRoute, listen, responseHtml, responseRedirect, type JSX, type Request, type Response } from "http"
+import { dbOpen } from "sqlite"
+import { DEFAULT_SOURCE } from "./default_source.tuna"
+import { PLAYGROUND_LAYOUT_CSS } from "./layout_style.tuna"
+import { PLAYGROUND_EDITOR_JS } from "./editor_script.tuna"
+import { TUNASCRIPT_LEZER_GRAMMAR } from "./tunascript_lezer_grammar.tuna"
 
 type RunResult = {
   stdout: string,
@@ -8,113 +15,38 @@ type RunResult = {
   error: string
 }
 
-const DEFAULT_SOURCE: string = `import { log, map } from "prelude";
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http";
-
-create_table todos {
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  title TEXT NOT NULL,
-  scheduled_at TEXT NOT NULL,
-  completed TEXT NOT NULL
+create_table playground_sources {
+  id TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 }
 
-function root(req: Request): Response {
-  execute {
-    INSERT INTO todos (title, scheduled_at, completed)
-    VALUES
-      ('買い物', '2026-02-05 10:00', '0'),
-      ('犬の散歩', '2026-02-05 18:30', '1'),
-      ('ランチ会', '2026-02-06 12:00', '0')
-  };
+const MAX_SOURCE_SIZE_BYTES: integer = 10240
 
-  const rows = fetch_all {
-    SELECT id, title, scheduled_at, completed
-    FROM todos
-    ORDER BY id
-  };
-
-  for (const { title, scheduled_at, completed } of rows) {
-    const mark = if (completed == "1") { "[x]" } else { "[ ]" };
-    log(mark + " " + title + " @ " + scheduled_at);
-  }
-
-  const items = map(rows, function (row) {
-    const checked = if (row.completed == "1") { "checked" } else { "" };
-    return '<li class="todo-item"><label><input type="checkbox" ' + checked + ' disabled /><span class="todo-title">' + row.title + '</span><span class="todo-time">' + row.scheduled_at + '</span></label></li>';
-  });
-
-  return responseHtml(
-    <html>
-      <head>
-        <style>{\`
-          html, body { margin: 0; min-height: 100%; }
-          body { display: grid; place-items: center; font-family: 'Fira Sans', 'Noto Sans JP', sans-serif; color: #0b1f33; background: linear-gradient(135deg, #e0f2ff 0%, #fff4d9 50%, #ffdfe3 100%); }
-          .card { width: min(92vw, 760px); padding: 32px 36px; border-radius: 18px; background: rgba(255, 255, 255, 0.88); border: 1px solid rgba(255, 255, 255, 0.96); box-shadow: 0 18px 48px rgba(14, 47, 79, 0.18); text-align: left; }
-          .badge { display: inline-block; margin-bottom: 10px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; color: #fff; background: linear-gradient(90deg, #0ea5e9, #0284c7); }
-          h1 { margin: 0 0 6px; font-size: clamp(28px, 5vw, 44px); color: #0f3559; }
-          p { margin: 0 0 16px; font-size: clamp(14px, 2.3vw, 18px); color: #355270; }
-          .schema { font-family: 'JetBrains Mono', 'UDEV Gothic 35', monospace; font-size: 12px; color: #4b5563; margin-bottom: 12px; }
-          ul { margin: 0; padding-left: 0; list-style: none; color: #173754; }
-          .todo-item { margin: 10px 0; padding: 10px 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.74); border: 1px solid #dbe7f2; }
-          .todo-item label { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; }
-          .todo-item input { width: 16px; height: 16px; accent-color: #0ea5e9; }
-          .todo-title { font-weight: 700; color: #0f3559; }
-          .todo-time { color: #475569; font-size: 13px; }
-        \`}</style>
-      </head>
-      <body>
-        <main class="card">
-          <span class="badge">SQL TODO DEMO</span>
-          <h1>TunaScript TODO List</h1>
-          <ul>{items}</ul>
-        </main>
-      </body>
-    </html>
-  );
-}
-
-export function main(): void {
-  const server = createServer();
-  addRoute(server, "/", root);
-  listen(server, ":8888");
-}`
-
-function Layout(source: string, stdout: string, html: string, error: string, exitCode: string): JSX {
+function Layout(source: string, stdout: string, html: string, error: string, exitCode: string, runPath: string, pagePath: string): JSX {
   return (
     <html>
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500;700&display=swap" />
         <title>TunaScript Playground</title>
-        <style>{`
-          :root { --bg: #f4f7fb; --panel: #ffffff; --ink: #0f172a; --muted: #4b5563; --accent: #ff6b35; --line: #dbe4ee; }
-          * { box-sizing: border-box; }
-          html, body { margin: 0; height: 100%; color: var(--ink); background: radial-gradient(circle at 15% 20%, #ffe2d8 0%, transparent 35%), radial-gradient(circle at 80% 85%, #dbe9ff 0%, transparent 40%), var(--bg); font-family: 'Fira Sans', 'Noto Sans JP', sans-serif; }
-          .layout { display: grid; grid-template-columns: 1fr 1fr; height: 100vh; gap: 12px; padding: 12px; }
-          .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07); }
-          .bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); background: linear-gradient(90deg, #fff7f4, #eef4ff); }
-          .title { font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
-          .button { appearance: none; border: none; border-radius: 999px; background: linear-gradient(135deg, var(--accent), #ff995f); color: #fff; font-weight: 700; padding: 8px 16px; cursor: pointer; }
-          .editor-form { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-          .editor { width: 100%; flex: 1; min-height: 0; border: 0; resize: none; padding: 16px; font-family: 'JetBrains Mono', 'UDEV Gothic 35', monospace; font-size: 14px; line-height: 1.6; color: #102236; white-space: pre; overflow-x: auto; }
-          .right { display: grid; grid-template-rows: 1fr 2fr; gap: 12px; }
-          .stdout { margin: 0; padding: 14px; font-family: 'JetBrains Mono', 'UDEV Gothic 35', monospace; font-size: 13px; line-height: 1.5; white-space: pre-wrap; color: #0b2942; }
-          iframe { width: 100%; height: 100%; border: 0; background: #fff; }
-          .status { font-size: 12px; color: var(--muted); }
-          .error { color: #c0342f; padding: 8px 14px; font-family: 'JetBrains Mono', 'UDEV Gothic 35', monospace; font-size: 12px; }
-          @media (max-width: 980px) { .layout { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
-        `}</style>
+        <style>{`${PLAYGROUND_LAYOUT_CSS}`}</style>
       </head>
       <body>
         <main class="layout">
           <section class="panel">
             <header class="bar">
               <span class="title">TunaScript Source</span>
+              <span class="status">path: {pagePath}</span>
             </header>
-            <form method="POST" action="/run" class="editor-form">
-              <textarea name="source" class="editor" spellcheck="false" wrap="off">{source}</textarea>
+            <form method="POST" action={runPath} class="editor-form">
+              <div id="source-editor" class="editor-shell"></div>
+              <textarea id="source-input" name="source" class="editor-source" spellcheck="false" wrap="off">{source}</textarea>
               <div style="padding: 10px 14px; border-top: 1px solid #dbe4ee; background: #f9fbff;">
-                <button class="button" type="submit">Run</button>
+                <div class="actions">
+                  <button class="button" type="submit">Format & Run</button>
+                </div>
               </div>
             </form>
           </section>
@@ -135,33 +67,137 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
             </article>
           </section>
         </main>
+        <script type="module">{`${PLAYGROUND_EDITOR_JS}`}</script>
       </body>
     </html>
   )
 }
 
-function handleRoot(req: Request): Response {
-  return runSource(DEFAULT_SOURCE)
-}
-
-function handleRun(req: Request): Response {
-  const source = req.form.source
-  return runSource(source)
-}
-
-function runSource(source: string): Response {
-  const decoded: Result<RunResult> = decode<RunResult>(parse(runSandbox(source)))
-  const res = switch (decoded) {
-    case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode)))
-    case e as Error: responseHtml(Layout(source, "", "", e.message, "1"))
+function validateSourceSize(source: string): string {
+  const checked = fetch_one {
+    SELECT length(hex({source})) / 2 > {MAX_SOURCE_SIZE_BYTES} AS too_large
   }
-  return res
+  return switch (checked) {
+    case e as Error: "db error: " + e.message
+    case row as { too_large: string }: if (row.too_large == "1") { "source is too large (max 10KB)" } else { "" }
+  }
+}
+
+function handleRoot(req: Request): Response {
+  return runSource(DEFAULT_SOURCE, "/run", "/")
+}
+
+function handleGrammar(req: Request): Response {
+  return responseHtml(TUNASCRIPT_LEZER_GRAMMAR)
+}
+
+function handleSnippet(req: Request): Response {
+  const id = req.query.id
+  const pagePath = "/" + id
+  const runPath = "/run/" + id
+  if (id == "") {
+    return responseHtml(Layout(DEFAULT_SOURCE, "", "", "invalid snippet id", "1", "/run", "/"))
+  }
+
+  const fetched = fetch_optional {
+    SELECT source
+    FROM playground_sources
+    WHERE id = {id}
+  }
+  return switch (fetched) {
+    case e as Error: responseHtml(Layout(DEFAULT_SOURCE, "", "", "db error: " + e.message, "1", "/run", pagePath))
+    case row as { source: string }: runSource(row.source, runPath, pagePath)
+    case none as null: responseHtml(Layout(DEFAULT_SOURCE, "", "", "snippet not found: " + id, "1", "/run", pagePath))
+  }
+}
+
+function handleRunRoot(req: Request): Response {
+  const source = req.form.source
+  const sizeError = validateSourceSize(source)
+  if (sizeError != "") {
+    return responseHtml(Layout(source, "", "", sizeError, "1", "/run", "/"))
+  }
+  const formatted = runFormatter(source)
+  return switch (formatted) {
+    case e as Error: responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
+    case code as string: {
+      const generated = fetch_one {
+        SELECT lower(hex(randomblob(8))) AS id
+      }
+      switch (generated) {
+        case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+        case row as { id: string }: {
+          const inserted = execute {
+            INSERT INTO playground_sources (id, source, updated_at)
+            VALUES ({row.id}, {code}, datetime('now'))
+          }
+          switch (inserted) {
+            case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+            case ok as undefined: responseRedirect("/" + row.id)
+          }
+        }
+      }
+    }
+  }
+}
+
+function handleRunByID(req: Request): Response {
+  const id = req.query.id
+  const source = req.form.source
+  if (id == "") {
+    return responseHtml(Layout(source, "", "", "invalid snippet id", "1", "/run", "/"))
+  }
+  const pagePath = "/" + id
+  const runPath = "/run/" + id
+
+  const sizeError = validateSourceSize(source)
+  if (sizeError != "") {
+    return responseHtml(Layout(source, "", "", sizeError, "1", runPath, pagePath))
+  }
+
+  const formatted = runFormatter(source)
+  return switch (formatted) {
+    case e as Error: responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
+    case code as string: {
+      const updated = execute {
+        INSERT OR REPLACE INTO playground_sources (id, source, updated_at)
+        VALUES ({id}, {code}, datetime('now'))
+      }
+      switch (updated) {
+        case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
+        case ok as undefined: responseRedirect(pagePath)
+      }
+    }
+  }
+}
+
+function runSource(source: string, runPath: string, pagePath: string): Response {
+  const parsed = parse(runSandbox(source))
+  return switch (parsed) {
+    case e as Error: responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
+    case raw as json: {
+      const decoded: RunResult | Error = decode<RunResult>(raw)
+      switch (decoded) {
+        case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode), runPath, pagePath))
+        case e as Error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
+      }
+    }
+  }
 }
 
 export function main(): void {
+  const opened = dbOpen("playground.sqlite3")
+  if (opened as Error) {
+    log("db open error: " + opened.message)
+    return
+  }
+
   const server = createServer()
-  addRoute(server, "/", handleRoot)
-  addRoute(server, "/run", handleRun)
+  server.addRoute("get", "/", handleRoot)
+  server.addRoute("post", "/run", handleRunRoot)
+  server.addRoute("get", "/assets/tunascript.grammar", handleGrammar)
+  server.addRoute("get", "/:id", handleSnippet)
+  server.addRoute("post", "/run/:id", handleRunByID)
   log("Playground starting on http://localhost:8787")
-  listen(server, ":8787")
+  server.listen(":8787")
 }

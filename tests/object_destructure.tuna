@@ -3,17 +3,17 @@
 // expect: City: Tokyo
 // expect: Zip: 1000001
 
-import { log, toString } from "prelude";
+import { log, toString } from "prelude"
 
 export function main(): void {
-  const person = { "name": "Alice", "age": 30 };
-  const { name, age } = person;
-  log("Name: " + name);
-  log("Age: " + toString(age));
+  const person = { "name": "Alice", "age": 30 }
+  const { name, age } = person
+  log("Name: " + name)
+  log("Age: " + toString(age))
 
   // 型注釈付きのdestructuring
-  const person2: { city: string, zip: integer } = { "city": "Tokyo", "zip": 1000001 };
-  const { city: string, zip: integer } = person2;
-  log("City: " + city);
-  log("Zip: " + toString(zip));
+  const person2: { city: string, zip: integer } = { "city": "Tokyo", "zip": 1000001 }
+  const { city: string, zip: integer } = person2
+  log("City: " + city)
+  log("Zip: " + toString(zip))
 }

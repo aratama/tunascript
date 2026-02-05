@@ -1,5 +1,6 @@
-import { log, getArgs, getEnv, length, map, type JSX, type Error } from "prelude"
-import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type Request, type Response } from "http"
+import { log, getArgs, getEnv, type Error } from "prelude"
+import { length, map } from "array"
+import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type JSX, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
 import { Styles } from "./style.tuna"
 
@@ -11,24 +12,29 @@ create_table todos {
 }
 
 function TodoList(): JSX {
-  const rows = fetch_all {
+  const fetched = fetch_all {
     SELECT id, title, completed, created_at FROM todos ORDER BY id DESC
   }
-  if (rows.length() == 0) {
-    return <p class="empty-message">タスクがありません</p>
+  return switch (fetched) {
+    case err as Error: <p class="empty-message">DB error: {err.message}</p>
+    case rows as { id: string, title: string, completed: string, created_at: string }[]:
+      if (rows.length() == 0) {
+        <p class="empty-message">タスクがありません</p>
+      } else {
+        <ul class="todo-list">{rows.map(function (row) {
+        const isCompleted = row.completed == "1"
+        const itemClass = if (isCompleted) { "todo-item completed" } else { "todo-item" }
+        return <li class={itemClass}>
+          <form method="POST" action="/toggle" style="display:contents">
+            <input type="hidden" name="id" value={row.id} />
+            <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
+          </form>
+          <span class="todo-title">{row.title}</span>
+          <span class="todo-date">{row.created_at}</span>
+        </li>
+      })}</ul>
+      }
   }
-	  return <ul class="todo-list">{rows.map(function (row) {
-	    const isCompleted = row.completed == "1"
-	    const itemClass = if (isCompleted) { "todo-item completed" } else { "todo-item" }
-	    return <li class={itemClass}>
-	      <form method="POST" action="/toggle" style="display:contents">
-	        <input type="hidden" name="id" value={row.id} />
-	        <input type="checkbox" class="todo-checkbox" name="completed" checked={isCompleted} onchange="this.form.submit()" />
-      </form>
-      <span class="todo-title">{row.title}</span>
-      <span class="todo-date">{row.created_at}</span>
-    </li>
-  })}</ul>
 }
 
 function handleRoot(req: Request): Response {
@@ -56,8 +62,15 @@ function handleRoot(req: Request): Response {
 function handleAdd(req: Request): Response {
   const { title } = req.form
   if (title != "") {
-    execute {
+    const inserted = execute {
       INSERT INTO todos (title) VALUES ({title})
+    }
+    const insertError = switch (inserted) {
+      case err as Error: err.message
+      case ok as undefined: ""
+    }
+    if (insertError != "") {
+      return responseHtml(<p>DB error: {insertError}</p>)
     }
   }
   return responseRedirect("/")
@@ -65,26 +78,43 @@ function handleAdd(req: Request): Response {
 
 function handleToggle(req: Request): Response {
   const { id } = req.form
-	  const { completed } = fetch_one {
+	  const fetched = fetch_one {
 	    SELECT completed FROM todos WHERE id = {id}
 	  }
-	  const newCompleted = if (completed == "1") { 0 } else { 1 }
-	  execute {
-	    UPDATE todos SET completed = {newCompleted} WHERE id = {id}
+	  return switch (fetched) {
+	    case err as Error: responseHtml(<p>DB error: {err.message}</p>)
+	    case row as { completed: string }: {
+	      const completed = row.completed
+	      const newCompleted = if (completed == "1") { 0 } else { 1 }
+	      const updated = execute {
+	        UPDATE todos SET completed = {newCompleted} WHERE id = {id}
+	      }
+	      switch (updated) {
+	        case err as Error: responseHtml(<p>DB error: {err.message}</p>)
+	        case ok as undefined: responseRedirect("/")
+	      }
+	    }
 	  }
-	  return responseRedirect("/")
 }
 
 export function main(): void {
 	  // Open or create the database
 	  const args = getArgs()
-  const dbPath = if (args.length() > 0) {
+	  const dbPath = if (args.length() > 0) {
     switch (args[0]) {
       case path as string: path
       case e as Error: ":memory:"
     }
   } else { ":memory:" }
-	  dbOpen(dbPath)
+	  const opened = dbOpen(dbPath)
+	  const openError = switch (opened) {
+	    case err as Error: err.message
+	    case ok as undefined: ""
+	  }
+	  if (openError != "") {
+	    log("db open error: " + openError)
+	    return
+	  }
 
   // Create server and define routes
   const server = createServer()

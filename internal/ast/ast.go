@@ -356,7 +356,7 @@ type IndexExpr struct {
 func (*IndexExpr) exprNode()       {}
 func (e *IndexExpr) GetSpan() Span { return e.Span }
 
-// TryExpr represents Result short-hand operator: expr?
+// TryExpr represents short-hand operator for (T | Error): expr?
 // If expr is Error at runtime, it returns from the current function.
 type TryExpr struct {
 	Expr Expr

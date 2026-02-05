@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/bytecodealliance/wasmtime-go"
+	"github.com/bytecodealliance/wasmtime-go/v41"
 )
 
 const (
@@ -28,7 +28,11 @@ type Runner struct {
 }
 
 func NewRunner() *Runner {
-	return &Runner{engine: wasmtime.NewEngine()}
+	config := wasmtime.NewConfig()
+	// Enable Wasm GC-related proposals so GC-enabled modules can run.
+	config.SetWasmFunctionReferences(true)
+	config.SetWasmGC(true)
+	return &Runner{engine: wasmtime.NewEngineWithConfig(config)}
 }
 
 func (r *Runner) Run(wasm []byte) (string, error) {
@@ -127,6 +131,21 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 	}
 	if _, err := start.Call(store); err != nil {
 		return rt, err
+	}
+	if mainResult := instance.GetFunc(store, "__main_result"); mainResult != nil {
+		result, err := mainResult.Call(store)
+		if err != nil {
+			return rt, err
+		}
+		handle, ok := result.(int32)
+		if !ok {
+			return rt, fmt.Errorf("__main_result is not int32: %T", result)
+		}
+		if msg, isErr, err := rt.resultErrorMessage(handle); err != nil {
+			return rt, err
+		} else if isErr {
+			return rt, errors.New(msg)
+		}
 	}
 	if sandbox {
 		return rt, nil

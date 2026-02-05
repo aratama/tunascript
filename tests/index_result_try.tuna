@@ -1,33 +1,33 @@
 // expect: 20
 // expect: index out of range
 
-import { log, toString, type Result, type Error } from "prelude";
+import { log, toString, type Error } from "prelude"
 
-function getAt(xs: integer[], i: integer): Result<integer> {
-  const value: integer = xs[i]?;
-  return value;
+function getAt(xs: integer[], i: integer): integer | Error {
+  const value: integer = xs[i]?
+  return value
 }
 
 export function main(): void {
-  const xs = [10, 20, 30];
+  const xs = [10, 20, 30]
 
-  const ok = getAt(xs, 1);
+  const ok = getAt(xs, 1)
   switch (ok) {
     case n as integer: {
-      log(toString(n));
+      log(toString(n))
     }
     case e as Error: {
-      log(e.message);
+      log(e.message)
     }
-  };
+  }
 
-  const ng = getAt(xs, 5);
+  const ng = getAt(xs, 5)
   switch (ng) {
     case n as integer: {
-      log(toString(n));
+      log(toString(n))
     }
     case e as Error: {
-      log(e.message);
+      log(e.message)
     }
-  };
+  }
 }

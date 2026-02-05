@@ -1,0 +1,130 @@
+export const PLAYGROUND_EDITOR_JS: string = `import { EditorState } from "https://esm.sh/@codemirror/state@6"
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "https://esm.sh/@codemirror/view@6"
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6"
+import { LRLanguage, LanguageSupport, bracketMatching, syntaxHighlighting, HighlightStyle } from "https://esm.sh/@codemirror/language@6"
+import { styleTags, tags as t } from "https://esm.sh/@lezer/highlight@1"
+import { buildParser } from "https://esm.sh/@lezer/generator@1"
+
+const grammarPath = "/assets/tunascript.grammar"
+
+const tunaHighlightStyle = HighlightStyle.define([
+  { tag: [t.keyword, t.controlKeyword, t.moduleKeyword], color: "#0b4ad1", fontWeight: "700" },
+  { tag: [t.typeName], color: "#8a2be2", fontWeight: "600" },
+  { tag: [t.bool, t.null], color: "#c2410c", fontWeight: "600" },
+  { tag: [t.number], color: "#0f766e" },
+  { tag: [t.string], color: "#b45309" },
+  { tag: [t.comment], color: "#6b7280", fontStyle: "italic" },
+  { tag: [t.operator], color: "#1f2937" },
+  { tag: [t.punctuation, t.separator, t.paren, t.squareBracket, t.brace], color: "#334155" },
+  { tag: [t.variableName], color: "#0f172a" }
+])
+
+const editorTheme = EditorView.theme({
+  "&": {
+    height: "100%",
+    fontFamily: "'M PLUS 1 Code', 'JetBrains Mono', 'UDEV Gothic 35', monospace",
+    fontSize: "14px",
+    color: "#102236"
+  },
+  ".cm-scroller": {
+    overflow: "auto"
+  },
+  ".cm-content": {
+    padding: "16px 0",
+    minHeight: "100%"
+  },
+  ".cm-line": {
+    padding: "0 16px"
+  },
+  ".cm-gutters": {
+    borderRight: "1px solid #dbe4ee",
+    backgroundColor: "#f7faff",
+    color: "#8da2b5"
+  },
+  ".cm-activeLine": {
+    backgroundColor: "rgba(14, 165, 233, 0.08)"
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "rgba(14, 165, 233, 0.14)"
+  }
+})
+
+function buildTunaLanguageSupport(grammarText) {
+  const parser = buildParser(grammarText).configure({
+    props: [
+      styleTags({
+        Keyword: t.keyword,
+        BuiltinType: t.typeName,
+        SQLKeyword: t.keyword,
+        BooleanLiteral: t.bool,
+        NullLiteral: t.null,
+        NumberLiteral: t.number,
+        StringLiteral: t.string,
+        TemplateString: t.string,
+        SQLInterpolation: t.variableName,
+        JSXTag: t.tagName,
+        JSXFragmentOpen: t.punctuation,
+        JSXFragmentClose: t.punctuation,
+        Identifier: t.variableName,
+        Operator: t.operator,
+        Punctuation: t.punctuation,
+        LineComment: t.lineComment,
+        BlockComment: t.blockComment
+      })
+    ]
+  })
+
+  const language = LRLanguage.define({
+    name: "tunascript",
+    parser: parser
+  })
+  return new LanguageSupport(language)
+}
+
+async function setupEditor() {
+  const form = document.querySelector(".editor-form")
+  const sourceField = document.getElementById("source-input")
+  const editorRoot = document.getElementById("source-editor")
+
+  if (!form || !sourceField || !editorRoot) {
+    return
+  }
+
+  const extensions = [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightActiveLine(),
+    history(),
+    keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+    editorTheme,
+    bracketMatching(),
+    syntaxHighlighting(tunaHighlightStyle)
+  ]
+
+  try {
+    const response = await fetch(grammarPath, { cache: "no-store" })
+    if (!response.ok) {
+      throw new Error("failed to load grammar: " + response.status)
+    }
+    const grammarText = await response.text()
+    extensions.push(buildTunaLanguageSupport(grammarText))
+  } catch (error) {
+    console.error("TunaScript grammar load failed", error)
+  }
+
+  const view = new EditorView({
+    state: EditorState.create({
+      doc: sourceField.value,
+      extensions: extensions
+    }),
+    parent: editorRoot
+  })
+
+  form.classList.add("editor-ready")
+  form.addEventListener("submit", function () {
+    sourceField.value = view.state.doc.toString()
+  })
+}
+
+setupEditor()
+`

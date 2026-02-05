@@ -1,20 +1,29 @@
 // expect: error
 // expect: $.age: missing field
 
-import { log, parse, decode, type Error } from "prelude";
+import { log, type Error } from "prelude"
+import { parse, decode } from "json"
 
-type Person = { name: string, age: number };
+type Person = { name: string, age: number }
 
 export function main(): void {
-  const j: json = parse("{\"name\":\"Alice\"}");
-  const decoded = decode<Person>(j);
-  switch (decoded) {
-    case decoded as Error: {
-      log("error");
-      log(decoded.message);
+  const parsed = parse("{\"name\":\"Alice\"}")
+  switch (parsed) {
+    case err as Error: {
+      log("error")
+      log(err.message)
     }
-    case decoded as Person: {
-      log("ok");
+    case j as json: {
+      const decoded = decode<Person>(j)
+      switch (decoded) {
+        case decoded as Error: {
+          log("error")
+          log(decoded.message)
+        }
+        case decoded as Person: {
+          log("ok")
+        }
+      }
     }
-  };
+  }
 }

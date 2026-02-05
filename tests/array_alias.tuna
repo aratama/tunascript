@@ -1,10 +1,10 @@
 // expect: zero
 
-import { log } from "prelude";
+import { log } from "prelude"
 
-type Strings = Array<string>;
+type Strings = Array<string>
 
 export function main(): void {
-  const arr: Strings = ["zero", "one", "two"];
-  log(arr[0]);
+  const arr: Strings = ["zero", "one", "two"]
+  log(arr[0])
 }

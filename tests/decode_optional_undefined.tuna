@@ -2,27 +2,36 @@
 // expect: undefined
 // expect: {}
 
-import { log, stringify, parse, decode, type Error } from "prelude";
+import { log, type Error } from "prelude"
+import { stringify, parse, decode } from "json"
 
-type Person = { name: string | undefined };
+type Person = { name: string | undefined }
 
 export function main(): void {
-  const j: json = parse("{}");
-  const decoded = decode<Person>(j);
-  switch (decoded) {
-    case decoded as Error: {
-      log("error");
-      log(decoded.message);
+  const parsed = parse("{}")
+  switch (parsed) {
+    case err as Error: {
+      log("error")
+      log(err.message)
     }
-    case decoded as Person: {
-      log("ok");
-      const name = decoded.name;
-      const nameStr = switch (name) {
-        case name as undefined: "undefined"
-        case name as string: name
-      };
-      log(nameStr);
-      log(stringify(decoded));
+    case j as json: {
+      const decoded = decode<Person>(j)
+      switch (decoded) {
+        case decoded as Error: {
+          log("error")
+          log(decoded.message)
+        }
+        case decoded as Person: {
+          log("ok")
+          const name = decoded.name
+          const nameStr = switch (name) {
+            case name as undefined: "undefined"
+            case name as string: name
+          }
+          log(nameStr)
+          log(stringify(decoded))
+        }
+      }
     }
-  };
+  }
 }

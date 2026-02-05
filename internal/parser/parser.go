@@ -29,6 +29,9 @@ func (p *Parser) ParseModule() (*ast.Module, error) {
 		mod.Imports = append(mod.Imports, p.parseImport())
 	}
 	for p.curr.Kind != lexer.TokenEOF {
+		if p.consumeForbiddenSemicolon() {
+			continue
+		}
 		decl := p.parseDecl()
 		if decl != nil {
 			mod.Decls = append(mod.Decls, decl)
@@ -65,7 +68,7 @@ func (p *Parser) parseImport() ast.ImportDecl {
 	p.expect(lexer.TokenRBrace)
 	p.expect(lexer.TokenFrom)
 	modTok := p.expect(lexer.TokenString)
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return ast.ImportDecl{Items: items, From: modTok.Text, Span: spanFrom(start, end)}
 }
@@ -100,7 +103,7 @@ func (p *Parser) parseConstDecl(export bool) ast.Decl {
 	texpr := p.parseType()
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.ConstDecl{Name: nameTok.Text, Export: export, Type: texpr, Init: init, Span: spanFrom(start, end)}
 }
@@ -147,7 +150,7 @@ func (p *Parser) parseTypeAliasDecl(export bool) ast.Decl {
 	}
 	p.expect(lexer.TokenEq)
 	typeExpr := p.parseType()
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.TypeAliasDecl{Name: nameTok.Text, Export: export, TypeParams: typeParams, Type: typeExpr, Span: spanFrom(start, end)}
 }
@@ -216,9 +219,12 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseReturn()
 	case lexer.TokenLBrace:
 		return p.parseBlock()
+	case lexer.TokenSemicolon:
+		p.consumeForbiddenSemicolon()
+		return p.parseStmt()
 	default:
 		expr := p.parseExpr(0)
-		p.optional(lexer.TokenSemicolon)
+		p.consumeForbiddenSemicolon()
 		return &ast.ExprStmt{Expr: expr, Span: expr.GetSpan()}
 	}
 }
@@ -232,7 +238,7 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 		names, types := p.parseArrayPatternNames()
 		p.expect(lexer.TokenEq)
 		init := p.parseExpr(0)
-		p.optional(lexer.TokenSemicolon)
+		p.consumeForbiddenSemicolon()
 		end := p.curr.Pos
 		return &ast.DestructureStmt{Names: names, Types: types, Init: init, Span: spanFrom(start, end)}
 	}
@@ -242,7 +248,7 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 		keys, types := p.parseObjectPatternKeys()
 		p.expect(lexer.TokenEq)
 		init := p.parseExpr(0)
-		p.optional(lexer.TokenSemicolon)
+		p.consumeForbiddenSemicolon()
 		end := p.curr.Pos
 		return &ast.ObjectDestructureStmt{Keys: keys, Types: types, Init: init, Span: spanFrom(start, end)}
 	}
@@ -256,7 +262,7 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 	}
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.ConstStmt{Name: nameTok.Text, Type: texpr, Init: init, Span: spanFrom(start, end)}
 }
@@ -265,7 +271,7 @@ func (p *Parser) parseDestructureStmt(start lexer.Position) ast.Stmt {
 	names, types := p.parseArrayPatternNames()
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.DestructureStmt{Names: names, Types: types, Init: init, Span: spanFrom(start, end)}
 }
@@ -274,7 +280,7 @@ func (p *Parser) parseObjectDestructureStmt(start lexer.Position) ast.Stmt {
 	keys, types := p.parseObjectPatternKeys()
 	p.expect(lexer.TokenEq)
 	init := p.parseExpr(0)
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.ObjectDestructureStmt{Keys: keys, Types: types, Init: init, Span: spanFrom(start, end)}
 }
@@ -385,12 +391,14 @@ func (p *Parser) parseForOf() ast.Stmt {
 
 func (p *Parser) parseReturn() ast.Stmt {
 	start := p.curr.Pos
-	p.expect(lexer.TokenReturn)
+	returnTok := p.expect(lexer.TokenReturn)
 	var expr ast.Expr
-	if p.curr.Kind != lexer.TokenSemicolon && p.curr.Kind != lexer.TokenRBrace {
+	if p.curr.Kind == lexer.TokenSemicolon {
+		p.consumeForbiddenSemicolon()
+	} else if p.curr.Kind != lexer.TokenRBrace && p.curr.Kind != lexer.TokenEOF && p.curr.Pos.Line == returnTok.Pos.Line {
 		expr = p.parseExpr(0)
 	}
-	p.optional(lexer.TokenSemicolon)
+	p.consumeForbiddenSemicolon()
 	end := p.curr.Pos
 	return &ast.ReturnStmt{Value: expr, Span: spanFrom(start, end)}
 }
@@ -400,6 +408,9 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 	p.expect(lexer.TokenLBrace)
 	var stmts []ast.Stmt
 	for p.curr.Kind != lexer.TokenRBrace && p.curr.Kind != lexer.TokenEOF {
+		if p.consumeForbiddenSemicolon() {
+			continue
+		}
 		stmts = append(stmts, p.parseStmt())
 	}
 	p.expect(lexer.TokenRBrace)
@@ -519,6 +530,9 @@ func (p *Parser) parsePostfix() ast.Expr {
 			}
 			return expr
 		case lexer.TokenLParen:
+			if p.curr.Pos.Line > expr.GetSpan().End.Line {
+				return expr
+			}
 			args := p.parseArgs()
 			expr = &ast.CallExpr{Callee: expr, TypeArgs: pendingTypeArgs, Args: args, Span: spanFromPos(expr.GetSpan().Start, argsEnd(args, expr.GetSpan().End))}
 			pendingTypeArgs = nil
@@ -527,6 +541,9 @@ func (p *Parser) parsePostfix() ast.Expr {
 			propTok := p.expect(lexer.TokenIdent)
 			expr = &ast.MemberExpr{Object: expr, Property: propTok.Text, Span: spanFromPos(expr.GetSpan().Start, posFromLex(propTok.Pos))}
 		case lexer.TokenLBracket:
+			if p.curr.Pos.Line > expr.GetSpan().End.Line {
+				return expr
+			}
 			p.next()
 			idx := p.parseExpr(0)
 			p.expect(lexer.TokenRBracket)
@@ -1208,6 +1225,15 @@ func (p *Parser) optional(kind lexer.TokenKind) {
 	if p.curr.Kind == kind {
 		p.next()
 	}
+}
+
+func (p *Parser) consumeForbiddenSemicolon() bool {
+	if p.curr.Kind != lexer.TokenSemicolon {
+		return false
+	}
+	p.err("semicolon is not allowed")
+	p.next()
+	return true
 }
 
 func (p *Parser) expect(kind lexer.TokenKind) lexer.Token {

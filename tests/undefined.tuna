@@ -1,13 +1,13 @@
 // expect: true
 // expect: {"x":1}
 
-import { log, stringify } from "prelude";
+import { log } from "prelude"
+import { stringify } from "json"
 
 export function main(): void {
-  const u: undefined = undefined;
-  log(u == undefined);
+  const u: undefined = undefined
+  log(u == undefined)
 
-  const obj = { "name": undefined, "x": 1 };
-  log(stringify(obj));
+  const obj = { "name": undefined, "x": 1 }
+  log(stringify(obj))
 }
-

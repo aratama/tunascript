@@ -20,9 +20,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/bytecodealliance/wasmtime-go"
+	"github.com/bytecodealliance/wasmtime-go/v41"
 	_ "modernc.org/sqlite"
 	"tuna/internal/compiler"
+	"tuna/internal/formatter"
 )
 
 type Kind int
@@ -90,10 +91,14 @@ type decodeSchemaKV struct {
 	Type *decodeSchema `json:"type"`
 }
 
+const (
+	routeMethodAny = "*"
+)
+
 // HTTPServer represents an HTTP server instance
 type HTTPServer struct {
 	mux    *http.ServeMux
-	routes map[string]int32 // path -> handler handle
+	routes map[string]map[string]int32 // method -> (path -> handler handle)
 }
 
 // HTTPRequest represents an HTTP request
@@ -214,11 +219,20 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	define := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "prelude", name, fn)
 	}
+	defineJSON := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "json", name, fn)
+	}
+	defineArray := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "array", name, fn)
+	}
 	defineHTTP := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "http", name, fn)
 	}
 	defineSQLite := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "sqlite", name, fn)
+	}
+	defineRuntime := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "runtime", name, fn)
 	}
 	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) int32 {
 		return must(r.strFromUTF8(caller, ptr, length))
@@ -320,8 +334,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("range", func(start int64, end int64) int32 {
-		return must(r.rangeFunc(start, end))
+	if err := defineArray("range", func(start int64, end int64) int32 {
+		return r.rangeFunc(start, end)
 	}); err != nil {
 		return err
 	}
@@ -335,17 +349,18 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("stringify", func(handle int32) int32 {
+	if err := defineJSON("stringify", func(handle int32) int32 {
 		return must(r.stringify(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("parse", func(handle int32) int32 {
-		return must(r.parse(handle))
+	if err := defineJSON("parse", func(handle int32) int32 {
+		value, err := r.parse(handle)
+		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("decode", func(jsonHandle int32, schemaHandle int32) int32 {
+	if err := defineJSON("decode", func(jsonHandle int32, schemaHandle int32) int32 {
 		return must(r.decode(jsonHandle, schemaHandle))
 	}); err != nil {
 		return err
@@ -365,8 +380,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineSQLite("db_open", func(strHandle int32) {
-		must0(r.dbOpenHandle(strHandle))
+	if err := defineSQLite("db_open", func(strHandle int32) int32 {
+		return r.resultError(r.dbOpenHandle(strHandle))
 	}); err != nil {
 		return err
 	}
@@ -385,28 +400,37 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("run_sandbox", func(sourceHandle int32) int32 {
+	if err := defineRuntime("run_sandbox", func(sourceHandle int32) int32 {
 		return must(r.runSandbox(sourceHandle))
 	}); err != nil {
 		return err
 	}
+	if err := defineRuntime("run_formatter", func(sourceHandle int32) int32 {
+		value, err := r.runFormatter(sourceHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
 	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
-		return must(r.sqlQuery(caller, ptr, length, paramsHandle))
+		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
 	if err := define("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
-		return must(r.sqlFetchOne(caller, ptr, length, paramsHandle))
+		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
 	if err := define("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
-		return must(r.sqlFetchOptional(caller, ptr, length, paramsHandle))
+		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) {
-		must0(r.sqlExecute(caller, ptr, length, paramsHandle))
+	if err := define("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
+		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
 	}); err != nil {
 		return err
 	}
@@ -416,8 +440,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) {
-		must0(r.httpAddRoute(caller, serverHandle, pathPtr, pathLen, handlerHandle))
+	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle int32, methodHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) {
+		must0(r.httpAddRoute(caller, serverHandle, methodHandle, pathPtr, pathLen, handlerHandle))
 	}); err != nil {
 		return err
 	}
@@ -485,6 +509,21 @@ func must0(err error) {
 	if err != nil {
 		panic(wasmtime.NewTrap(err.Error()))
 	}
+}
+
+func (r *Runtime) resultValue(value int32, err error) int32 {
+	if err != nil {
+		return r.decodeError(err.Error())
+	}
+	return value
+}
+
+func (r *Runtime) resultError(err error) int32 {
+	if err != nil {
+		return r.decodeError(err.Error())
+	}
+	// undefined を (undefined | Error) の成功値として返す
+	return 1
 }
 
 func (r *Runtime) checkSandboxOutputSize(extra int) error {
@@ -593,6 +632,21 @@ func (r *Runtime) runSandbox(sourceHandle int32) (int32, error) {
 	runner := NewRunner()
 	result = runner.RunSandboxWithArgs(compiled.Wasm, nil)
 	return r.sandboxResultString(result)
+}
+
+func (r *Runtime) runFormatter(sourceHandle int32) (int32, error) {
+	sourceValue, err := r.getValue(sourceHandle)
+	if err != nil {
+		return 0, err
+	}
+	if sourceValue.Kind != KindString {
+		return 0, errors.New("runFormatter expects string")
+	}
+	formatted, err := formatter.New().Format("<runtime>", sourceValue.Str)
+	if err != nil {
+		return 0, err
+	}
+	return r.newValue(Value{Kind: KindString, Str: formatted}), nil
 }
 
 func (r *Runtime) sandboxResultString(result SandboxResult) (int32, error) {
@@ -846,27 +900,24 @@ func (r *Runtime) arrJoin(arrHandle int32) (int32, error) {
 	return r.newValue(Value{Kind: KindString, Str: result}), nil
 }
 
-func (r *Runtime) rangeFunc(start int64, end int64) (int32, error) {
+func (r *Runtime) rangeFunc(start int64, end int64) int32 {
 	if end < start {
-		return 0, errors.New("range end must be >= start")
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
 	}
 	delta := end - start
 	if delta < 0 {
-		return 0, errors.New("range too large")
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
 	}
 	if delta >= int64(math.MaxInt32) {
-		return 0, errors.New("range too large")
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
 	}
 	length := delta + 1
 	elems := make([]int32, int(length))
 	for i := int64(0); i < length; i++ {
-		val, err := r.valFromI64(start + i)
-		if err != nil {
-			return 0, err
-		}
+		val, _ := r.valFromI64(start + i)
 		elems[int(i)] = val
 	}
-	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
+	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}})
 }
 
 func (r *Runtime) valEq(a int32, b int32) (int32, error) {
@@ -1082,6 +1133,39 @@ func (r *Runtime) decodeError(message string) int32 {
 		"type":    r.newValue(Value{Kind: KindString, Str: "Error"}),
 	}
 	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}})
+}
+
+// resultErrorMessage returns (message, true, nil) when handle is an Error object.
+func (r *Runtime) resultErrorMessage(handle int32) (string, bool, error) {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return "", false, err
+	}
+	if v.Kind != KindObject || v.Obj == nil {
+		return "", false, nil
+	}
+	typeHandle, ok := v.Obj.Props["type"]
+	if !ok {
+		return "", false, nil
+	}
+	typeVal, err := r.getValue(typeHandle)
+	if err != nil {
+		return "", false, err
+	}
+	if typeVal.Kind != KindString || typeVal.Str != "Error" {
+		return "", false, nil
+	}
+	msg := "Error"
+	if msgHandle, ok := v.Obj.Props["message"]; ok {
+		msgVal, err := r.getValue(msgHandle)
+		if err != nil {
+			return "", false, err
+		}
+		if msgVal.Kind == KindString {
+			msg = msgVal.Str
+		}
+	}
+	return msg, true, nil
 }
 
 func sortedKeys(m map[string]int32) []string {
@@ -2144,7 +2228,7 @@ func (r *Runtime) httpCreateServer() (int32, error) {
 
 	server := &HTTPServer{
 		mux:    http.NewServeMux(),
-		routes: make(map[string]int32),
+		routes: make(map[string]map[string]int32),
 	}
 	handle := r.newValue(Value{Kind: KindI64, I64: int64(len(r.httpServers))})
 	r.httpServers[handle] = server
@@ -2152,13 +2236,25 @@ func (r *Runtime) httpCreateServer() (int32, error) {
 }
 
 // httpAddRoute adds a route to the HTTP server
-func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) error {
+func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, methodHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) error {
 	r.httpMu.Lock()
 	defer r.httpMu.Unlock()
 
 	server, ok := r.httpServers[serverHandle]
 	if !ok {
 		return errors.New("invalid server handle")
+	}
+
+	methodVal, err := r.getValue(methodHandle)
+	if err != nil {
+		return err
+	}
+	if methodVal.Kind != KindString {
+		return errors.New("route method must be string")
+	}
+	routeMethod, err := normalizeRouteMethod(methodVal.Str)
+	if err != nil {
+		return err
 	}
 
 	// Get path from memory
@@ -2178,13 +2274,16 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, path
 	}
 	path := string(data[start:end])
 
-	if r.sandbox && path == "/" {
-		if _, exists := server.routes[path]; exists {
+	if r.sandbox && path == "/" && (routeMethod == routeMethodAny || routeMethod == http.MethodGet) {
+		if hasRootRouteForSandbox(server.routes) {
 			return errors.New(`addRoute(server, "/", handler) may only be called once in sandbox mode`)
 		}
 	}
 
-	server.routes[path] = handlerHandle
+	if _, exists := server.routes[routeMethod]; !exists {
+		server.routes[routeMethod] = map[string]int32{}
+	}
+	server.routes[routeMethod][path] = handlerHandle
 	return nil
 }
 
@@ -2280,18 +2379,142 @@ func (r *Runtime) buildRequestObject(path string, method string, query map[strin
 	return reqObj, nil
 }
 
+func resolveRoute(path string, routes map[string]int32) (int32, map[string]string, bool) {
+	if handler, ok := routes[path]; ok {
+		return handler, map[string]string{}, true
+	}
+
+	bestScore := -1
+	bestPattern := ""
+	var bestHandler int32
+	bestParams := map[string]string{}
+
+	for pattern, handler := range routes {
+		params, score, matched := matchRoutePattern(pattern, path)
+		if !matched {
+			continue
+		}
+		// Prefer routes with more static segments, then longer patterns, then lexicographically.
+		if score > bestScore || (score == bestScore && (len(pattern) > len(bestPattern) || (len(pattern) == len(bestPattern) && pattern < bestPattern))) {
+			bestScore = score
+			bestPattern = pattern
+			bestHandler = handler
+			bestParams = params
+		}
+	}
+
+	if bestScore == -1 {
+		return 0, nil, false
+	}
+	return bestHandler, bestParams, true
+}
+
+func resolveRouteByMethod(path string, method string, routes map[string]map[string]int32) (int32, map[string]string, bool) {
+	if methodRoutes, ok := routes[method]; ok {
+		if handler, params, found := resolveRoute(path, methodRoutes); found {
+			return handler, params, true
+		}
+	}
+	if wildcardRoutes, ok := routes[routeMethodAny]; ok {
+		return resolveRoute(path, wildcardRoutes)
+	}
+	return 0, nil, false
+}
+
+func hasRootRouteForSandbox(routes map[string]map[string]int32) bool {
+	if wildcardRoutes, ok := routes[routeMethodAny]; ok {
+		if _, exists := wildcardRoutes["/"]; exists {
+			return true
+		}
+	}
+	if getRoutes, ok := routes[http.MethodGet]; ok {
+		if _, exists := getRoutes["/"]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRouteMethod(method string) (string, error) {
+	trimmed := strings.TrimSpace(method)
+	if trimmed == "" || trimmed == routeMethodAny {
+		return routeMethodAny, nil
+	}
+	upper := strings.ToUpper(trimmed)
+	switch upper {
+	case "GET", "POST":
+		return upper, nil
+	default:
+		return "", fmt.Errorf("unsupported HTTP method for addRoute: %s (expected get or post)", method)
+	}
+}
+
+func matchRoutePattern(pattern string, path string) (map[string]string, int, bool) {
+	patternSegs := splitRouteSegments(pattern)
+	pathSegs := splitRouteSegments(path)
+	if len(patternSegs) != len(pathSegs) {
+		return nil, 0, false
+	}
+
+	params := map[string]string{}
+	staticCount := 0
+	hasParam := false
+
+	for i := 0; i < len(patternSegs); i++ {
+		patSeg := patternSegs[i]
+		pathSeg := pathSegs[i]
+
+		if strings.HasPrefix(patSeg, ":") {
+			name := strings.TrimPrefix(patSeg, ":")
+			if name == "" || pathSeg == "" {
+				return nil, 0, false
+			}
+			params[name] = pathSeg
+			hasParam = true
+			continue
+		}
+		if patSeg != pathSeg {
+			return nil, 0, false
+		}
+		staticCount++
+	}
+
+	if !hasParam {
+		return nil, 0, false
+	}
+	return params, staticCount, true
+}
+
+func splitRouteSegments(path string) []string {
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "" {
+		return []string{}
+	}
+	return strings.Split(trimmed, "/")
+}
+
 func (r *Runtime) invokeRouteHandler(server *HTTPServer, path string, method string, query map[string]string, form map[string]string) (*HTTPResponse, error) {
 	r.handlerMu.Lock()
 	defer r.handlerMu.Unlock()
 
+	normalizedMethod := strings.ToUpper(method)
+
 	r.httpMu.Lock()
-	handlerHandle, ok := server.routes[path]
+	handlerHandle, routeParams, ok := resolveRouteByMethod(path, normalizedMethod, server.routes)
 	r.httpMu.Unlock()
 	if !ok {
 		return nil, fmt.Errorf("route not found: %s", path)
 	}
 
-	reqObj, err := r.buildRequestObject(path, method, query, form)
+	mergedQuery := make(map[string]string, len(query)+len(routeParams))
+	for key, value := range query {
+		mergedQuery[key] = value
+	}
+	for key, value := range routeParams {
+		mergedQuery[key] = value
+	}
+
+	reqObj, err := r.buildRequestObject(path, method, mergedQuery, form)
 	if err != nil {
 		return nil, err
 	}
@@ -2341,6 +2564,11 @@ func (r *Runtime) invokeRouteHandler(server *HTTPServer, path string, method str
 	resVal, err := r.getValue(resHandle)
 	if err != nil {
 		return nil, err
+	}
+	if msg, isErr, err := r.resultErrorMessage(resHandle); err != nil {
+		return nil, err
+	} else if isErr {
+		return nil, errors.New(msg)
 	}
 	if resVal.Kind != KindObject {
 		return nil, fmt.Errorf("handler result is not object, kind=%d", resVal.Kind)

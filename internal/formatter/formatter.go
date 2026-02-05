@@ -76,7 +76,7 @@ func (f *Formatter) formatImport(imp ast.ImportDecl) {
 	}
 	f.buf.WriteString(" } from \"")
 	f.buf.WriteString(imp.From)
-	f.buf.WriteString("\";\n")
+	f.buf.WriteString("\"\n")
 }
 
 func (f *Formatter) formatDecl(decl ast.Decl) {
@@ -103,7 +103,7 @@ func (f *Formatter) formatConstDecl(d *ast.ConstDecl) {
 	f.formatType(d.Type)
 	f.buf.WriteString(" = ")
 	f.formatExpr(d.Init)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatFuncDecl(d *ast.FuncDecl) {
@@ -173,7 +173,7 @@ func (f *Formatter) formatTypeAliasDecl(d *ast.TypeAliasDecl) {
 	}
 	f.buf.WriteString(" = ")
 	f.formatType(d.Type)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatBlockStmt(block *ast.BlockStmt) {
@@ -220,7 +220,7 @@ func (f *Formatter) formatConstStmt(s *ast.ConstStmt) {
 	}
 	f.buf.WriteString(" = ")
 	f.formatExpr(s.Init)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatDestructureStmt(s *ast.DestructureStmt) {
@@ -238,7 +238,7 @@ func (f *Formatter) formatDestructureStmt(s *ast.DestructureStmt) {
 	}
 	f.buf.WriteString("] = ")
 	f.formatExpr(s.Init)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatObjectDestructureStmt(s *ast.ObjectDestructureStmt) {
@@ -256,13 +256,13 @@ func (f *Formatter) formatObjectDestructureStmt(s *ast.ObjectDestructureStmt) {
 	}
 	f.buf.WriteString(" } = ")
 	f.formatExpr(s.Init)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatExprStmt(s *ast.ExprStmt) {
 	f.writeIndent()
 	f.formatExpr(s.Expr)
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatIfStmt(s *ast.IfStmt) {
@@ -332,7 +332,7 @@ func (f *Formatter) formatReturnStmt(s *ast.ReturnStmt) {
 		f.buf.WriteString(" ")
 		f.formatExpr(s.Value)
 	}
-	f.buf.WriteString(";\n")
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatExpr(expr ast.Expr) {

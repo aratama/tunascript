@@ -102,7 +102,7 @@ func (c *Checker) AddModule(mod *ast.Module) {
 }
 
 func (c *Checker) Check() bool {
-	// First: process imports (including type aliases from prelude)
+	// First: process imports (including type aliases from built-in modules)
 	for _, mod := range c.Modules {
 		c.processImports(mod)
 	}
@@ -117,7 +117,7 @@ func (c *Checker) Check() bool {
 	return len(c.Errors) == 0
 }
 
-// processImports handles import statements, including type alias imports from prelude
+// processImports handles import statements, including type aliases from built-in modules
 func (c *Checker) processImports(mod *ModuleInfo) {
 	for _, imp := range mod.AST.Imports {
 		if imp.From == "prelude" {
@@ -148,6 +148,33 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 				}
 			}
 		}
+		if imp.From == "json" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if jsonAlias := getJSONTypeAlias(item.Name); jsonAlias != nil {
+						mod.TypeAliases[item.Name] = jsonAlias
+					}
+				}
+			}
+		}
+		if imp.From == "array" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if arrayAlias := getArrayTypeAlias(item.Name); arrayAlias != nil {
+						mod.TypeAliases[item.Name] = arrayAlias
+					}
+				}
+			}
+		}
+		if imp.From == "runtime" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if runtimeAlias := getRuntimeTypeAlias(item.Name); runtimeAlias != nil {
+						mod.TypeAliases[item.Name] = runtimeAlias
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -168,6 +195,10 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 	for _, decl := range mod.AST.Decls {
 		switch d := decl.(type) {
 		case *ast.ConstDecl:
+			if _, exists := mod.Top[d.Name]; exists {
+				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
+				continue
+			}
 			declType := c.resolveType(d.Type, mod)
 			sym := &Symbol{Name: d.Name, Kind: SymVar, Type: declType, StorageType: declType, Decl: d}
 			if declType != nil && declType.Kind == KindFunc {
@@ -178,6 +209,10 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 				mod.Exports[d.Name] = sym
 			}
 		case *ast.FuncDecl:
+			if _, exists := mod.Top[d.Name]; exists {
+				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
+				continue
+			}
 			sig := c.funcTypeFromDecl(d, mod)
 			sym := &Symbol{Name: d.Name, Kind: SymFunc, Type: sig, Decl: d}
 			mod.Top[d.Name] = sym
@@ -243,7 +278,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 					c.errorf(imp.Span, "%s is not in prelude", item.Name)
 					continue
 				}
-				env.vars[item.Name] = &Symbol{Name: item.Name, Kind: SymBuiltin}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
 			}
 			continue
 		}
@@ -259,7 +294,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 					c.errorf(imp.Span, "%s is not in http", item.Name)
 					continue
 				}
-				env.vars[item.Name] = &Symbol{Name: item.Name, Kind: SymBuiltin}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
 			}
 			continue
 		}
@@ -275,7 +310,55 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 					c.errorf(imp.Span, "%s is not in sqlite", item.Name)
 					continue
 				}
-				env.vars[item.Name] = &Symbol{Name: item.Name, Kind: SymBuiltin}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
+			}
+			continue
+		}
+		if imp.From == "json" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if jsonAlias := getJSONTypeAlias(item.Name); jsonAlias == nil {
+						c.errorf(imp.Span, "%s is not a type in json", item.Name)
+					}
+					continue
+				}
+				if !isJSONName(item.Name) {
+					c.errorf(imp.Span, "%s is not in json", item.Name)
+					continue
+				}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
+			}
+			continue
+		}
+		if imp.From == "array" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if arrayAlias := getArrayTypeAlias(item.Name); arrayAlias == nil {
+						c.errorf(imp.Span, "%s is not a type in array", item.Name)
+					}
+					continue
+				}
+				if !isArrayName(item.Name) {
+					c.errorf(imp.Span, "%s is not in array", item.Name)
+					continue
+				}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
+			}
+			continue
+		}
+		if imp.From == "runtime" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if runtimeAlias := getRuntimeTypeAlias(item.Name); runtimeAlias == nil {
+						c.errorf(imp.Span, "%s is not a type in runtime", item.Name)
+					}
+					continue
+				}
+				if !isRuntimeName(item.Name) {
+					c.errorf(imp.Span, "%s is not in runtime", item.Name)
+					continue
+				}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
 			}
 			continue
 		}
@@ -307,7 +390,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 				c.errorf(imp.Span, "%s is a type, use 'type %s' to import", item.Name, item.Name)
 				continue
 			}
-			env.vars[item.Name] = exp
+			c.bindImportedValue(env, item.Name, exp, imp.Span)
 		}
 	}
 
@@ -461,10 +544,10 @@ func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStm
 	fnEnv := env.child()
 	fnEnv.retType = sig.Ret
 	for i, p := range params {
-		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: sig.Params[i], StorageType: sig.Params[i]}
+		c.declareVar(fnEnv, p.Name, sig.Params[i], p.Span)
 	}
 	c.checkBlock(fnEnv, body, sig.Ret)
-	if sig.Ret.Kind != KindVoid && !returns(body) {
+	if !allowsImplicitVoidReturn(sig.Ret) && !returns(body) {
 		c.errorf(body.Span, "return required")
 	}
 }
@@ -478,7 +561,7 @@ func (c *Checker) checkFuncBodyInfer(env *Env, params []ast.Param, body *ast.Blo
 	fnEnv := env.child()
 	fnEnv.retType = expectedRet
 	for i, p := range params {
-		fnEnv.vars[p.Name] = &Symbol{Name: p.Name, Kind: SymVar, Type: paramTypes[i], StorageType: paramTypes[i]}
+		c.declareVar(fnEnv, p.Name, paramTypes[i], p.Span)
 	}
 	info := &returnInfo{expected: expectedRet}
 	c.checkBlockInfer(fnEnv, body, info)
@@ -491,7 +574,7 @@ func (c *Checker) checkFuncBodyInfer(env *Env, params []ast.Param, body *ast.Blo
 			ret = info.inferred
 		}
 	}
-	if ret.Kind != KindVoid && !returns(body) {
+	if !allowsImplicitVoidReturn(ret) && !returns(body) {
 		c.errorf(body.Span, "return required")
 	}
 	return ret
@@ -522,7 +605,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			}
 			declType = initType
 		}
-		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType, StorageType: declType}
+		c.declareVar(env, s.Name, declType, s.Span)
 	case *ast.DestructureStmt:
 		initType := c.checkExpr(env, s.Init, nil)
 		if initType == nil {
@@ -555,7 +638,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			} else {
 				declType = elemTypes[i]
 			}
-			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
+			c.declareVar(env, name, declType, s.Span)
 		}
 	case *ast.ObjectDestructureStmt:
 		initType := c.checkExpr(env, s.Init, nil)
@@ -581,18 +664,15 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			} else {
 				declType = propType
 			}
-			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
+			c.declareVar(env, key, declType, s.Span)
 		}
 	case *ast.ExprStmt:
 		c.checkExpr(env, s.Expr, nil)
 	case *ast.ReturnStmt:
 		c.checkReturnInfer(env, s, info)
 	case *ast.IfStmt:
-		condType := c.checkExpr(env, s.Cond, Bool())
-		if condType != nil && condType.Kind != KindBool {
-			c.errorf(s.Cond.GetSpan(), "boolean required")
-		}
-		c.checkBlockInfer(env, s.Then, info)
+		thenEnv := c.checkIfCond(env, s.Cond)
+		c.checkBlockInfer(thenEnv, s.Then, info)
 		if s.Else != nil {
 			c.checkBlockInfer(env, s.Else, info)
 		}
@@ -615,7 +695,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 			if lv.Type == nil {
 				continue
 			}
-			loopEnv.vars[lv.Name] = &Symbol{Name: lv.Name, Kind: SymVar, Type: lv.Type, StorageType: lv.Type}
+			c.declareVar(loopEnv, lv.Name, lv.Type, s.Span)
 		}
 		c.checkBlockInfer(loopEnv, s.Body, info)
 	case *ast.BlockStmt:
@@ -625,7 +705,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 
 func (c *Checker) checkReturnInfer(env *Env, s *ast.ReturnStmt, info *returnInfo) {
 	if s.Value == nil {
-		if info.expected != nil && info.expected.Kind != KindVoid {
+		if info.expected != nil && !allowsImplicitVoidReturn(info.expected) {
 			c.errorf(s.Span, "return required")
 		}
 		if info.inferred == nil {
@@ -701,7 +781,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			}
 			declType = initType
 		}
-		env.vars[s.Name] = &Symbol{Name: s.Name, Kind: SymVar, Type: declType, StorageType: declType}
+		c.declareVar(env, s.Name, declType, s.Span)
 	case *ast.DestructureStmt:
 		// Check the initializer expression
 		initType := c.checkExpr(env, s.Init, nil)
@@ -741,7 +821,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 				// Type inference from array/tuple element
 				declType = elemTypes[i]
 			}
-			env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
+			c.declareVar(env, name, declType, s.Span)
 		}
 	case *ast.ObjectDestructureStmt:
 		// Check the initializer expression
@@ -777,13 +857,13 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 				// Type inference from object property
 				declType = propType
 			}
-			env.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
+			c.declareVar(env, key, declType, s.Span)
 		}
 	case *ast.ExprStmt:
 		c.checkExpr(env, s.Expr, nil)
 	case *ast.ReturnStmt:
 		if s.Value == nil {
-			if retType.Kind != KindVoid {
+			if !allowsImplicitVoidReturn(retType) {
 				c.errorf(s.Span, "return required")
 			}
 			return
@@ -793,11 +873,8 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			c.errorf(s.Span, "return type mismatch")
 		}
 	case *ast.IfStmt:
-		condType := c.checkExpr(env, s.Cond, Bool())
-		if condType != nil && condType.Kind != KindBool {
-			c.errorf(s.Cond.GetSpan(), "boolean required")
-		}
-		c.checkBlock(env, s.Then, retType)
+		thenEnv := c.checkIfCond(env, s.Cond)
+		c.checkBlock(thenEnv, s.Then, retType)
 		if s.Else != nil {
 			c.checkBlock(env, s.Else, retType)
 		}
@@ -820,12 +897,81 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			if lv.Type == nil {
 				continue
 			}
-			loopEnv.vars[lv.Name] = &Symbol{Name: lv.Name, Kind: SymVar, Type: lv.Type, StorageType: lv.Type}
+			c.declareVar(loopEnv, lv.Name, lv.Type, s.Span)
 		}
 		c.checkBlock(loopEnv, s.Body, retType)
 	case *ast.BlockStmt:
 		c.checkBlock(env, s, retType)
 	}
+}
+
+func (c *Checker) checkIfCond(env *Env, cond ast.Expr) *Env {
+	if asExpr, ok := cond.(*ast.AsExpr); ok {
+		targetType := c.checkExpr(env, asExpr, nil)
+		if targetType == nil {
+			return env
+		}
+		ident, ok := asExpr.Expr.(*ast.IdentExpr)
+		if !ok {
+			return env
+		}
+		sym := env.lookup(ident.Name)
+		if sym == nil {
+			return env
+		}
+		narrowedEnv := env.child()
+		storageType := sym.StorageType
+		if storageType == nil {
+			storageType = sym.Type
+		}
+		narrowedEnv.vars[ident.Name] = &Symbol{
+			Name:        sym.Name,
+			Kind:        sym.Kind,
+			Type:        targetType,
+			StorageType: storageType,
+			Decl:        sym.Decl,
+		}
+		return narrowedEnv
+	}
+
+	condType := c.checkExpr(env, cond, Bool())
+	if condType != nil && condType.Kind != KindBool {
+		c.errorf(cond.GetSpan(), "boolean required")
+	}
+	return env
+}
+
+func (c *Checker) declareVar(env *Env, name string, typ *Type, span ast.Span) {
+	if existing := env.lookup(name); existing != nil {
+		c.errorf(span, "shadowing is not allowed: %s", name)
+		return
+	}
+	env.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: typ, StorageType: typ}
+}
+
+func (c *Checker) bindImportedValue(env *Env, name string, sym *Symbol, span ast.Span) {
+	if existing := env.lookup(name); existing != nil {
+		c.errorf(span, "shadowing is not allowed: %s", name)
+		return
+	}
+	env.vars[name] = sym
+}
+
+func allowsImplicitVoidReturn(t *Type) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Kind {
+	case KindVoid, KindUndefined:
+		return true
+	case KindUnion:
+		for _, member := range t.Union {
+			if allowsImplicitVoidReturn(member) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type forOfVarBinding struct {
@@ -1027,10 +1173,6 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			c.errorf(e.Span, "as target must be non-union")
 			return nil
 		}
-		if targetType.Kind == KindJSON {
-			c.errorf(e.Span, "as target must not be json")
-			return nil
-		}
 		exprType := c.checkExpr(env, e.Expr, nil)
 		if exprType == nil {
 			return nil
@@ -1055,12 +1197,8 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		c.ExprTypes[expr] = result
 		return result
 	case *ast.IfExpr:
-		condType := c.checkExpr(env, e.Cond, Bool())
-		if condType != nil && condType.Kind != KindBool {
-			c.errorf(e.Cond.GetSpan(), "boolean required")
-		}
-
-		thenType := c.checkExpr(env, e.Then, expected)
+		thenEnv := c.checkIfCond(env, e.Cond)
+		thenType := c.checkExpr(thenEnv, e.Then, expected)
 		if thenType == nil {
 			return nil
 		}
@@ -1105,9 +1243,6 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 					if targetType.Kind == KindUnion {
 						c.errorf(asExpr.Span, "as target must be non-union")
 					}
-					if targetType.Kind == KindJSON {
-						c.errorf(asExpr.Span, "as target must not be json")
-					}
 					if valueType.Kind != KindUnion {
 						c.errorf(asExpr.Span, "as pattern requires union switch value")
 					} else if !targetType.AssignableTo(valueType) {
@@ -1136,7 +1271,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 							// Already narrowed above.
 							break
 						}
-						caseEnv.vars[bind.Name] = &Symbol{Name: bind.Name, Kind: SymVar, Type: targetType, StorageType: targetType}
+						c.declareVar(caseEnv, bind.Name, targetType, asExpr.Span)
 					case *ast.ObjectPatternExpr:
 						if targetType.Kind != KindObject {
 							c.errorf(asExpr.Span, "object destructuring requires object type")
@@ -1155,7 +1290,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 									c.errorf(asExpr.Span, "destructuring type mismatch for %s", key)
 								}
 							}
-							caseEnv.vars[key] = &Symbol{Name: key, Kind: SymVar, Type: declType, StorageType: declType}
+							c.declareVar(caseEnv, key, declType, asExpr.Span)
 						}
 					case *ast.ArrayPatternExpr:
 						var elemTypes []*Type
@@ -1188,7 +1323,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 							} else {
 								declType = elemTypes[i]
 							}
-							caseEnv.vars[name] = &Symbol{Name: name, Kind: SymVar, Type: declType, StorageType: declType}
+							c.declareVar(caseEnv, name, declType, asExpr.Span)
 						}
 					default:
 						c.errorf(asExpr.Span, "as pattern requires identifier or destructuring pattern")
@@ -1300,7 +1435,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 		successType, errType := splitResultType(resultType)
 		if successType == nil || errType == nil {
-			c.errorf(e.Span, "? expects Result<T> expression")
+			c.errorf(e.Span, "? expects (T | Error) expression")
 			return nil
 		}
 		if env.retType == nil || !errType.AssignableTo(env.retType) {
@@ -1370,28 +1505,30 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		// Determine row type based on SELECT columns
 		rowType := c.inferSQLRowType(e)
 
-		// Return type depends on the query kind
-		var resultType *Type
+		// Return type depends on the query kind.
+		// SQL 実行時エラーは Error 値として返すため、常に (... | Error) になる。
+		var successType *Type
 		switch e.Kind {
 		case ast.SQLQueryExecute:
-			// execute returns void (no result)
-			resultType = Void()
+			// execute returns undefined on success
+			successType = Undefined()
 		case ast.SQLQueryFetchOptional:
 			if rowType == nil {
-				resultType = Null()
+				successType = Null()
 			} else {
-				resultType = NewUnion([]*Type{rowType, Null()})
+				successType = NewUnion([]*Type{rowType, Null()})
 			}
 		case ast.SQLQueryFetchOne:
-			// fetch_one returns RowType directly
-			resultType = rowType
+			// fetch_one returns RowType directly on success
+			successType = rowType
 		case ast.SQLQueryFetch, ast.SQLQueryFetchAll:
-			// fetch and fetch_all return RowType[] directly
-			resultType = NewArray(rowType)
+			// fetch and fetch_all return RowType[] directly on success
+			successType = NewArray(rowType)
 		default:
 			// Default: same as fetch_all
-			resultType = NewArray(rowType)
+			successType = NewArray(rowType)
 		}
+		resultType := NewUnion([]*Type{successType, resultErrorType()})
 		c.ExprTypes[expr] = resultType
 		return resultType
 	case *ast.JSXElement:
@@ -1944,8 +2081,9 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "parse expects string")
 			return nil
 		}
-		c.ExprTypes[call] = JSON()
-		return JSON()
+		ret := NewUnion([]*Type{JSON(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
 	case "decode":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "decode expects 1 arg")
@@ -2160,8 +2298,9 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "dbOpen expects string")
 			return nil
 		}
-		c.ExprTypes[call] = Void()
-		return Void()
+		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
 	case "getArgs":
 		if len(call.Args) != 0 {
 			c.errorf(call.Span, "getArgs expects 0 args")
@@ -2194,6 +2333,19 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = String()
 		return String()
+	case "runFormatter":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "runFormatter expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "runFormatter expects string")
+			return nil
+		}
+		ret := NewUnion([]*Type{String(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
 	case "sqlQuery":
 		if len(call.Args) != 2 {
 			c.errorf(call.Span, "sqlQuery expects 2 args: query string and params array")
@@ -2214,8 +2366,9 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			{Name: "columns", Type: NewArray(String())},
 			{Name: "rows", Type: NewArray(NewArray(String()))},
 		})
-		c.ExprTypes[call] = resultType
-		return resultType
+		ret := NewUnion([]*Type{resultType, resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
 	// HTTP Server builtins
 	case "createServer":
 		if len(call.Args) != 0 {
@@ -2227,8 +2380,8 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		c.ExprTypes[call] = serverType
 		return serverType
 	case "addRoute":
-		if len(call.Args) != 3 {
-			c.errorf(call.Span, "addRoute expects 3 args: server, path, handler")
+		if len(call.Args) != 3 && len(call.Args) != 4 {
+			c.errorf(call.Span, "addRoute expects 3 args (server, path, handler) or 4 args (server, method, path, handler)")
 			return nil
 		}
 		// First arg: server handle (opaque object)
@@ -2236,17 +2389,47 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		if serverType == nil {
 			return nil
 		}
-		// Second arg: path string
-		pathType := c.checkExpr(env, call.Args[1], String())
+
+		pathArgIdx := 1
+		handlerArgIdx := 2
+		if len(call.Args) == 4 {
+			methodType := c.checkExpr(env, call.Args[1], String())
+			if methodType == nil || methodType.Kind != KindString {
+				c.errorf(call.Span, "addRoute expects string as method")
+				return nil
+			}
+			if methodLit, ok := call.Args[1].(*ast.StringLit); ok {
+				method := strings.ToLower(strings.TrimSpace(methodLit.Value))
+				if method != "get" && method != "post" {
+					c.errorf(call.Span, `addRoute method must be "get" or "post"`)
+					return nil
+				}
+			}
+			pathArgIdx = 2
+			handlerArgIdx = 3
+		}
+
+		// Path arg: string
+		pathType := c.checkExpr(env, call.Args[pathArgIdx], String())
 		if pathType == nil || pathType.Kind != KindString {
 			c.errorf(call.Span, "addRoute expects string as path")
 			return nil
 		}
 		// Third arg: handler function
-		// Handler should take a request object and return a response object
-		handlerType := c.checkExpr(env, call.Args[2], nil)
-		if handlerType == nil || handlerType.Kind != KindFunc {
-			c.errorf(call.Span, "addRoute expects function as handler")
+		// Handler must be (req: Request) => (Response | Error)
+		requestAlias := getHTTPTypeAlias("Request")
+		responseAlias := getHTTPTypeAlias("Response")
+		if requestAlias == nil || responseAlias == nil {
+			c.errorf(call.Span, "internal error: http type alias not found")
+			return nil
+		}
+		expectedHandler := NewFunc(
+			[]*Type{requestAlias.Template},
+			NewUnion([]*Type{responseAlias.Template, resultErrorType()}),
+		)
+		handlerType := c.checkExpr(env, call.Args[handlerArgIdx], expectedHandler)
+		if handlerType == nil || handlerType.Kind != KindFunc || !handlerType.AssignableTo(expectedHandler) {
+			c.errorf(call.Span, "addRoute expects handler of type (req: Request) => (Response | Error)")
 			return nil
 		}
 		c.ExprTypes[call] = Void()
@@ -3167,8 +3350,35 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "log", "stringify", "parse", "decode", "Error", "toString", "range", "length", "map", "filter", "reduce", "getArgs", "sqlQuery",
-		"getEnv", "runSandbox", "responseText", "getPath", "getMethod":
+	case "log", "Error", "toString", "getArgs", "sqlQuery",
+		"getEnv", "responseText", "getPath", "getMethod":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJSONName(name string) bool {
+	switch name {
+	case "stringify", "parse", "decode":
+		return true
+	default:
+		return false
+	}
+}
+
+func isArrayName(name string) bool {
+	switch name {
+	case "range", "length", "map", "filter", "reduce":
+		return true
+	default:
+		return false
+	}
+}
+
+func isRuntimeName(name string) bool {
+	switch name {
+	case "runSandbox", "runFormatter":
 		return true
 	default:
 		return false
@@ -3196,23 +3406,12 @@ func isSQLiteName(name string) bool {
 // getPreludeTypeAlias returns the prelude type alias definition, if any.
 func getPreludeTypeAlias(name string) *TypeAlias {
 	switch name {
-	case "JSX":
-		// JSX is a string alias for server-rendered fragments
-		return newTypeAlias(nil, String(), nil)
 	case "Error":
 		errorObj := NewObject([]Prop{
 			{Name: "message", Type: String()},
 			{Name: "type", Type: LiteralString("Error")},
 		})
 		return newTypeAlias(nil, errorObj, nil)
-	case "Result":
-		param := NewTypeParam("T")
-		errorObj := NewObject([]Prop{
-			{Name: "message", Type: String()},
-			{Name: "type", Type: LiteralString("Error")},
-		})
-		template := NewUnion([]*Type{param, errorObj})
-		return newTypeAlias([]string{"T"}, template, map[string]*Type{"T": param})
 	default:
 		return nil
 	}
@@ -3221,6 +3420,9 @@ func getPreludeTypeAlias(name string) *TypeAlias {
 // getHTTPTypeAlias returns the HTTP module type alias definition, if any.
 func getHTTPTypeAlias(name string) *TypeAlias {
 	switch name {
+	case "JSX":
+		// JSX is a string alias for server-rendered fragments
+		return newTypeAlias(nil, String(), nil)
 	case "Request":
 		// Request = { path: string, method: string, query: Map<string>, form: Map<string> }
 		mapOfString := NewObjectWithIndex(nil, String())
@@ -3242,6 +3444,18 @@ func getHTTPTypeAlias(name string) *TypeAlias {
 }
 
 func getSQLiteTypeAlias(name string) *TypeAlias {
+	return nil
+}
+
+func getJSONTypeAlias(name string) *TypeAlias {
+	return nil
+}
+
+func getArrayTypeAlias(name string) *TypeAlias {
+	return nil
+}
+
+func getRuntimeTypeAlias(name string) *TypeAlias {
 	return nil
 }
 

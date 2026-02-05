@@ -1,17 +1,19 @@
 // expect: [2,4,6,8]
 
-import { log, map, filter, reduce, stringify } from "prelude";
+import { log } from "prelude"
+import { stringify } from "json"
+import { map, filter, reduce } from "array"
 
-const nums: integer[] = [1, 2, 3, 4];
+const nums: integer[] = [1, 2, 3, 4]
 
-const genericMap: <T>(arr: T[], fn: (n: T) => T) => T[] = map;
+const genericMap: <T>(arr: T[], fn: (n: T) => T) => T[] = map
 
-const numericMap: (arr: integer[], fn: (n: integer) => integer) => integer[] = genericMap;
+const numericMap: (arr: integer[], fn: (n: integer) => integer) => integer[] = genericMap
 
 const doubled: integer[] = numericMap(nums, function (n: integer): integer {
-  return n * 2;
-});
+  return n * 2
+})
 
 export function main(): void {
-  log(stringify(doubled));
+  log(stringify(doubled))
 }

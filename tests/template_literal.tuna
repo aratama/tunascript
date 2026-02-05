@@ -3,21 +3,21 @@
 // expect: line2
 // expect: 42 true ok
 // expect: price: ${value}
-import { log } from "prelude";
+import { log } from "prelude"
 
 export function main(): void {
-  const name = "Tuna";
-  const greeting = `Hello, ${name}!`;
-  log(greeting);
+  const name = "Tuna"
+  const greeting = `Hello, ${name}!`
+  log(greeting)
 
   const multiline = `line1
-line2`;
-  log(multiline);
+line2`
+  log(multiline)
 
-  const value = 42;
-  const flag = true;
-  log(`${value} ${flag} ${if (flag) { "ok" } else { "ng" }}`);
+  const value = 42
+  const flag = true
+  log(`${value} ${flag} ${if (flag) { "ok" } else { "ng" }}`)
 
-  const escaped = `price: \${value}`;
-  log(escaped);
+  const escaped = `price: \${value}`
+  log(escaped)
 }

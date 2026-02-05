@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,19 +18,19 @@ func TestSandboxBuffersLogAndHTML(t *testing.T) {
 	}
 
 	src := `
-import { log } from "prelude";
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http";
+import { log } from "prelude"
+import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
 
 function handleRoot(req: Request): Response {
-  log("from handler");
-  return responseHtml(<div>Hello Sandbox</div>);
+  log("from handler")
+  return responseHtml(<div>Hello Sandbox</div>)
 }
 
 export function main(): void {
-  const server = createServer();
-  log("before listen");
-  addRoute(server, "/", handleRoot);
-  listen(server, ":8080");
+  const server = createServer()
+  log("before listen")
+  addRoute(server, "/", handleRoot)
+  listen(server, ":8080")
 }
 `
 	result := compileAndRunSandbox(t, src, nil)
@@ -50,17 +51,17 @@ func TestSandboxEscapesJSXAttributeValue(t *testing.T) {
 	}
 
 	src := `
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http";
+import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
 
 function handleRoot(req: Request): Response {
-  const inner = "<div class=\"x\">Hello</div>";
-  return responseHtml(<iframe srcdoc={inner}></iframe>);
+  const inner = "<div class=\"x\">Hello</div>"
+  return responseHtml(<iframe srcdoc={inner}></iframe>)
 }
 
 export function main(): void {
-  const server = createServer();
-  addRoute(server, "/", handleRoot);
-  listen(server, ":8080");
+  const server = createServer()
+  addRoute(server, "/", handleRoot)
+  listen(server, ":8080")
 }
 `
 	result := compileAndRunSandbox(t, src, nil)
@@ -78,16 +79,16 @@ func TestSandboxRejectsDuplicateRootRoute(t *testing.T) {
 	}
 
 	src := `
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http";
+import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
 
-function h1(req: Request): Response { return responseHtml(<p>a</p>); }
-function h2(req: Request): Response { return responseHtml(<p>b</p>); }
+function h1(req: Request): Response { return responseHtml(<p>a</p>) }
+function h2(req: Request): Response { return responseHtml(<p>b</p>) }
 
 export function main(): void {
-  const server = createServer();
-  addRoute(server, "/", h1);
-  addRoute(server, "/", h2);
-  listen(server, ":8080");
+  const server = createServer()
+  addRoute(server, "/", h1)
+  addRoute(server, "/", h2)
+  listen(server, ":8080")
 }
 `
 	result := compileAndRunSandbox(t, src, nil)
@@ -95,6 +96,72 @@ export function main(): void {
 		t.Fatalf("expected exitCode=1, got %d", result.ExitCode)
 	}
 	if !strings.Contains(result.Error, `addRoute(server, "/", handler)`) {
+		t.Fatalf("unexpected error: %q", result.Error)
+	}
+}
+
+func TestSandboxAddRouteMethodFiltering(t *testing.T) {
+	if !runtimeAvailable() {
+		t.Skip("CGO が無効なためテストをスキップします")
+	}
+
+	src := `
+import { log } from "prelude"
+import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+
+function getRoot(req: Request): Response {
+  log("get-route")
+  return responseHtml(<p>GET</p>)
+}
+
+function postRoot(req: Request): Response {
+  log("post-route")
+  return responseHtml(<p>POST</p>)
+}
+
+export function main(): void {
+  const server = createServer()
+  addRoute(server, "get", "/", getRoot)
+  addRoute(server, "post", "/", postRoot)
+  listen(server, ":8080")
+}
+`
+	result := compileAndRunSandbox(t, src, nil)
+	if result.ExitCode != 0 {
+		t.Fatalf("sandbox failed: %s", result.Error)
+	}
+	if result.Stdout != "get-route\n" {
+		t.Fatalf("unexpected stdout: %q", result.Stdout)
+	}
+	if !strings.Contains(result.HTML, "GET") {
+		t.Fatalf("unexpected html: %q", result.HTML)
+	}
+}
+
+func TestSandboxRejectsInvalidAddRouteMethod(t *testing.T) {
+	if !runtimeAvailable() {
+		t.Skip("CGO が無効なためテストをスキップします")
+	}
+
+	src := `
+import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+
+function h(req: Request): Response {
+  return responseHtml(<p>ok</p>)
+}
+
+export function main(): void {
+  const server = createServer()
+  const method = "put"
+  addRoute(server, method, "/", h)
+  listen(server, ":8080")
+}
+`
+	result := compileAndRunSandbox(t, src, nil)
+	if result.ExitCode != 1 {
+		t.Fatalf("expected exitCode=1, got %d", result.ExitCode)
+	}
+	if !strings.Contains(result.Error, "unsupported HTTP method for addRoute") {
 		t.Fatalf("unexpected error: %q", result.Error)
 	}
 }
@@ -107,10 +174,10 @@ func TestSandboxDbOpenNoop(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "sandbox.sqlite3")
 	src := fmt.Sprintf(`
-import { dbOpen } from "sqlite";
+import { dbOpen } from "sqlite"
 
 export function main(): void {
-  dbOpen("%s");
+  dbOpen("%s")
 }
 `, dbPath)
 	result := compileAndRunSandbox(t, src, nil)
@@ -128,26 +195,32 @@ func TestRunSandboxBuiltin(t *testing.T) {
 	}
 
 	src := `
-import { runSandbox, parse, decode, toString, log, type Result, type Error } from "prelude";
+import { runSandbox } from "runtime"
+import { toString, log, Error, type Error } from "prelude"
+import { parse, decode } from "json"
 
 type RunResult = {
   stdout: string,
   html: string,
   exitCode: integer,
   error: string
-};
+}
 
 export function main(): void {
-  const child = "import { log } from \"prelude\";\nexport function main(): void { log(\"child-ok\"); }\n";
-  const raw = runSandbox(child);
-  const decoded: Result<RunResult> = decode<RunResult>(parse(raw));
+  const child = "import { log } from \"prelude\"\nexport function main(): void { log(\"child-ok\") }\n"
+  const raw = runSandbox(child)
+  const parsed = parse(raw)
+  const decoded: RunResult | Error = switch (parsed) {
+    case value as json: decode<RunResult>(value)
+    case err as { type: "Error", message: string }: Error("parse error: " + err.message)
+  }
   switch (decoded) {
     case ok as RunResult: {
-      log(toString(ok.exitCode));
-      log(ok.stdout);
+      log(toString(ok.exitCode))
+      log(ok.stdout)
     }
-    case err as Error: {
-      log("decode error: " + err.message);
+    case err as { type: "Error", message: string }: {
+      log("decode error: " + err.message)
     }
   }
 }
@@ -159,6 +232,95 @@ export function main(): void {
 	}
 	if !strings.Contains(out, "child-ok\n") {
 		t.Fatalf("expected sandbox stdout output, got: %q", out)
+	}
+}
+
+func TestRunFormatterBuiltin(t *testing.T) {
+	if !runtimeAvailable() {
+		t.Skip("CGO が無効なためテストをスキップします")
+	}
+
+	src := `
+import { runFormatter } from "runtime"
+import { log, type Error } from "prelude"
+
+export function main(): void {
+  const ok: string | Error = runFormatter("export function main(): void { const x: integer = 1 }")
+  switch (ok) {
+    case formatted as string: {
+      log(formatted)
+    }
+    case err as { type: "Error", message: string }: {
+      log("unexpected formatter error: " + err.message)
+    }
+  }
+
+  const ng: string | Error = runFormatter("export function main(: void {}")
+  switch (ng) {
+    case formatted as string: {
+      log("unexpected formatter success: " + formatted)
+    }
+    case err as { type: "Error", message: string }: {
+      log("formatter-error")
+    }
+  }
+}
+`
+
+	out := compileAndRunNormal(t, src, nil)
+	if !strings.Contains(out, "export function main(): void {") {
+		t.Fatalf("expected formatted output, got: %q", out)
+	}
+	if !strings.Contains(out, "formatter-error\n") {
+		t.Fatalf("expected formatter error branch, got: %q", out)
+	}
+}
+
+func TestRunFormatterOutputCompiles(t *testing.T) {
+	if !runtimeAvailable() {
+		t.Skip("CGO が無効なためテストをスキップします")
+	}
+
+	src := `
+import { runFormatter } from "runtime"
+import { log, type Error } from "prelude"
+import { stringify } from "json"
+
+export function main(): void {
+  const input = "import { log } from \"prelude\"\nexport function main(): void {\n  log(\"ok\")\n}\n"
+  const result: string | Error = runFormatter(input)
+  switch (result) {
+    case formatted as string:
+      log(stringify(formatted))
+    case err as Error:
+      log("formatter-error: " + err.message)
+  }
+}
+`
+
+	out := compileAndRunNormal(t, src, nil)
+	if strings.Contains(out, "formatter-error: ") {
+		t.Fatalf("runFormatter failed: %q", out)
+	}
+
+	line := strings.TrimSpace(out)
+	var formatted string
+	if err := json.Unmarshal([]byte(line), &formatted); err != nil {
+		t.Fatalf("formatted output is not json string: %v, out=%q", err, out)
+	}
+	if strings.Contains(formatted, ";") {
+		t.Fatalf("formatted output contains semicolon: %q", formatted)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "formatted.tuna")
+	if err := os.WriteFile(path, []byte(formatted), 0644); err != nil {
+		t.Fatalf("failed to write formatted source: %v", err)
+	}
+
+	comp := compiler.New()
+	if _, err := comp.Compile(path); err != nil {
+		t.Fatalf("formatted output should compile, but failed: %v\nsource:\n%s", err, formatted)
 	}
 }
 

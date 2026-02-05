@@ -1,0 +1,76 @@
+// Keep this embedded grammar in sync with tunascript.grammar.
+export const TUNASCRIPT_LEZER_GRAMMAR: string = `@top Program { Token* }
+
+@tokens {
+  Space { $[\\n\\r\\t ]+ }
+
+  LineComment { "//" ![\\n\\r]* }
+  BlockComment { "/*" (![*] | "*" ![/])* "*/" }
+
+  NumberLiteral { $[0-9]+ ("." $[0-9]+)? }
+
+  StringLiteral { "\\"" (!["\\\\] | "\\\\" _)* "\\"" | "'" (![\\'\\\\] | "\\\\" _)* "'" }
+  TemplateString { "\`" (![\`\\\\] | "\\\\" _)* "\`" }
+
+  Keyword {
+    "import" | "from" | "export" | "const" | "function" | "type" |
+    "if" | "else" | "for" | "of" | "return" | "switch" | "case" | "default" | "as" |
+    "create_table" | "execute" | "fetch_optional" | "fetch_all" | "fetch_one" | "fetch"
+  }
+
+  BuiltinType {
+    "string" | "number" | "boolean" | "integer" | "json" | "void" |
+    "TEXT" | "INTEGER" | "REAL" | "BLOB" | "PRIMARY" | "KEY" | "AUTOINCREMENT" |
+    "NOT" | "NULL" | "DEFAULT" | "CURRENT_TIMESTAMP"
+  }
+
+  BooleanLiteral { "true" | "false" }
+  NullLiteral { "null" | "undefined" }
+
+  SQLKeyword {
+    "SELECT" | "select" | "INSERT" | "insert" | "UPDATE" | "update" | "DELETE" | "delete" |
+    "FROM" | "from" | "WHERE" | "where" | "INTO" | "into" | "VALUES" | "values" |
+    "SET" | "set" | "ORDER" | "order" | "BY" | "by" | "GROUP" | "group" |
+    "HAVING" | "having" | "LIMIT" | "limit" | "OFFSET" | "offset" |
+    "JOIN" | "join" | "LEFT" | "left" | "RIGHT" | "right" | "INNER" | "inner" | "OUTER" | "outer" |
+    "ON" | "on" | "AND" | "and" | "OR" | "or" | "DISTINCT" | "distinct" | "ALL" | "all" |
+    "CREATE" | "create" | "TABLE" | "table" | "DROP" | "drop" | "ALTER" | "alter" |
+    "INDEX" | "index" | "FOREIGN" | "foreign" | "REFERENCES" | "references" |
+    "last_insert_rowid"
+  }
+
+  SQLInterpolation { "{" $[A-Za-z_] $[A-Za-z0-9_]* "}" }
+
+  Identifier { $[A-Za-z_] $[A-Za-z0-9_]* }
+
+  JSXFragmentOpen { "<>" }
+  JSXFragmentClose { "</>" }
+  JSXTag {
+    "<" $[A-Za-z] $[A-Za-z0-9_-]* (">" | "/>" | $[ \\t\\r\\n]) |
+    "</" $[A-Za-z] $[A-Za-z0-9_-]* ">"
+  }
+
+  Operator {
+    "..." | "=>" | "==" | "!=" | "<=" | ">=" |
+    "=" | "<" | ">" | "+" | "-" | "*" | "/" ![/\\*] | "%" | "&" | "|" | "?"
+  }
+
+  Punctuation { "." | "," | ":" | ";" | "(" | ")" | "{" | "}" | "[" | "]" }
+
+  @precedence {
+    LineComment, BlockComment,
+    JSXFragmentClose, JSXFragmentOpen, JSXTag,
+    SQLInterpolation,
+    Keyword, SQLKeyword, BuiltinType, BooleanLiteral, NullLiteral, Identifier
+  }
+}
+
+@skip { Space | LineComment | BlockComment }
+
+Token {
+  Keyword | BuiltinType | SQLKeyword | BooleanLiteral | NullLiteral | Identifier |
+  NumberLiteral | StringLiteral | TemplateString |
+  SQLInterpolation | JSXFragmentOpen | JSXFragmentClose | JSXTag |
+  Operator | Punctuation
+}
+`

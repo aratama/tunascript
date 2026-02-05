@@ -56,12 +56,12 @@ func compileExpectError(t *testing.T, src string) {
 
 func TestArithmeticAndString(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
 export function main(): void {
-  const a: integer = 40 + 2;
-  log(toString(a));
-  const s: string = "ab" + "cd";
-  log(s);
+  const a: integer = 40 + 2
+  log(toString(a))
+  const s: string = "ab" + "cd"
+  log(s)
 }
 `,
 	}, "main.ts")
@@ -73,11 +73,12 @@ export function main(): void {
 
 func TestObjectSpreadAndStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, stringify } from "prelude";
+		"main.ts": `import { log } from "prelude"
+import { stringify } from "json"
 export function main(): void {
-  const a: { x: integer, y: integer } = { "x": 1, "y": 2 };
-  const b: { x: integer, y: integer } = { ...a, "x": 1 };
-  log(stringify(b));
+  const a: { x: integer, y: integer } = { "x": 1, "y": 2 }
+  const b: { x: integer, y: integer } = { ...a, "x": 1 }
+  log(stringify(b))
 }
 `,
 	}, "main.ts")
@@ -89,11 +90,11 @@ export function main(): void {
 
 func TestArrayForOf(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
 export function main(): void {
-  const xs: integer[] = [1, 2, 3];
+  const xs: integer[] = [1, 2, 3]
   for (const x: integer of xs) {
-    log(toString(x));
+    log(toString(x))
   }
 }
 `,
@@ -106,11 +107,12 @@ export function main(): void {
 
 func TestPreludeRange(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { range, log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
+import { range } from "array"
 export function main(): void {
-  const xs: integer[] = range(0, 4);
+  const xs: integer[] = range(0, 4)
   for (const x: integer of xs) {
-    log(toString(x));
+    log(toString(x))
   }
 }
 `,
@@ -123,14 +125,14 @@ export function main(): void {
 
 func TestFunctionDeclaration(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
 function add(a: integer, b: integer): integer {
-  return a + b;
+  return a + b
 }
 
 export function main(): void {
-  const v: integer = add(1, 2);
-  log(toString(v));
+  const v: integer = add(1, 2)
+  log(toString(v))
 }
 `,
 	}, "main.ts")
@@ -142,12 +144,12 @@ export function main(): void {
 
 func TestArraySpread(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
 export function main(): void {
-  const base: integer[] = [2, 3];
-  const xs: integer[] = [1, ...base, 4];
+  const base: integer[] = [2, 3]
+  const xs: integer[] = [1, ...base, 4]
   for (const x: integer of xs) {
-    log(toString(x));
+    log(toString(x))
   }
 }
 `,
@@ -160,22 +162,23 @@ export function main(): void {
 
 func TestPreludeMapReduceLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { map, reduce, length, log, toString } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
+import { map, reduce, length } from "array"
 function double(n: integer): integer {
-  return n * 2;
+  return n * 2
 }
 
 function sumValues(acc: integer, v: integer): integer {
-  return acc + v;
+  return acc + v
 }
 
 export function main(): void {
-  const xs: integer[] = [1, 2, 3];
-  const doubled: integer[] = map(xs, double);
-  const total: integer = reduce(doubled, sumValues, 0);
-  const size: integer = length(doubled);
-  log(toString(total));
-  log(toString(size));
+  const xs: integer[] = [1, 2, 3]
+  const doubled: integer[] = map(xs, double)
+  const total: integer = reduce(doubled, sumValues, 0)
+  const size: integer = length(doubled)
+  log(toString(total))
+  log(toString(size))
 }
 `,
 	}, "main.ts")
@@ -187,20 +190,20 @@ export function main(): void {
 
 func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude";
-import { type Error } from "prelude";
+		"main.ts": `import { log, toString } from "prelude"
+import { type Error } from "prelude"
 export function main(): void {
-  const t: [integer, string] = [1, "a"];
+  const t: [integer, string] = [1, "a"]
   const v0 = switch (t[0]) {
     case n as integer: toString(n)
     case e as Error: e.message
-  };
+  }
   const v1 = switch (t[1]) {
     case s as string: s
     case e as Error: e.message
-  };
-  log(v0);
-  log(v1);
+  }
+  log(v0)
+  log(v1)
 }
 `,
 	}, "main.ts")
@@ -212,10 +215,16 @@ export function main(): void {
 
 func TestParseStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { parse, stringify, log } from "prelude";
+		"main.ts": `import { log, type Error } from "prelude"
+import { parse, stringify } from "json"
 export function main(): void {
-  const v: json = parse("{\"a\":1,\"b\":\"x\"}");
-  log(stringify(v));
+  const parsed = parse("{\"a\":1,\"b\":\"x\"}")
+  switch (parsed) {
+    case err as Error:
+      log(err.message)
+    case v as json:
+      log(stringify(v))
+  }
 }
 `,
 	}, "main.ts")
@@ -226,42 +235,42 @@ export function main(): void {
 }
 
 func TestTernaryOperatorIsSyntaxError(t *testing.T) {
-	compileExpectError(t, `import { log, toString } from "prelude";
+	compileExpectError(t, `import { log, toString } from "prelude"
 export function main(): void {
-  const x: integer = true ? 1 : 2;
-  log(toString(x));
+  const x: integer = true ? 1 : 2
+  log(toString(x))
 }
 `)
 }
 
 func TestJSXStyleAndScriptRequireTemplateLiteralExpression(t *testing.T) {
-	compileExpectError(t, `import { responseHtml } from "http";
+	compileExpectError(t, `import { responseHtml } from "http"
 export function main(): void {
-  responseHtml(<style>body color red</style>);
+  responseHtml(<style>body color red</style>)
 }
 `)
 
-	compileExpectError(t, `import { responseHtml } from "http";
+	compileExpectError(t, `import { responseHtml } from "http"
 export function main(): void {
-  responseHtml(<style>{"body { color: red; }"}</style>);
+  responseHtml(<style>{"body { color: red; }"}</style>)
 }
 `)
 
-	compileExpectError(t, `import { responseHtml } from "http";
+	compileExpectError(t, `import { responseHtml } from "http"
 export function main(): void {
-  responseHtml(<script>{"const x = 1;"}</script>);
+  responseHtml(<script>{"const x = 1;"}</script>)
 }
 `)
 }
 
 func TestModuleImport(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b; }`,
-		"main.ts": `import { add } from "./lib";
-import { log, toString } from "prelude";
+		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b }`,
+		"main.ts": `import { add } from "./lib"
+import { log, toString } from "prelude"
 export function main(): void {
-  const v: integer = add(20, 22);
-  log(toString(v));
+  const v: integer = add(20, 22)
+  log(toString(v))
 }
 `,
 	}, "main.ts")
@@ -271,66 +280,113 @@ export function main(): void {
 	}
 }
 
-func TestTypeErrors(t *testing.T) {
+func TestSemicolonIsSyntaxError(t *testing.T) {
 	compileExpectError(t, `import { log } from "prelude";
 export function main(): void {
-  const a: integer = 1;
-  const b: number = 1.0;
+  log("x")
+}
+`)
+}
+
+func TestLineHeadParenIsNotCall(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+export function main(): void {
+  const n: integer = 1
+  (2)
+  log(toString(n))
+}
+`,
+	}, "main.ts")
+	want := "1\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestLineHeadBracketIsNotIndexAccess(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+export function main(): void {
+  const n: integer = 1
+  [2]
+  log(toString(n))
+}
+`,
+	}, "main.ts")
+	want := "1\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestTypeErrors(t *testing.T) {
+	compileExpectError(t, `import { log } from "prelude"
+export function main(): void {
+  const a: integer = 1
+  const b: number = 1.0
   if (a == b) { log("x"); }
 }
 `)
 
-	compileExpectError(t, `import { log } from "prelude";
+	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const a: integer = 1;
-  const s: string = "a" + a;
-  log(s);
+  const a: integer = 1
+  const s: string = "a" + a
+  log(s)
 }
 `)
 
-	compileExpectError(t, `import { parse, log } from "prelude";
+	compileExpectError(t, `import { log } from "prelude"
+import { parse } from "json"
 	export function main(): void {
-	  const v: json = parse("{\"a\":1}");
+	  const v: json = parse("{\"a\":1}")
 	  switch (v) {
 	    case v as integer: { }
-	  };
-	  log("x");
+	  }
+	  log("x")
 	}
 	`)
 
-	compileExpectError(t, `import { log } from "prelude";
+	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const t: [integer, integer] = [1, 2];
+  const t: [integer, integer] = [1, 2]
   for (const x: integer of t) { }
-  log("x");
+  log("x")
 }
 `)
 
-	compileExpectError(t, `import { log } from "prelude";
+	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const a: { x: integer } = { "x": "invalid" };
-  log("x");
+  const a: { x: integer } = { "x": "invalid" }
+  log("x")
 }
 `)
 }
 
 func TestSQLCreateAndSelect(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, stringify } from "prelude";
+		"main.ts": `import { log, type Error } from "prelude"
+import { stringify } from "json"
 export function main(): void {
   execute {
     CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)
-  };
+  }
   execute {
     INSERT INTO users (id, name) VALUES (1, 'Alice')
-  };
+  }
   execute {
     INSERT INTO users (id, name) VALUES (2, 'Bob')
-  };
-  const rows = fetch_all {
+  }
+  const fetched = fetch_all {
     SELECT id, name FROM users ORDER BY id
-  };
-  log(stringify(rows));
+  }
+  switch (fetched) {
+    case err as Error:
+      log(err.message)
+    case rows as { id: string, name: string }[]:
+      log(stringify(rows))
+  }
 }
 `,
 	}, "main.ts")
@@ -342,21 +398,27 @@ export function main(): void {
 
 func TestSQLWithUpdate(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, stringify } from "prelude";
+		"main.ts": `import { log, type Error } from "prelude"
+import { stringify } from "json"
 export function main(): void {
   execute {
     CREATE TABLE items (id INTEGER, value TEXT)
-  };
+  }
   execute {
     INSERT INTO items VALUES (1, 'old')
-  };
+  }
   execute {
     UPDATE items SET value = 'new' WHERE id = 1
-  };
-  const rows = fetch_all {
+  }
+  const fetched = fetch_all {
     SELECT value FROM items WHERE id = 1
-  };
-  log(stringify(rows));
+  }
+  switch (fetched) {
+    case err as Error:
+      log(err.message)
+    case rows as { value: string }[]:
+      log(stringify(rows))
+  }
 }
 `,
 	}, "main.ts")
