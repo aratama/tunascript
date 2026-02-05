@@ -37,18 +37,15 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
       <body>
         <main class="layout">
           <section class="panel">
-            <header class="bar">
-              <span class="title">TunaScript Source</span>
-              <span class="status">path: {pagePath}</span>
-            </header>
             <form method="POST" action={runPath} class="editor-form">
+              <header class="bar">
+                <span class="title">TunaScript Source</span>
+                <span class="actions">
+                  <button class="button" type="submit">Format & Run</button>
+                </span>
+              </header>
               <div id="source-editor" class="editor-shell"></div>
               <textarea id="source-input" name="source" class="editor-source" spellcheck="false" wrap="off">{source}</textarea>
-              <div style="padding: 10px 14px; border-top: 1px solid #dbe4ee; background: #f9fbff;">
-                <div class="actions">
-                  <button class="button" type="submit">Format & Run</button>
-                </div>
-              </div>
             </form>
           </section>
           <section class="right">
