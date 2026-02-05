@@ -2321,6 +2321,13 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = String()
 		return String()
+	case "gc":
+		if len(call.Args) != 0 {
+			c.errorf(call.Span, "gc expects 0 args")
+			return nil
+		}
+		c.ExprTypes[call] = Void()
+		return Void()
 	case "runSandbox":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "runSandbox expects 1 arg")
@@ -3351,7 +3358,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 func isPreludeName(name string) bool {
 	switch name {
 	case "log", "Error", "toString", "getArgs", "sqlQuery",
-		"getEnv", "responseText", "getPath", "getMethod":
+		"getEnv", "gc", "responseText", "getPath", "getMethod":
 		return true
 	default:
 		return false

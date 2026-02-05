@@ -6,17 +6,19 @@ package runtime
 import "testing"
 
 func TestResolveRoutePrefersExact(t *testing.T) {
-	routes := map[string]int32{
-		"/run": 1,
-		"/:id": 2,
+	h1 := &Value{Kind: KindI64, I64: 1}
+	h2 := &Value{Kind: KindI64, I64: 2}
+	routes := map[string]*Value{
+		"/run": h1,
+		"/:id": h2,
 	}
 
 	handler, params, ok := resolveRoute("/run", routes)
 	if !ok {
 		t.Fatal("expected exact route to resolve")
 	}
-	if handler != 1 {
-		t.Fatalf("expected exact route handler=1, got %d", handler)
+	if handler != h1 {
+		t.Fatalf("expected exact route handler h1")
 	}
 	if len(params) != 0 {
 		t.Fatalf("expected no params for exact route, got %+v", params)
@@ -24,16 +26,17 @@ func TestResolveRoutePrefersExact(t *testing.T) {
 }
 
 func TestResolveRouteMatchesPathParams(t *testing.T) {
-	routes := map[string]int32{
-		"/:id": 10,
+	h := &Value{Kind: KindI64, I64: 10}
+	routes := map[string]*Value{
+		"/:id": h,
 	}
 
 	handler, params, ok := resolveRoute("/abc123", routes)
 	if !ok {
 		t.Fatal("expected param route to resolve")
 	}
-	if handler != 10 {
-		t.Fatalf("expected handler=10, got %d", handler)
+	if handler != h {
+		t.Fatalf("expected handler h")
 	}
 	if got := params["id"]; got != "abc123" {
 		t.Fatalf("expected id=abc123, got %q", got)
@@ -41,17 +44,19 @@ func TestResolveRouteMatchesPathParams(t *testing.T) {
 }
 
 func TestResolveRoutePrefersMoreSpecificPattern(t *testing.T) {
-	routes := map[string]int32{
-		"/:id":     1,
-		"/run/:id": 2,
+	h1 := &Value{Kind: KindI64, I64: 1}
+	h2 := &Value{Kind: KindI64, I64: 2}
+	routes := map[string]*Value{
+		"/:id":     h1,
+		"/run/:id": h2,
 	}
 
 	handler, params, ok := resolveRoute("/run/xyz", routes)
 	if !ok {
 		t.Fatal("expected route to resolve")
 	}
-	if handler != 2 {
-		t.Fatalf("expected /run/:id handler=2, got %d", handler)
+	if handler != h2 {
+		t.Fatalf("expected /run/:id handler h2")
 	}
 	if got := params["id"]; got != "xyz" {
 		t.Fatalf("expected id=xyz, got %q", got)
@@ -59,8 +64,8 @@ func TestResolveRoutePrefersMoreSpecificPattern(t *testing.T) {
 }
 
 func TestResolveRouteReturnsNotFound(t *testing.T) {
-	routes := map[string]int32{
-		"/run/:id": 2,
+	routes := map[string]*Value{
+		"/run/:id": {Kind: KindI64, I64: 2},
 	}
 
 	_, _, ok := resolveRoute("/unknown", routes)
@@ -70,12 +75,14 @@ func TestResolveRouteReturnsNotFound(t *testing.T) {
 }
 
 func TestResolveRouteByMethodPrefersMethodSpecific(t *testing.T) {
-	routes := map[string]map[string]int32{
+	h1 := &Value{Kind: KindI64, I64: 1}
+	h2 := &Value{Kind: KindI64, I64: 2}
+	routes := map[string]map[string]*Value{
 		routeMethodAny: {
-			"/items/:id": 1,
+			"/items/:id": h1,
 		},
 		"GET": {
-			"/items/:id": 2,
+			"/items/:id": h2,
 		},
 	}
 
@@ -83,8 +90,8 @@ func TestResolveRouteByMethodPrefersMethodSpecific(t *testing.T) {
 	if !ok {
 		t.Fatal("expected route to resolve")
 	}
-	if handler != 2 {
-		t.Fatalf("expected method-specific handler=2, got %d", handler)
+	if handler != h2 {
+		t.Fatalf("expected method-specific handler h2")
 	}
 	if got := params["id"]; got != "42" {
 		t.Fatalf("expected id=42, got %q", got)
@@ -92,9 +99,10 @@ func TestResolveRouteByMethodPrefersMethodSpecific(t *testing.T) {
 }
 
 func TestResolveRouteByMethodFallsBackToWildcard(t *testing.T) {
-	routes := map[string]map[string]int32{
+	h := &Value{Kind: KindI64, I64: 7}
+	routes := map[string]map[string]*Value{
 		routeMethodAny: {
-			"/items/:id": 7,
+			"/items/:id": h,
 		},
 	}
 
@@ -102,8 +110,8 @@ func TestResolveRouteByMethodFallsBackToWildcard(t *testing.T) {
 	if !ok {
 		t.Fatal("expected wildcard route to resolve")
 	}
-	if handler != 7 {
-		t.Fatalf("expected wildcard handler=7, got %d", handler)
+	if handler != h {
+		t.Fatalf("expected wildcard handler h")
 	}
 	if got := params["id"]; got != "abc" {
 		t.Fatalf("expected id=abc, got %q", got)

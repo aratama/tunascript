@@ -54,6 +54,9 @@ switch (parsed) {
 - `getEnv(name: string): string`
   - 指定した名前の環境変数の値を返します。存在しない場合は空文字列になります。
   - `tuna run --sandbox` では常に空文字列を返します。
+- `gc(): void`
+  - Wasmtimeの `externref` GC を明示的に実行します。
+  - 大量のオブジェクトを段階的に確保する処理で、不要になった値の回収を早めたいときに使えます。
 
 ### 12.1.1 jsonモジュール
 

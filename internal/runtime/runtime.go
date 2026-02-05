@@ -15,10 +15,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
 	_ "modernc.org/sqlite"
@@ -51,11 +53,11 @@ type Value struct {
 
 type Object struct {
 	Order []string
-	Props map[string]int32
+	Props map[string]*Value
 }
 
 type Array struct {
-	Elems []int32
+	Elems []*Value
 }
 
 // TableDef represents a table definition for validation
@@ -93,12 +95,16 @@ type decodeSchemaKV struct {
 
 const (
 	routeMethodAny = "*"
+
+	gcRequestInterval    uint64 = 100
+	gcHeapThresholdBytes uint64 = 64 << 20 // 64 MiB
+	gcMaxInterval               = time.Minute
 )
 
 // HTTPServer represents an HTTP server instance
 type HTTPServer struct {
 	mux    *http.ServeMux
-	routes map[string]map[string]int32 // method -> (path -> handler handle)
+	routes map[string]map[string]*Value // method -> (path -> handler handle)
 }
 
 // HTTPRequest represents an HTTP request
@@ -116,7 +122,6 @@ type HTTPResponse struct {
 }
 
 type Runtime struct {
-	heap            []Value
 	output          bytes.Buffer
 	sandboxStdout   bytes.Buffer
 	sandboxHTML     string
@@ -127,15 +132,23 @@ type Runtime struct {
 	currentTx       *sql.Tx
 	args            []string
 	tableDefs       []TableDef // Table definitions for validation
-	httpServers     map[int32]*HTTPServer
+	httpServers     map[*Value]*HTTPServer
 	httpMu          sync.Mutex
 	store           *wasmtime.Store
 	instance        *wasmtime.Instance
-	internedStrings map[uint64]int32 // 文字列リテラルのインターンキャッシュ
+	internedStrings map[uint64]*Value // 文字列リテラルのインターンキャッシュ
 	decodeSchemas   map[string]*decodeSchema
 	// pendingServer is set when http_listen is called, actual server starts after WASM execution
 	pendingServer *pendingHTTPServer
+	gcReqCount    uint64
+	gcLastHeap    uint64
+	gcLastAt      time.Time
 }
+
+var (
+	nullValue      = &Value{Kind: KindNull}
+	undefinedValue = &Value{Kind: KindUndefined}
+)
 
 // pendingHTTPServer holds info for starting HTTP server after WASM execution completes
 //
@@ -182,13 +195,14 @@ type pendingHTTPServer struct {
 }
 
 func NewRuntime() *Runtime {
+	now := time.Now()
 	r := &Runtime{
-		httpServers:     make(map[int32]*HTTPServer),
-		internedStrings: make(map[uint64]int32),
+		httpServers:     make(map[*Value]*HTTPServer),
+		internedStrings: make(map[uint64]*Value),
 		decodeSchemas:   make(map[string]*decodeSchema),
+		gcLastHeap:      currentHeapAlloc(),
+		gcLastAt:        now,
 	}
-	// index 0 is reserved for null, index 1 is reserved for undefined
-	r.heap = append(r.heap, Value{Kind: KindNull}, Value{Kind: KindUndefined})
 	return r
 }
 
@@ -196,6 +210,50 @@ func NewRuntime() *Runtime {
 func (r *Runtime) SetWasmContext(store *wasmtime.Store, instance *wasmtime.Instance) {
 	r.store = store
 	r.instance = instance
+}
+
+func currentHeapAlloc() uint64 {
+	var ms goruntime.MemStats
+	goruntime.ReadMemStats(&ms)
+	return ms.HeapAlloc
+}
+
+func (r *Runtime) maybeStoreGC(force bool) {
+	if r.store == nil {
+		return
+	}
+
+	now := time.Now()
+	if r.gcLastAt.IsZero() {
+		r.gcLastAt = now
+		r.gcLastHeap = currentHeapAlloc()
+	}
+	if force {
+		r.store.GC()
+		r.gcReqCount = 0
+		r.gcLastAt = now
+		r.gcLastHeap = currentHeapAlloc()
+		return
+	}
+
+	r.gcReqCount++
+	heapNow := currentHeapAlloc()
+	heapDelta := uint64(0)
+	if heapNow >= r.gcLastHeap {
+		heapDelta = heapNow - r.gcLastHeap
+	} else {
+		// Goランタイム側のGCで減った場合は新しい基準値に追従する。
+		r.gcLastHeap = heapNow
+	}
+
+	if r.gcReqCount < gcRequestInterval && heapDelta < gcHeapThresholdBytes && now.Sub(r.gcLastAt) < gcMaxInterval {
+		return
+	}
+
+	r.store.GC()
+	r.gcReqCount = 0
+	r.gcLastAt = now
+	r.gcLastHeap = currentHeapAlloc()
 }
 
 func (r *Runtime) Output() string {
@@ -234,153 +292,163 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	defineRuntime := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "runtime", name, fn)
 	}
-	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) int32 {
+	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.strFromUTF8(caller, ptr, length))
 	}); err != nil {
 		return err
 	}
-	if err := define("intern_string", func(caller *wasmtime.Caller, ptr int32, length int32) int32 {
+	if err := define("intern_string", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.internString(caller, ptr, length))
 	}); err != nil {
 		return err
 	}
-	if err := define("str_concat", func(a int32, b int32) int32 {
+	if err := define("str_concat", func(a *Value, b *Value) *Value {
 		return must(r.strConcat(a, b))
 	}); err != nil {
 		return err
 	}
-	if err := define("str_eq", func(a int32, b int32) int32 {
+	if err := define("str_eq", func(a *Value, b *Value) int32 {
 		return must(r.strEq(a, b))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_from_i64", func(v int64) int32 {
+	if err := define("val_from_i64", func(v int64) *Value {
 		return must(r.valFromI64(v))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_from_f64", func(v float64) int32 {
+	if err := define("val_from_f64", func(v float64) *Value {
 		return must(r.valFromF64(v))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_from_bool", func(v int32) int32 {
+	if err := define("val_from_bool", func(v int32) *Value {
 		return must(r.valFromBool(v))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_to_i64", func(handle int32) int64 {
+	if err := define("val_null", func() *Value {
+		return nullValue
+	}); err != nil {
+		return err
+	}
+	if err := define("val_undefined", func() *Value {
+		return undefinedValue
+	}); err != nil {
+		return err
+	}
+	if err := define("val_to_i64", func(handle *Value) int64 {
 		return must(r.valToI64(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_to_f64", func(handle int32) float64 {
+	if err := define("val_to_f64", func(handle *Value) float64 {
 		return must(r.valToF64(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_to_bool", func(handle int32) int32 {
+	if err := define("val_to_bool", func(handle *Value) int32 {
 		return must(r.valToBool(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("val_kind", func(handle int32) int32 {
+	if err := define("val_kind", func(handle *Value) int32 {
 		return must(r.valKind(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("obj_new", func(count int32) int32 {
+	if err := define("obj_new", func(count int32) *Value {
 		return must(r.objNew(count))
 	}); err != nil {
 		return err
 	}
-	if err := define("obj_set", func(objHandle int32, keyHandle int32, valHandle int32) {
+	if err := define("obj_set", func(objHandle *Value, keyHandle *Value, valHandle *Value) {
 		must0(r.objSet(objHandle, keyHandle, valHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("obj_get", func(objHandle int32, keyHandle int32) int32 {
+	if err := define("obj_get", func(objHandle *Value, keyHandle *Value) *Value {
 		return must(r.objGet(objHandle, keyHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_new", func(count int32) int32 {
+	if err := define("arr_new", func(count int32) *Value {
 		return must(r.arrNew(count))
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_set", func(arrHandle int32, index int32, valHandle int32) {
+	if err := define("arr_set", func(arrHandle *Value, index int32, valHandle *Value) {
 		must0(r.arrSet(arrHandle, index, valHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_get", func(arrHandle int32, index int32) int32 {
+	if err := define("arr_get", func(arrHandle *Value, index int32) *Value {
 		return must(r.arrGet(arrHandle, index))
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_get_result", func(arrHandle int32, index int32) int32 {
+	if err := define("arr_get_result", func(arrHandle *Value, index int32) *Value {
 		return r.arrGetResult(arrHandle, index)
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_len", func(arrHandle int32) int32 {
+	if err := define("arr_len", func(arrHandle *Value) int32 {
 		return must(r.arrLen(arrHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("arr_join", func(arrHandle int32) int32 {
+	if err := define("arr_join", func(arrHandle *Value) *Value {
 		return must(r.arrJoin(arrHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineArray("range", func(start int64, end int64) int32 {
+	if err := defineArray("range", func(start int64, end int64) *Value {
 		return r.rangeFunc(start, end)
 	}); err != nil {
 		return err
 	}
-	if err := define("val_eq", func(a int32, b int32) int32 {
+	if err := define("val_eq", func(a *Value, b *Value) int32 {
 		return must(r.valEq(a, b))
 	}); err != nil {
 		return err
 	}
-	if err := define("log", func(handle int32) {
+	if err := define("log", func(handle *Value) {
 		must0(r.log(handle))
 	}); err != nil {
 		return err
 	}
-	if err := defineJSON("stringify", func(handle int32) int32 {
+	if err := defineJSON("stringify", func(handle *Value) *Value {
 		return must(r.stringify(handle))
 	}); err != nil {
 		return err
 	}
-	if err := defineJSON("parse", func(handle int32) int32 {
+	if err := defineJSON("parse", func(handle *Value) *Value {
 		value, err := r.parse(handle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := defineJSON("decode", func(jsonHandle int32, schemaHandle int32) int32 {
+	if err := defineJSON("decode", func(jsonHandle *Value, schemaHandle *Value) *Value {
 		return must(r.decode(jsonHandle, schemaHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("toString", func(handle int32) int32 {
+	if err := define("toString", func(handle *Value) *Value {
 		return must(r.toString(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("escape_html_attr", func(handle int32) int32 {
+	if err := define("escape_html_attr", func(handle *Value) *Value {
 		return must(r.escapeHTMLAttr(handle))
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) int32 {
+	if err := define("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.sqlExec(caller, ptr, length))
 	}); err != nil {
 		return err
 	}
-	if err := defineSQLite("db_open", func(strHandle int32) int32 {
+	if err := defineSQLite("db_open", func(strHandle *Value) *Value {
 		return r.resultError(r.dbOpenHandle(strHandle))
 	}); err != nil {
 		return err
@@ -390,107 +458,112 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("get_args", func() int32 {
+	if err := define("get_args", func() *Value {
 		return must(r.getArgs())
 	}); err != nil {
 		return err
 	}
-	if err := define("get_env", func(nameHandle int32) int32 {
+	if err := define("get_env", func(nameHandle *Value) *Value {
 		return must(r.getEnv(nameHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineRuntime("run_sandbox", func(sourceHandle int32) int32 {
+	if err := define("gc", func() {
+		r.maybeStoreGC(true)
+	}); err != nil {
+		return err
+	}
+	if err := defineRuntime("run_sandbox", func(sourceHandle *Value) *Value {
 		return must(r.runSandbox(sourceHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineRuntime("run_formatter", func(sourceHandle int32) int32 {
+	if err := defineRuntime("run_formatter", func(sourceHandle *Value) *Value {
 		value, err := r.runFormatter(sourceHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
+	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
+	if err := define("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
+	if err := define("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) int32 {
+	if err := define("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
 	}); err != nil {
 		return err
 	}
 	// HTTP server functions
-	if err := defineHTTP("http_create_server", func() int32 {
+	if err := defineHTTP("http_create_server", func() *Value {
 		return must(r.httpCreateServer())
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle int32, methodHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) {
+	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle *Value, methodHandle *Value, pathPtr int32, pathLen int32, handlerHandle *Value) {
 		must0(r.httpAddRoute(caller, serverHandle, methodHandle, pathPtr, pathLen, handlerHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle int32, portHandle int32) {
+	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle *Value, portHandle *Value) {
 		must0(r.httpListen(caller, serverHandle, portHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) int32 {
+	if err := define("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) *Value {
 		return must(r.httpResponseText(caller, textPtr, textLen))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) int32 {
+	if err := defineHTTP("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) *Value {
 		return must(r.httpResponseHtml(caller, htmlPtr, htmlLen))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_text_str", func(strHandle int32) int32 {
+	if err := define("http_response_text_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseTextStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_html_str", func(strHandle int32) int32 {
+	if err := defineHTTP("http_response_html_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseHtmlStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_json", func(dataHandle int32) int32 {
+	if err := defineHTTP("http_response_json", func(dataHandle *Value) *Value {
 		return must(r.httpResponseJson(dataHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) int32 {
+	if err := defineHTTP("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) *Value {
 		return must(r.httpResponseRedirect(caller, urlPtr, urlLen))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_redirect_str", func(strHandle int32) int32 {
+	if err := defineHTTP("http_response_redirect_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseRedirectStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_get_path", func(reqHandle int32) int32 {
+	if err := define("http_get_path", func(reqHandle *Value) *Value {
 		return must(r.httpGetPath(reqHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_get_method", func(reqHandle int32) int32 {
+	if err := define("http_get_method", func(reqHandle *Value) *Value {
 		return must(r.httpGetMethod(reqHandle))
 	}); err != nil {
 		return err
@@ -511,19 +584,19 @@ func must0(err error) {
 	}
 }
 
-func (r *Runtime) resultValue(value int32, err error) int32 {
+func (r *Runtime) resultValue(value *Value, err error) *Value {
 	if err != nil {
 		return r.decodeError(err.Error())
 	}
 	return value
 }
 
-func (r *Runtime) resultError(err error) int32 {
+func (r *Runtime) resultError(err error) *Value {
 	if err != nil {
 		return r.decodeError(err.Error())
 	}
 	// undefined を (undefined | Error) の成功値として返す
-	return 1
+	return undefinedValue
 }
 
 func (r *Runtime) checkSandboxOutputSize(extra int) error {
@@ -548,43 +621,50 @@ func (r *Runtime) setSandboxHTML(html string) error {
 	return nil
 }
 
-func (r *Runtime) newValue(v Value) int32 {
-	r.heap = append(r.heap, v)
-	return int32(len(r.heap) - 1)
-}
-
-func (r *Runtime) getValue(handle int32) (*Value, error) {
-	if handle < 0 || int(handle) >= len(r.heap) {
-		return nil, fmt.Errorf("invalid handle: %d", handle)
+func (r *Runtime) newValue(v Value) *Value {
+	switch v.Kind {
+	case KindNull:
+		return nullValue
+	case KindUndefined:
+		return undefinedValue
+	default:
+		vv := v
+		return &vv
 	}
-	return &r.heap[handle], nil
 }
 
-func (r *Runtime) strFromUTF8(caller *wasmtime.Caller, ptr int32, length int32) (int32, error) {
+func (r *Runtime) getValue(handle *Value) (*Value, error) {
+	if handle == nil {
+		return nullValue, nil
+	}
+	return handle, nil
+}
+
+func (r *Runtime) strFromUTF8(caller *wasmtime.Caller, ptr int32, length int32) (*Value, error) {
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("string out of bounds")
+		return nil, errors.New("string out of bounds")
 	}
 	return r.newValue(Value{Kind: KindString, Str: string(data[start:end])}), nil
 }
 
-func (r *Runtime) getEnv(nameHandle int32) (int32, error) {
+func (r *Runtime) getEnv(nameHandle *Value) (*Value, error) {
 	valueHandle, err := r.getValue(nameHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if valueHandle.Kind != KindString {
-		return 0, errors.New("getEnv expects string")
+		return nil, errors.New("getEnv expects string")
 	}
 	if r.sandbox {
 		return r.newValue(Value{Kind: KindString, Str: ""}), nil
@@ -593,16 +673,16 @@ func (r *Runtime) getEnv(nameHandle int32) (int32, error) {
 	return r.newValue(Value{Kind: KindString, Str: value}), nil
 }
 
-func (r *Runtime) runSandbox(sourceHandle int32) (int32, error) {
+func (r *Runtime) runSandbox(sourceHandle *Value) (*Value, error) {
 	sourceValue, err := r.getValue(sourceHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if sourceValue.Kind != KindString {
-		return 0, errors.New("runSandbox expects string")
+		return nil, errors.New("runSandbox expects string")
 	}
 	if r.sandbox {
-		return 0, errors.New("runSandbox is not available in sandbox mode")
+		return nil, errors.New("runSandbox is not available in sandbox mode")
 	}
 
 	result := SandboxResult{}
@@ -634,32 +714,32 @@ func (r *Runtime) runSandbox(sourceHandle int32) (int32, error) {
 	return r.sandboxResultString(result)
 }
 
-func (r *Runtime) runFormatter(sourceHandle int32) (int32, error) {
+func (r *Runtime) runFormatter(sourceHandle *Value) (*Value, error) {
 	sourceValue, err := r.getValue(sourceHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if sourceValue.Kind != KindString {
-		return 0, errors.New("runFormatter expects string")
+		return nil, errors.New("runFormatter expects string")
 	}
 	formatted, err := formatter.New().Format("<runtime>", sourceValue.Str)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return r.newValue(Value{Kind: KindString, Str: formatted}), nil
 }
 
-func (r *Runtime) sandboxResultString(result SandboxResult) (int32, error) {
+func (r *Runtime) sandboxResultString(result SandboxResult) (*Value, error) {
 	data, err := json.Marshal(result)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return r.newValue(Value{Kind: KindString, Str: string(data)}), nil
 }
 
 // internString は文字列リテラル（offset, length）をヒープハンドルに変換します。
 // 同じリテラルは同じハンドルを返します（インターン）。
-func (r *Runtime) internString(caller *wasmtime.Caller, ptr int32, length int32) (int32, error) {
+func (r *Runtime) internString(caller *wasmtime.Caller, ptr int32, length int32) (*Value, error) {
 	// キャッシュをチェック
 	key := uint64(ptr)<<32 | uint64(uint32(length))
 	if handle, ok := r.internedStrings[key]; ok {
@@ -669,17 +749,17 @@ func (r *Runtime) internString(caller *wasmtime.Caller, ptr int32, length int32)
 	// メモリから文字列を読み取り
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("string out of bounds")
+		return nil, errors.New("string out of bounds")
 	}
 	str := string(data[start:end])
 
@@ -691,22 +771,22 @@ func (r *Runtime) internString(caller *wasmtime.Caller, ptr int32, length int32)
 	return handle, nil
 }
 
-func (r *Runtime) strConcat(a int32, b int32) (int32, error) {
+func (r *Runtime) strConcat(a *Value, b *Value) (*Value, error) {
 	va, err := r.getValue(a)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	vb, err := r.getValue(b)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if va.Kind != KindString || vb.Kind != KindString {
-		return 0, errors.New("str_concat type error")
+		return nil, errors.New("str_concat type error")
 	}
 	return r.newValue(Value{Kind: KindString, Str: va.Str + vb.Str}), nil
 }
 
-func (r *Runtime) strEq(a int32, b int32) (int32, error) {
+func (r *Runtime) strEq(a *Value, b *Value) (int32, error) {
 	va, err := r.getValue(a)
 	if err != nil {
 		return 0, err
@@ -724,19 +804,19 @@ func (r *Runtime) strEq(a int32, b int32) (int32, error) {
 	return 0, nil
 }
 
-func (r *Runtime) valFromI64(v int64) (int32, error) {
+func (r *Runtime) valFromI64(v int64) (*Value, error) {
 	return r.newValue(Value{Kind: KindI64, I64: v}), nil
 }
 
-func (r *Runtime) valFromF64(v float64) (int32, error) {
+func (r *Runtime) valFromF64(v float64) (*Value, error) {
 	return r.newValue(Value{Kind: KindF64, F64: v}), nil
 }
 
-func (r *Runtime) valFromBool(v int32) (int32, error) {
+func (r *Runtime) valFromBool(v int32) (*Value, error) {
 	return r.newValue(Value{Kind: KindBool, Bool: v != 0}), nil
 }
 
-func (r *Runtime) valToI64(handle int32) (int64, error) {
+func (r *Runtime) valToI64(handle *Value) (int64, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return 0, err
@@ -747,7 +827,7 @@ func (r *Runtime) valToI64(handle int32) (int64, error) {
 	return v.I64, nil
 }
 
-func (r *Runtime) valToF64(handle int32) (float64, error) {
+func (r *Runtime) valToF64(handle *Value) (float64, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return 0, err
@@ -758,7 +838,7 @@ func (r *Runtime) valToF64(handle int32) (float64, error) {
 	return v.F64, nil
 }
 
-func (r *Runtime) valToBool(handle int32) (int32, error) {
+func (r *Runtime) valToBool(handle *Value) (int32, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return 0, err
@@ -772,7 +852,7 @@ func (r *Runtime) valToBool(handle int32) (int32, error) {
 	return 0, nil
 }
 
-func (r *Runtime) valKind(handle int32) (int32, error) {
+func (r *Runtime) valKind(handle *Value) (int32, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return 0, err
@@ -780,11 +860,11 @@ func (r *Runtime) valKind(handle int32) (int32, error) {
 	return int32(v.Kind), nil
 }
 
-func (r *Runtime) objNew(count int32) (int32, error) {
-	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}}), nil
+func (r *Runtime) objNew(count int32) (*Value, error) {
+	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}}), nil
 }
 
-func (r *Runtime) objSet(objHandle int32, keyHandle int32, valHandle int32) error {
+func (r *Runtime) objSet(objHandle *Value, keyHandle *Value, valHandle *Value) error {
 	objVal, err := r.getValue(objHandle)
 	if err != nil {
 		return err
@@ -804,17 +884,17 @@ func (r *Runtime) objSet(objHandle int32, keyHandle int32, valHandle int32) erro
 	return nil
 }
 
-func (r *Runtime) objGet(objHandle int32, keyHandle int32) (int32, error) {
+func (r *Runtime) objGet(objHandle *Value, keyHandle *Value) (*Value, error) {
 	objVal, err := r.getValue(objHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	keyVal, err := r.getValue(keyHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if objVal.Kind != KindObject || keyVal.Kind != KindString {
-		return 0, errors.New("obj_get type error")
+		return nil, errors.New("obj_get type error")
 	}
 	key := keyVal.Str
 	val, ok := objVal.Obj.Props[key]
@@ -825,12 +905,15 @@ func (r *Runtime) objGet(objHandle int32, keyHandle int32) (int32, error) {
 	return val, nil
 }
 
-func (r *Runtime) arrNew(count int32) (int32, error) {
-	arr := make([]int32, int(count))
+func (r *Runtime) arrNew(count int32) (*Value, error) {
+	arr := make([]*Value, int(count))
+	for i := range arr {
+		arr[i] = nullValue
+	}
 	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: arr}}), nil
 }
 
-func (r *Runtime) arrSet(arrHandle int32, index int32, valHandle int32) error {
+func (r *Runtime) arrSet(arrHandle *Value, index int32, valHandle *Value) error {
 	arrVal, err := r.getValue(arrHandle)
 	if err != nil {
 		return err
@@ -845,21 +928,21 @@ func (r *Runtime) arrSet(arrHandle int32, index int32, valHandle int32) error {
 	return nil
 }
 
-func (r *Runtime) arrGet(arrHandle int32, index int32) (int32, error) {
+func (r *Runtime) arrGet(arrHandle *Value, index int32) (*Value, error) {
 	arrVal, err := r.getValue(arrHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if arrVal.Kind != KindArray {
-		return 0, errors.New("arr_get type error")
+		return nil, errors.New("arr_get type error")
 	}
 	if index < 0 || int(index) >= len(arrVal.Arr.Elems) {
-		return 0, errors.New("index out of range")
+		return nil, errors.New("index out of range")
 	}
 	return arrVal.Arr.Elems[index], nil
 }
 
-func (r *Runtime) arrGetResult(arrHandle int32, index int32) int32 {
+func (r *Runtime) arrGetResult(arrHandle *Value, index int32) *Value {
 	val, err := r.arrGet(arrHandle, index)
 	if err != nil {
 		return r.decodeError(err.Error())
@@ -867,7 +950,7 @@ func (r *Runtime) arrGetResult(arrHandle int32, index int32) int32 {
 	return val
 }
 
-func (r *Runtime) arrLen(arrHandle int32) (int32, error) {
+func (r *Runtime) arrLen(arrHandle *Value) (int32, error) {
 	arrVal, err := r.getValue(arrHandle)
 	if err != nil {
 		return 0, err
@@ -878,13 +961,13 @@ func (r *Runtime) arrLen(arrHandle int32) (int32, error) {
 	return int32(len(arrVal.Arr.Elems)), nil
 }
 
-func (r *Runtime) arrJoin(arrHandle int32) (int32, error) {
+func (r *Runtime) arrJoin(arrHandle *Value) (*Value, error) {
 	arrVal, err := r.getValue(arrHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if arrVal.Kind != KindArray {
-		return 0, errors.New("arr_join type error")
+		return nil, errors.New("arr_join type error")
 	}
 	var parts []string
 	for _, elemHandle := range arrVal.Arr.Elems {
@@ -900,19 +983,19 @@ func (r *Runtime) arrJoin(arrHandle int32) (int32, error) {
 	return r.newValue(Value{Kind: KindString, Str: result}), nil
 }
 
-func (r *Runtime) rangeFunc(start int64, end int64) int32 {
+func (r *Runtime) rangeFunc(start int64, end int64) *Value {
 	if end < start {
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 	}
 	delta := end - start
 	if delta < 0 {
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 	}
 	if delta >= int64(math.MaxInt32) {
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 	}
 	length := delta + 1
-	elems := make([]int32, int(length))
+	elems := make([]*Value, int(length))
 	for i := int64(0); i < length; i++ {
 		val, _ := r.valFromI64(start + i)
 		elems[int(i)] = val
@@ -920,7 +1003,7 @@ func (r *Runtime) rangeFunc(start int64, end int64) int32 {
 	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}})
 }
 
-func (r *Runtime) valEq(a int32, b int32) (int32, error) {
+func (r *Runtime) valEq(a *Value, b *Value) (int32, error) {
 	va, err := r.getValue(a)
 	if err != nil {
 		return 0, err
@@ -998,7 +1081,7 @@ func (r *Runtime) valueEqual(a *Value, b *Value) bool {
 	}
 }
 
-func (r *Runtime) log(handle int32) error {
+func (r *Runtime) log(handle *Value) error {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return err
@@ -1025,18 +1108,18 @@ func (r *Runtime) log(handle int32) error {
 	return appendLine(text)
 }
 
-func (r *Runtime) stringify(handle int32) (int32, error) {
+func (r *Runtime) stringify(handle *Value) (*Value, error) {
 	text, err := r.stringifyValue(handle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	return r.newValue(Value{Kind: KindString, Str: text}), nil
 }
 
-func (r *Runtime) toString(handle int32) (int32, error) {
+func (r *Runtime) toString(handle *Value) (*Value, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	switch v.Kind {
 	case KindString:
@@ -1045,7 +1128,7 @@ func (r *Runtime) toString(handle int32) (int32, error) {
 		return r.newValue(Value{Kind: KindString, Str: strconv.FormatInt(v.I64, 10)}), nil
 	case KindF64:
 		if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-			return 0, errors.New("invalid number")
+			return nil, errors.New("invalid number")
 		}
 		return r.newValue(Value{Kind: KindString, Str: strconv.FormatFloat(v.F64, 'g', -1, 64)}), nil
 	case KindBool:
@@ -1054,47 +1137,47 @@ func (r *Runtime) toString(handle int32) (int32, error) {
 		}
 		return r.newValue(Value{Kind: KindString, Str: "false"}), nil
 	default:
-		return 0, errors.New("toString expects primitive")
+		return nil, errors.New("toString expects primitive")
 	}
 }
 
-func (r *Runtime) escapeHTMLAttr(handle int32) (int32, error) {
+func (r *Runtime) escapeHTMLAttr(handle *Value) (*Value, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if v.Kind != KindString {
-		return 0, errors.New("escape_html_attr expects string")
+		return nil, errors.New("escape_html_attr expects string")
 	}
 	return r.newValue(Value{Kind: KindString, Str: html.EscapeString(v.Str)}), nil
 }
 
-func (r *Runtime) parse(handle int32) (int32, error) {
+func (r *Runtime) parse(handle *Value) (*Value, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if v.Kind != KindString {
-		return 0, errors.New("parse expects string")
+		return nil, errors.New("parse expects string")
 	}
 	dec := json.NewDecoder(strings.NewReader(v.Str))
 	dec.UseNumber()
 	var data interface{}
 	if err := dec.Decode(&data); err != nil {
-		return 0, err
+		return nil, err
 	}
 	// JSON.parse と同様に、末尾に余計なトークンがあればエラーにする
 	var extra interface{}
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return 0, errors.New("invalid json")
+			return nil, errors.New("invalid json")
 		}
-		return 0, err
+		return nil, err
 	}
 	return r.fromInterface(data)
 }
 
-func (r *Runtime) decode(jsonHandle int32, schemaHandle int32) (int32, error) {
+func (r *Runtime) decode(jsonHandle *Value, schemaHandle *Value) (*Value, error) {
 	sv, err := r.getValue(schemaHandle)
 	if err != nil {
 		return r.decodeError("invalid schema"), nil
@@ -1127,8 +1210,8 @@ func (r *Runtime) getDecodeSchema(schemaJSON string) (*decodeSchema, error) {
 	return &s, nil
 }
 
-func (r *Runtime) decodeError(message string) int32 {
-	props := map[string]int32{
+func (r *Runtime) decodeError(message string) *Value {
+	props := map[string]*Value{
 		"message": r.newValue(Value{Kind: KindString, Str: message}),
 		"type":    r.newValue(Value{Kind: KindString, Str: "Error"}),
 	}
@@ -1136,7 +1219,7 @@ func (r *Runtime) decodeError(message string) int32 {
 }
 
 // resultErrorMessage returns (message, true, nil) when handle is an Error object.
-func (r *Runtime) resultErrorMessage(handle int32) (string, bool, error) {
+func (r *Runtime) resultErrorMessage(handle *Value) (string, bool, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return "", false, err
@@ -1168,7 +1251,7 @@ func (r *Runtime) resultErrorMessage(handle int32) (string, bool, error) {
 	return msg, true, nil
 }
 
-func sortedKeys(m map[string]int32) []string {
+func sortedKeys(m map[string]*Value) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -1177,13 +1260,13 @@ func sortedKeys(m map[string]int32) []string {
 	return keys
 }
 
-func (r *Runtime) decodeWithSchema(handle int32, schema *decodeSchema, path string) (int32, error) {
+func (r *Runtime) decodeWithSchema(handle *Value, schema *decodeSchema, path string) (*Value, error) {
 	if schema == nil {
-		return 0, fmt.Errorf("%s: invalid schema", path)
+		return nil, fmt.Errorf("%s: invalid schema", path)
 	}
 	v, err := r.getValue(handle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	switch schema.Kind {
@@ -1191,137 +1274,137 @@ func (r *Runtime) decodeWithSchema(handle int32, schema *decodeSchema, path stri
 		return handle, nil
 	case "undefined":
 		if v.Kind != KindUndefined {
-			return 0, fmt.Errorf("%s: undefined expected", path)
+			return nil, fmt.Errorf("%s: undefined expected", path)
 		}
 		return handle, nil
 	case "null":
 		if v.Kind != KindNull {
-			return 0, fmt.Errorf("%s: null expected", path)
+			return nil, fmt.Errorf("%s: null expected", path)
 		}
 		return handle, nil
 	case "string":
 		if v.Kind != KindString {
-			return 0, fmt.Errorf("%s: string expected", path)
+			return nil, fmt.Errorf("%s: string expected", path)
 		}
 		if schema.Literal != nil {
 			want, _ := schema.Literal.Value.(string)
 			if v.Str != want {
-				return 0, fmt.Errorf("%s: string literal mismatch", path)
+				return nil, fmt.Errorf("%s: string literal mismatch", path)
 			}
 		}
 		return handle, nil
 	case "boolean":
 		if v.Kind != KindBool {
-			return 0, fmt.Errorf("%s: boolean expected", path)
+			return nil, fmt.Errorf("%s: boolean expected", path)
 		}
 		if schema.Literal != nil {
 			want, _ := schema.Literal.Value.(bool)
 			if v.Bool != want {
-				return 0, fmt.Errorf("%s: boolean literal mismatch", path)
+				return nil, fmt.Errorf("%s: boolean literal mismatch", path)
 			}
 		}
 		return handle, nil
 	case "integer":
-		var out int32
+		var out *Value
 		switch v.Kind {
 		case KindI64:
 			out = handle
 		case KindF64:
 			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-				return 0, fmt.Errorf("%s: invalid number", path)
+				return nil, fmt.Errorf("%s: invalid number", path)
 			}
 			if math.Trunc(v.F64) != v.F64 {
-				return 0, fmt.Errorf("%s: integer expected", path)
+				return nil, fmt.Errorf("%s: integer expected", path)
 			}
 			if v.F64 < float64(math.MinInt64) || v.F64 > float64(math.MaxInt64) {
-				return 0, fmt.Errorf("%s: integer out of range", path)
+				return nil, fmt.Errorf("%s: integer out of range", path)
 			}
 			out = r.newValue(Value{Kind: KindI64, I64: int64(v.F64)})
 		default:
-			return 0, fmt.Errorf("%s: integer expected", path)
+			return nil, fmt.Errorf("%s: integer expected", path)
 		}
 		if schema.Literal != nil {
 			wantNum, _ := schema.Literal.Value.(float64)
 			outVal, _ := r.getValue(out)
 			if outVal.I64 != int64(wantNum) {
-				return 0, fmt.Errorf("%s: integer literal mismatch", path)
+				return nil, fmt.Errorf("%s: integer literal mismatch", path)
 			}
 		}
 		return out, nil
 	case "number":
-		var out int32
+		var out *Value
 		switch v.Kind {
 		case KindF64:
 			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-				return 0, fmt.Errorf("%s: invalid number", path)
+				return nil, fmt.Errorf("%s: invalid number", path)
 			}
 			out = handle
 		case KindI64:
 			out = r.newValue(Value{Kind: KindF64, F64: float64(v.I64)})
 		default:
-			return 0, fmt.Errorf("%s: number expected", path)
+			return nil, fmt.Errorf("%s: number expected", path)
 		}
 		if schema.Literal != nil {
 			wantNum, _ := schema.Literal.Value.(float64)
 			outVal, _ := r.getValue(out)
 			if outVal.Kind != KindF64 || outVal.F64 != wantNum {
-				return 0, fmt.Errorf("%s: number literal mismatch", path)
+				return nil, fmt.Errorf("%s: number literal mismatch", path)
 			}
 		}
 		return out, nil
 	case "array":
 		if v.Kind != KindArray {
-			return 0, fmt.Errorf("%s: array expected", path)
+			return nil, fmt.Errorf("%s: array expected", path)
 		}
 		if schema.Elem == nil {
-			return 0, fmt.Errorf("%s: invalid schema", path)
+			return nil, fmt.Errorf("%s: invalid schema", path)
 		}
-		elems := make([]int32, len(v.Arr.Elems))
+		elems := make([]*Value, len(v.Arr.Elems))
 		for i, child := range v.Arr.Elems {
 			decoded, err := r.decodeWithSchema(child, schema.Elem, fmt.Sprintf("%s[%d]", path, i))
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			elems[i] = decoded
 		}
 		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
 	case "tuple":
 		if v.Kind != KindArray {
-			return 0, fmt.Errorf("%s: array expected", path)
+			return nil, fmt.Errorf("%s: array expected", path)
 		}
 		if len(v.Arr.Elems) != len(schema.Tuple) {
-			return 0, fmt.Errorf("%s: tuple length mismatch", path)
+			return nil, fmt.Errorf("%s: tuple length mismatch", path)
 		}
-		elems := make([]int32, len(schema.Tuple))
+		elems := make([]*Value, len(schema.Tuple))
 		for i, elemSchema := range schema.Tuple {
 			decoded, err := r.decodeWithSchema(v.Arr.Elems[i], elemSchema, fmt.Sprintf("%s[%d]", path, i))
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			elems[i] = decoded
 		}
 		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
 	case "object":
 		if v.Kind != KindObject {
-			return 0, fmt.Errorf("%s: object expected", path)
+			return nil, fmt.Errorf("%s: object expected", path)
 		}
 
-		props := map[string]int32{}
+		props := map[string]*Value{}
 		for _, p := range schema.Props {
 			if p.Type == nil {
-				return 0, fmt.Errorf("%s: invalid schema", path)
+				return nil, fmt.Errorf("%s: invalid schema", path)
 			}
 			child, ok := v.Obj.Props[p.Name]
 			if !ok {
 				if schemaAllowsUndefined(p.Type) {
-					props[p.Name] = 1 // undefined
+					props[p.Name] = undefinedValue
 					continue
 				}
-				return 0, fmt.Errorf("%s.%s: missing field", path, p.Name)
+				return nil, fmt.Errorf("%s.%s: missing field", path, p.Name)
 			}
 			decoded, err := r.decodeWithSchema(child, p.Type, path+"."+p.Name)
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			props[p.Name] = decoded
 		}
@@ -1333,7 +1416,7 @@ func (r *Runtime) decodeWithSchema(handle int32, schema *decodeSchema, path stri
 				}
 				decoded, err := r.decodeWithSchema(child, schema.Index, path+"."+key)
 				if err != nil {
-					return 0, err
+					return nil, err
 				}
 				props[key] = decoded
 			}
@@ -1350,11 +1433,11 @@ func (r *Runtime) decodeWithSchema(handle int32, schema *decodeSchema, path stri
 			lastErr = err
 		}
 		if lastErr != nil {
-			return 0, lastErr
+			return nil, lastErr
 		}
-		return 0, fmt.Errorf("%s: union expected", path)
+		return nil, fmt.Errorf("%s: union expected", path)
 	default:
-		return 0, fmt.Errorf("%s: unsupported schema kind", path)
+		return nil, fmt.Errorf("%s: unsupported schema kind", path)
 	}
 }
 
@@ -1375,7 +1458,7 @@ func schemaAllowsUndefined(schema *decodeSchema) bool {
 	return false
 }
 
-func (r *Runtime) fromInterface(v interface{}) (int32, error) {
+func (r *Runtime) fromInterface(v interface{}) (*Value, error) {
 	switch val := v.(type) {
 	case string:
 		return r.newValue(Value{Kind: KindString, Str: val}), nil
@@ -1386,7 +1469,7 @@ func (r *Runtime) fromInterface(v interface{}) (int32, error) {
 		if strings.ContainsAny(str, ".eE") {
 			f, err := val.Float64()
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			return r.newValue(Value{Kind: KindF64, F64: f}), nil
 		}
@@ -1394,17 +1477,17 @@ func (r *Runtime) fromInterface(v interface{}) (int32, error) {
 		if err != nil {
 			f, ferr := val.Float64()
 			if ferr != nil {
-				return 0, ferr
+				return nil, ferr
 			}
 			return r.newValue(Value{Kind: KindF64, F64: f}), nil
 		}
 		return r.newValue(Value{Kind: KindI64, I64: i}), nil
 	case []interface{}:
-		arr := make([]int32, len(val))
+		arr := make([]*Value, len(val))
 		for i, elem := range val {
 			child, err := r.fromInterface(elem)
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			arr[i] = child
 		}
@@ -1415,11 +1498,11 @@ func (r *Runtime) fromInterface(v interface{}) (int32, error) {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		props := map[string]int32{}
+		props := map[string]*Value{}
 		for _, k := range keys {
 			child, err := r.fromInterface(val[k])
 			if err != nil {
-				return 0, err
+				return nil, err
 			}
 			props[k] = child
 		}
@@ -1427,11 +1510,11 @@ func (r *Runtime) fromInterface(v interface{}) (int32, error) {
 	case nil:
 		return r.newValue(Value{Kind: KindNull}), nil
 	default:
-		return 0, errors.New("unsupported json")
+		return nil, errors.New("unsupported json")
 	}
 }
 
-func (r *Runtime) stringifyValue(handle int32) (string, error) {
+func (r *Runtime) stringifyValue(handle *Value) (string, error) {
 	var buf bytes.Buffer
 	if err := r.writeJSON(handle, &buf); err != nil {
 		return "", err
@@ -1439,7 +1522,7 @@ func (r *Runtime) stringifyValue(handle int32) (string, error) {
 	return buf.String(), nil
 }
 
-func (r *Runtime) writeJSON(handle int32, buf *bytes.Buffer) error {
+func (r *Runtime) writeJSON(handle *Value, buf *bytes.Buffer) error {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return err
@@ -1505,24 +1588,24 @@ func (r *Runtime) writeJSON(handle int32, buf *bytes.Buffer) error {
 }
 
 // sqlExec executes a SQL query and returns the result as an object with columns and rows
-func (r *Runtime) sqlExec(caller *wasmtime.Caller, ptr int32, length int32) (int32, error) {
+func (r *Runtime) sqlExec(caller *wasmtime.Caller, ptr int32, length int32) (*Value, error) {
 	if r.db == nil {
-		return 0, errors.New("database not initialized")
+		return nil, errors.New("database not initialized")
 	}
 
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("sql string out of bounds")
+		return nil, errors.New("sql string out of bounds")
 	}
 	query := string(data[start:end])
 
@@ -1536,27 +1619,27 @@ func (r *Runtime) sqlExec(caller *wasmtime.Caller, ptr int32, length int32) (int
 	return r.execModifyQuery(query)
 }
 
-func (r *Runtime) execSelectQuery(query string) (int32, error) {
+func (r *Runtime) execSelectQuery(query string) (*Value, error) {
 	rows, err := r.dbQuery(query)
 	if err != nil {
-		return 0, fmt.Errorf("sql query error: %w", err)
+		return nil, fmt.Errorf("sql query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("sql columns error: %w", err)
+		return nil, fmt.Errorf("sql columns error: %w", err)
 	}
 
 	// Create columns array
-	colHandles := make([]int32, len(cols))
+	colHandles := make([]*Value, len(cols))
 	for i, col := range cols {
 		colHandles[i] = r.newValue(Value{Kind: KindString, Str: col})
 	}
 	columnsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: colHandles}})
 
 	// Read all rows as objects
-	var rowHandles []int32
+	var rowHandles []*Value
 	values := make([]interface{}, len(cols))
 	valuePtrs := make([]interface{}, len(cols))
 	for i := range values {
@@ -1565,10 +1648,10 @@ func (r *Runtime) execSelectQuery(query string) (int32, error) {
 
 	for rows.Next() {
 		if err := rows.Scan(valuePtrs...); err != nil {
-			return 0, fmt.Errorf("sql scan error: %w", err)
+			return nil, fmt.Errorf("sql scan error: %w", err)
 		}
 		// Create row object with column names as keys
-		rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+		rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 		for i, v := range values {
 			var str string
 			if v == nil {
@@ -1580,14 +1663,14 @@ func (r *Runtime) execSelectQuery(query string) (int32, error) {
 			keyHandle := r.newValue(Value{Kind: KindString, Str: colName})
 			valueHandle := r.newValue(Value{Kind: KindString, Str: str})
 			if err := r.objSet(rowObj, keyHandle, valueHandle); err != nil {
-				return 0, err
+				return nil, err
 			}
 		}
 		rowHandles = append(rowHandles, rowObj)
 	}
 
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("sql rows error: %w", err)
+		return nil, fmt.Errorf("sql rows error: %w", err)
 	}
 
 	rowsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: rowHandles}})
@@ -1596,53 +1679,53 @@ func (r *Runtime) execSelectQuery(query string) (int32, error) {
 	columnsKey := r.newValue(Value{Kind: KindString, Str: "columns"})
 	rowsKey := r.newValue(Value{Kind: KindString, Str: "rows"})
 
-	objHandle := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	objHandle := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	if err := r.objSet(objHandle, columnsKey, columnsArr); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := r.objSet(objHandle, rowsKey, rowsArr); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	return objHandle, nil
 }
 
-func (r *Runtime) execModifyQuery(query string) (int32, error) {
+func (r *Runtime) execModifyQuery(query string) (*Value, error) {
 	result, err := r.dbExec(query)
 	if err != nil {
-		return 0, fmt.Errorf("sql exec error: %w", err)
+		return nil, fmt.Errorf("sql exec error: %w", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 
 	// Return object with columns: [] and rows: [] for non-SELECT queries
 	// Include rowsAffected info as well
-	columnsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+	columnsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 
 	// For INSERT/UPDATE/DELETE, return empty rows but we can include metadata
-	rowsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+	rowsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 
 	columnsKey := r.newValue(Value{Kind: KindString, Str: "columns"})
 	rowsKey := r.newValue(Value{Kind: KindString, Str: "rows"})
 	affectedKey := r.newValue(Value{Kind: KindString, Str: "rowsAffected"})
 
-	objHandle := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	objHandle := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	if err := r.objSet(objHandle, columnsKey, columnsArr); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := r.objSet(objHandle, rowsKey, rowsArr); err != nil {
-		return 0, err
+		return nil, err
 	}
 	affectedHandle, _ := r.valFromI64(rowsAffected)
 	if err := r.objSet(objHandle, affectedKey, affectedHandle); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	return objHandle, nil
 }
 
 // dbOpenHandle opens a database file using a string handle from the heap
-func (r *Runtime) dbOpenHandle(strHandle int32) error {
+func (r *Runtime) dbOpenHandle(strHandle *Value) error {
 	if r.sandbox {
 		return nil
 	}
@@ -1827,8 +1910,8 @@ func (r *Runtime) createTable(tableDef TableDef) error {
 }
 
 // getArgs returns the command line arguments as a string array
-func (r *Runtime) getArgs() (int32, error) {
-	argHandles := make([]int32, len(r.args))
+func (r *Runtime) getArgs() (*Value, error) {
+	argHandles := make([]*Value, len(r.args))
 	for i, arg := range r.args {
 		argHandles[i] = r.newValue(Value{Kind: KindString, Str: arg})
 	}
@@ -1836,24 +1919,24 @@ func (r *Runtime) getArgs() (int32, error) {
 }
 
 // sqlQuery executes a SQL query with parameters and returns the result
-func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) (int32, error) {
+func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) (*Value, error) {
 	if r.db == nil {
-		return 0, errors.New("database not initialized")
+		return nil, errors.New("database not initialized")
 	}
 
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("sql string out of bounds")
+		return nil, errors.New("sql string out of bounds")
 	}
 	query := string(data[start:end])
 
@@ -1861,13 +1944,13 @@ func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, par
 	var params []interface{}
 	paramsVal, err := r.getValue(paramsHandle)
 	if err != nil {
-		return 0, fmt.Errorf("invalid params handle: %w", err)
+		return nil, fmt.Errorf("invalid params handle: %w", err)
 	}
 	if paramsVal.Kind == KindArray {
 		for _, elemHandle := range paramsVal.Arr.Elems {
 			elemVal, err := r.getValue(elemHandle)
 			if err != nil {
-				return 0, fmt.Errorf("invalid param element: %w", err)
+				return nil, fmt.Errorf("invalid param element: %w", err)
 			}
 			switch elemVal.Kind {
 			case KindString:
@@ -1883,7 +1966,7 @@ func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, par
 					params = append(params, 0)
 				}
 			default:
-				return 0, errors.New("unsupported parameter type")
+				return nil, errors.New("unsupported parameter type")
 			}
 		}
 	}
@@ -1898,20 +1981,20 @@ func (r *Runtime) sqlQuery(caller *wasmtime.Caller, ptr int32, length int32, par
 	return r.execModifyQueryWithParams(query, params)
 }
 
-func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) (int32, error) {
+func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) (*Value, error) {
 	rows, err := r.dbQuery(query, params...)
 	if err != nil {
-		return 0, fmt.Errorf("sql query error: %w", err)
+		return nil, fmt.Errorf("sql query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("sql columns error: %w", err)
+		return nil, fmt.Errorf("sql columns error: %w", err)
 	}
 
 	// Read all rows as objects
-	var rowHandles []int32
+	var rowHandles []*Value
 	values := make([]interface{}, len(cols))
 	valuePtrs := make([]interface{}, len(cols))
 	for i := range values {
@@ -1920,10 +2003,10 @@ func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) 
 
 	for rows.Next() {
 		if err := rows.Scan(valuePtrs...); err != nil {
-			return 0, fmt.Errorf("sql scan error: %w", err)
+			return nil, fmt.Errorf("sql scan error: %w", err)
 		}
 		// Create row object with column names as keys
-		rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+		rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 		for i, v := range values {
 			var str string
 			if v == nil {
@@ -1935,14 +2018,14 @@ func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) 
 			keyHandle := r.newValue(Value{Kind: KindString, Str: colName})
 			valueHandle := r.newValue(Value{Kind: KindString, Str: str})
 			if err := r.objSet(rowObj, keyHandle, valueHandle); err != nil {
-				return 0, err
+				return nil, err
 			}
 		}
 		rowHandles = append(rowHandles, rowObj)
 	}
 
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("sql rows error: %w", err)
+		return nil, fmt.Errorf("sql rows error: %w", err)
 	}
 
 	// Return the rows array directly (no columns wrapper)
@@ -1950,57 +2033,57 @@ func (r *Runtime) execSelectQueryWithParams(query string, params []interface{}) 
 	return rowsArr, nil
 }
 
-func (r *Runtime) execModifyQueryWithParams(query string, params []interface{}) (int32, error) {
+func (r *Runtime) execModifyQueryWithParams(query string, params []interface{}) (*Value, error) {
 	result, err := r.dbExec(query, params...)
 	if err != nil {
-		return 0, fmt.Errorf("sql exec error: %w", err)
+		return nil, fmt.Errorf("sql exec error: %w", err)
 	}
 
 	_ = result // rowsAffected not used in array return
 
 	// Return empty array for non-SELECT queries
-	rowsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []int32{}}})
+	rowsArr := r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
 	return rowsArr, nil
 }
 
 // sqlFetchOne executes a SQL query and returns exactly one row as an object
 // If no row is found, it returns an error
-func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) (int32, error) {
+func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) (*Value, error) {
 	if r.db == nil {
-		return 0, errors.New("database not initialized")
+		return nil, errors.New("database not initialized")
 	}
 
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("sql string out of bounds")
+		return nil, errors.New("sql string out of bounds")
 	}
 	query := string(data[start:end])
 
 	// Extract parameters from the array handle
 	params, err := r.extractSQLParams(paramsHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	rows, err := r.dbQuery(query, params...)
 	if err != nil {
-		return 0, fmt.Errorf("sql query error: %w", err)
+		return nil, fmt.Errorf("sql query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("sql columns error: %w", err)
+		return nil, fmt.Errorf("sql columns error: %w", err)
 	}
 
 	values := make([]interface{}, len(cols))
@@ -2010,15 +2093,15 @@ func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, 
 	}
 
 	if !rows.Next() {
-		return 0, errors.New("fetch_one: no row found")
+		return nil, errors.New("fetch_one: no row found")
 	}
 
 	if err := rows.Scan(valuePtrs...); err != nil {
-		return 0, fmt.Errorf("sql scan error: %w", err)
+		return nil, fmt.Errorf("sql scan error: %w", err)
 	}
 
 	// Create row object with column names as keys
-	rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	for i, v := range values {
 		var str string
 		if v == nil {
@@ -2030,12 +2113,12 @@ func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, 
 		keyHandle := r.newValue(Value{Kind: KindString, Str: colName})
 		valueHandle := r.newValue(Value{Kind: KindString, Str: str})
 		if err := r.objSet(rowObj, keyHandle, valueHandle); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("sql rows error: %w", err)
+		return nil, fmt.Errorf("sql rows error: %w", err)
 	}
 
 	return rowObj, nil
@@ -2043,42 +2126,42 @@ func (r *Runtime) sqlFetchOne(caller *wasmtime.Caller, ptr int32, length int32, 
 
 // sqlFetchOptional executes a SQL query and returns 0 or 1 row as an object
 // If no row is found, it returns a null/empty object
-func (r *Runtime) sqlFetchOptional(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) (int32, error) {
+func (r *Runtime) sqlFetchOptional(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) (*Value, error) {
 	if r.db == nil {
-		return 0, errors.New("database not initialized")
+		return nil, errors.New("database not initialized")
 	}
 
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(ptr)
 	end := start + int(length)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("sql string out of bounds")
+		return nil, errors.New("sql string out of bounds")
 	}
 	query := string(data[start:end])
 
 	// Extract parameters from the array handle
 	params, err := r.extractSQLParams(paramsHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	rows, err := r.dbQuery(query, params...)
 	if err != nil {
-		return 0, fmt.Errorf("sql query error: %w", err)
+		return nil, fmt.Errorf("sql query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		return 0, fmt.Errorf("sql columns error: %w", err)
+		return nil, fmt.Errorf("sql columns error: %w", err)
 	}
 
 	values := make([]interface{}, len(cols))
@@ -2089,15 +2172,15 @@ func (r *Runtime) sqlFetchOptional(caller *wasmtime.Caller, ptr int32, length in
 
 	// If no row found, return null (handle 0)
 	if !rows.Next() {
-		return 0, nil
+		return nil, nil
 	}
 
 	if err := rows.Scan(valuePtrs...); err != nil {
-		return 0, fmt.Errorf("sql scan error: %w", err)
+		return nil, fmt.Errorf("sql scan error: %w", err)
 	}
 
 	// Create row object with column names as keys
-	rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	rowObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	for i, v := range values {
 		var str string
 		if v == nil {
@@ -2109,19 +2192,19 @@ func (r *Runtime) sqlFetchOptional(caller *wasmtime.Caller, ptr int32, length in
 		keyHandle := r.newValue(Value{Kind: KindString, Str: colName})
 		valueHandle := r.newValue(Value{Kind: KindString, Str: str})
 		if err := r.objSet(rowObj, keyHandle, valueHandle); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("sql rows error: %w", err)
+		return nil, fmt.Errorf("sql rows error: %w", err)
 	}
 
 	return rowObj, nil
 }
 
 // sqlExecute executes a SQL query (INSERT, UPDATE, DELETE) without returning results
-func (r *Runtime) sqlExecute(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle int32) error {
+func (r *Runtime) sqlExecute(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) error {
 	if r.db == nil {
 		return errors.New("database not initialized")
 	}
@@ -2157,7 +2240,7 @@ func (r *Runtime) sqlExecute(caller *wasmtime.Caller, ptr int32, length int32, p
 }
 
 // extractSQLParams extracts SQL parameters from an array handle
-func (r *Runtime) extractSQLParams(paramsHandle int32) ([]interface{}, error) {
+func (r *Runtime) extractSQLParams(paramsHandle *Value) ([]interface{}, error) {
 	var params []interface{}
 	paramsVal, err := r.getValue(paramsHandle)
 	if err != nil {
@@ -2222,13 +2305,13 @@ func (r *Runtime) dbQuery(query string, args ...interface{}) (*sql.Rows, error) 
 // HTTP Server methods
 
 // httpCreateServer creates a new HTTP server instance
-func (r *Runtime) httpCreateServer() (int32, error) {
+func (r *Runtime) httpCreateServer() (*Value, error) {
 	r.httpMu.Lock()
 	defer r.httpMu.Unlock()
 
 	server := &HTTPServer{
 		mux:    http.NewServeMux(),
-		routes: make(map[string]map[string]int32),
+		routes: make(map[string]map[string]*Value),
 	}
 	handle := r.newValue(Value{Kind: KindI64, I64: int64(len(r.httpServers))})
 	r.httpServers[handle] = server
@@ -2236,7 +2319,7 @@ func (r *Runtime) httpCreateServer() (int32, error) {
 }
 
 // httpAddRoute adds a route to the HTTP server
-func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, methodHandle int32, pathPtr int32, pathLen int32, handlerHandle int32) error {
+func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle *Value, methodHandle *Value, pathPtr int32, pathLen int32, handlerHandle *Value) error {
 	r.httpMu.Lock()
 	defer r.httpMu.Unlock()
 
@@ -2281,7 +2364,7 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, meth
 	}
 
 	if _, exists := server.routes[routeMethod]; !exists {
-		server.routes[routeMethod] = map[string]int32{}
+		server.routes[routeMethod] = map[string]*Value{}
 	}
 	server.routes[routeMethod][path] = handlerHandle
 	return nil
@@ -2292,7 +2375,7 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle int32, meth
 // 注意: この関数は実際にサーバーを起動しない。サーバー情報をpendingServerに保存し、
 // WASM実行完了後にStartPendingServer()で起動する。
 // 詳細はpendingHTTPServer構造体のコメントを参照。
-func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portHandle int32) error {
+func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle *Value, portHandle *Value) error {
 	r.httpMu.Lock()
 	server, ok := r.httpServers[serverHandle]
 	r.httpMu.Unlock()
@@ -2327,20 +2410,20 @@ func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle int32, portHa
 	return nil
 }
 
-func (r *Runtime) buildRequestObject(path string, method string, query map[string]string, form map[string]string) (int32, error) {
-	reqObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+func (r *Runtime) buildRequestObject(path string, method string, query map[string]string, form map[string]string) (*Value, error) {
+	reqObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	pathHandle := r.newValue(Value{Kind: KindString, Str: path})
 	methodHandle := r.newValue(Value{Kind: KindString, Str: method})
 	pathKeyHandle := r.newValue(Value{Kind: KindString, Str: "path"})
 	methodKeyHandle := r.newValue(Value{Kind: KindString, Str: "method"})
 	if err := r.objSet(reqObj, pathKeyHandle, pathHandle); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := r.objSet(reqObj, methodKeyHandle, methodHandle); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	queryObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	queryObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	queryKeys := make([]string, 0, len(query))
 	for key := range query {
 		queryKeys = append(queryKeys, key)
@@ -2350,15 +2433,15 @@ func (r *Runtime) buildRequestObject(path string, method string, query map[strin
 		keyHandle := r.newValue(Value{Kind: KindString, Str: key})
 		valueHandle := r.newValue(Value{Kind: KindString, Str: query[key]})
 		if err := r.objSet(queryObj, keyHandle, valueHandle); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	queryKeyHandle := r.newValue(Value{Kind: KindString, Str: "query"})
 	if err := r.objSet(reqObj, queryKeyHandle, queryObj); err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	formObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	formObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	formKeys := make([]string, 0, len(form))
 	for key := range form {
 		formKeys = append(formKeys, key)
@@ -2368,25 +2451,25 @@ func (r *Runtime) buildRequestObject(path string, method string, query map[strin
 		keyHandle := r.newValue(Value{Kind: KindString, Str: key})
 		valueHandle := r.newValue(Value{Kind: KindString, Str: form[key]})
 		if err := r.objSet(formObj, keyHandle, valueHandle); err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
 	formKeyHandle := r.newValue(Value{Kind: KindString, Str: "form"})
 	if err := r.objSet(reqObj, formKeyHandle, formObj); err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	return reqObj, nil
 }
 
-func resolveRoute(path string, routes map[string]int32) (int32, map[string]string, bool) {
+func resolveRoute(path string, routes map[string]*Value) (*Value, map[string]string, bool) {
 	if handler, ok := routes[path]; ok {
 		return handler, map[string]string{}, true
 	}
 
 	bestScore := -1
 	bestPattern := ""
-	var bestHandler int32
+	var bestHandler *Value
 	bestParams := map[string]string{}
 
 	for pattern, handler := range routes {
@@ -2404,12 +2487,12 @@ func resolveRoute(path string, routes map[string]int32) (int32, map[string]strin
 	}
 
 	if bestScore == -1 {
-		return 0, nil, false
+		return nil, nil, false
 	}
 	return bestHandler, bestParams, true
 }
 
-func resolveRouteByMethod(path string, method string, routes map[string]map[string]int32) (int32, map[string]string, bool) {
+func resolveRouteByMethod(path string, method string, routes map[string]map[string]*Value) (*Value, map[string]string, bool) {
 	if methodRoutes, ok := routes[method]; ok {
 		if handler, params, found := resolveRoute(path, methodRoutes); found {
 			return handler, params, true
@@ -2418,10 +2501,10 @@ func resolveRouteByMethod(path string, method string, routes map[string]map[stri
 	if wildcardRoutes, ok := routes[routeMethodAny]; ok {
 		return resolveRoute(path, wildcardRoutes)
 	}
-	return 0, nil, false
+	return nil, nil, false
 }
 
-func hasRootRouteForSandbox(routes map[string]map[string]int32) bool {
+func hasRootRouteForSandbox(routes map[string]map[string]*Value) bool {
 	if wildcardRoutes, ok := routes[routeMethodAny]; ok {
 		if _, exists := wildcardRoutes["/"]; exists {
 			return true
@@ -2557,9 +2640,9 @@ func (r *Runtime) invokeRouteHandler(server *HTTPServer, path string, method str
 	if result == nil {
 		return nil, errors.New("handler returned nil")
 	}
-	resHandle, ok := result.(int32)
+	resHandle, ok := result.(*Value)
 	if !ok {
-		return nil, fmt.Errorf("handler result is not int32: %T", result)
+		return nil, fmt.Errorf("handler result is not externref: %T", result)
 	}
 	resVal, err := r.getValue(resHandle)
 	if err != nil {
@@ -2609,6 +2692,10 @@ func (r *Runtime) invokeRouteHandler(server *HTTPServer, path string, method str
 		return nil, fmt.Errorf("transaction commit error: %w", err)
 	}
 	committed = true
+
+	// Request境界でGCポリシーを評価する。
+	// 条件: リクエスト回数 / Goヒープ増分 / 経過時間のいずれか。
+	r.maybeStoreGC(false)
 
 	return &HTTPResponse{
 		Body:        bodyVal.Str,
@@ -2678,38 +2765,38 @@ func (r *Runtime) StartPendingServer() error {
 }
 
 // httpResponseText creates a text response (from raw memory)
-func (r *Runtime) httpResponseText(caller *wasmtime.Caller, textPtr int32, textLen int32) (int32, error) {
+func (r *Runtime) httpResponseText(caller *wasmtime.Caller, textPtr int32, textLen int32) (*Value, error) {
 	return r.httpResponse(caller, textPtr, textLen, "text/plain; charset=utf-8")
 }
 
 // httpResponseHtml creates an HTML response (from raw memory)
-func (r *Runtime) httpResponseHtml(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) (int32, error) {
+func (r *Runtime) httpResponseHtml(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) (*Value, error) {
 	return r.httpResponse(caller, htmlPtr, htmlLen, "text/html; charset=utf-8")
 }
 
 // httpResponseTextStr creates a text response from a string object handle
-func (r *Runtime) httpResponseTextStr(strHandle int32) (int32, error) {
+func (r *Runtime) httpResponseTextStr(strHandle *Value) (*Value, error) {
 	return r.httpResponseStr(strHandle, "text/plain; charset=utf-8")
 }
 
 // httpResponseHtmlStr creates an HTML response from a string object handle
-func (r *Runtime) httpResponseHtmlStr(strHandle int32) (int32, error) {
+func (r *Runtime) httpResponseHtmlStr(strHandle *Value) (*Value, error) {
 	return r.httpResponseStr(strHandle, "text/html; charset=utf-8")
 }
 
 // httpResponseStr creates a response with the specified content type from a string handle
-func (r *Runtime) httpResponseStr(strHandle int32, contentType string) (int32, error) {
+func (r *Runtime) httpResponseStr(strHandle *Value, contentType string) (*Value, error) {
 	strVal, err := r.getValue(strHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if strVal.Kind != KindString {
-		return 0, errors.New("expected string")
+		return nil, errors.New("expected string")
 	}
 	text := strVal.Str
 
 	// Create response object with body and contentType
-	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
 	bodyValue := r.newValue(Value{Kind: KindString, Str: text})
 	_ = r.objSet(resObj, bodyKey, bodyValue)
@@ -2721,26 +2808,26 @@ func (r *Runtime) httpResponseStr(strHandle int32, contentType string) (int32, e
 }
 
 // httpResponse creates a response with the specified content type
-func (r *Runtime) httpResponse(caller *wasmtime.Caller, textPtr int32, textLen int32, contentType string) (int32, error) {
+func (r *Runtime) httpResponse(caller *wasmtime.Caller, textPtr int32, textLen int32, contentType string) (*Value, error) {
 	// Get text from memory
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(textPtr)
 	end := start + int(textLen)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("text string out of bounds")
+		return nil, errors.New("text string out of bounds")
 	}
 	text := string(data[start:end])
 
 	// Create response object with body and contentType
-	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
 	bodyValue := r.newValue(Value{Kind: KindString, Str: text})
 	_ = r.objSet(resObj, bodyKey, bodyValue)
@@ -2752,29 +2839,29 @@ func (r *Runtime) httpResponse(caller *wasmtime.Caller, textPtr int32, textLen i
 }
 
 // httpGetPath gets the path from a request object
-func (r *Runtime) httpGetPath(reqHandle int32) (int32, error) {
+func (r *Runtime) httpGetPath(reqHandle *Value) (*Value, error) {
 	pathKey := r.newValue(Value{Kind: KindString, Str: "path"})
 	return r.objGet(reqHandle, pathKey)
 }
 
 // httpGetMethod gets the method from a request object
-func (r *Runtime) httpGetMethod(reqHandle int32) (int32, error) {
+func (r *Runtime) httpGetMethod(reqHandle *Value) (*Value, error) {
 	methodKey := r.newValue(Value{Kind: KindString, Str: "method"})
 	return r.objGet(reqHandle, methodKey)
 }
 
 // httpResponseJson creates a JSON response from a data handle
-func (r *Runtime) httpResponseJson(dataHandle int32) (int32, error) {
+func (r *Runtime) httpResponseJson(dataHandle *Value) (*Value, error) {
 	val, err := r.getValue(dataHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	// Convert to JSON
 	jsonStr := r.valueToJSON(val)
 
 	// Create response object
-	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
 	bodyValue := r.newValue(Value{Kind: KindString, Str: jsonStr})
 	_ = r.objSet(resObj, bodyKey, bodyValue)
@@ -2831,21 +2918,21 @@ func (r *Runtime) valueToJSON(val *Value) string {
 }
 
 // httpResponseRedirect creates a redirect response
-func (r *Runtime) httpResponseRedirect(caller *wasmtime.Caller, urlPtr int32, urlLen int32) (int32, error) {
+func (r *Runtime) httpResponseRedirect(caller *wasmtime.Caller, urlPtr int32, urlLen int32) (*Value, error) {
 	// Get URL from memory
 	ext := caller.GetExport("memory")
 	if ext == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	memory := ext.Memory()
 	if memory == nil {
-		return 0, errors.New("memory not found")
+		return nil, errors.New("memory not found")
 	}
 	data := memory.UnsafeData(caller)
 	start := int(urlPtr)
 	end := start + int(urlLen)
 	if start < 0 || end > len(data) {
-		return 0, errors.New("url string out of bounds")
+		return nil, errors.New("url string out of bounds")
 	}
 	url := string(data[start:end])
 
@@ -2853,20 +2940,20 @@ func (r *Runtime) httpResponseRedirect(caller *wasmtime.Caller, urlPtr int32, ur
 }
 
 // httpResponseRedirectStr creates a redirect response from a string handle
-func (r *Runtime) httpResponseRedirectStr(strHandle int32) (int32, error) {
+func (r *Runtime) httpResponseRedirectStr(strHandle *Value) (*Value, error) {
 	strVal, err := r.getValue(strHandle)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	if strVal.Kind != KindString {
-		return 0, errors.New("expected string")
+		return nil, errors.New("expected string")
 	}
 	return r.createRedirectResponse(strVal.Str)
 }
 
 // createRedirectResponse creates a response object for redirects
-func (r *Runtime) createRedirectResponse(url string) (int32, error) {
-	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]int32{}}})
+func (r *Runtime) createRedirectResponse(url string) (*Value, error) {
+	resObj := r.newValue(Value{Kind: KindObject, Obj: &Object{Order: []string{}, Props: map[string]*Value{}}})
 	bodyKey := r.newValue(Value{Kind: KindString, Str: "body"})
 	bodyValue := r.newValue(Value{Kind: KindString, Str: ""})
 	_ = r.objSet(resObj, bodyKey, bodyValue)

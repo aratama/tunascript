@@ -1,0 +1,27 @@
+// expect: gc-ok
+
+import { log, gc } from "prelude"
+import { range } from "array"
+
+function allocateChunk(seed: integer): void {
+  for (const i of range(0, 999)) {
+    const item = {
+      "id": seed + i,
+      "tag": "abcdefghijklmnopqrstuvwxyz012345",
+      "payload": [i, i + 1, i + 2, i + 3],
+      "meta": { "even": i % 2 == 0, "text": "chunk" }
+    }
+    if (item.id == -1) {
+      log("never")
+    }
+  }
+}
+
+export function main(): void {
+  for (const batch of range(0, 199)) {
+    allocateChunk(batch * 1000)
+    gc()
+  }
+  gc()
+  log("gc-ok")
+}

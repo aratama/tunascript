@@ -798,3 +798,13 @@ function Page(): JSX {
 - `main` が `void | Error` を返し、戻り値が `Error` の場合は、そのメッセージをエラーとして扱って終了します。
 - `run --sandbox` では通常の標準出力ではなく、`{ stdout: string, html: string, exitCode: integer, error: string }` 形式のJSON文字列1件を標準出力に返します。
 - **CGO と C コンパイラが必要**です（wasmtime-go が C 依存）。
+
+### 13.1 GCポリシー（wasmtime externref）
+
+- TunaScriptランタイムは `wasmtime-go` の `Store.GC()` を使って externref の回収を行います。
+- `main` 実行（`_start`）の完了時には、必ず1回 `Store.GC()` を実行します。
+- HTTPサーバー実行時は、各ハンドラー完了後に次の条件を評価し、いずれかを満たした場合に `Store.GC()` を実行します。
+  - 前回GCからのハンドラー処理回数が `100` 回以上
+  - 前回GC基準からのGoヒープ使用量（`HeapAlloc`）増分が `64 MiB` 以上
+  - 前回GCからの経過時間が `1分` 以上
+- `prelude.gc(): void` を呼ぶと、上記しきい値に関係なく即時に `Store.GC()` を実行します。

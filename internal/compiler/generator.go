@@ -761,57 +761,60 @@ func (g *Generator) emitImports(w *watBuilder) {
 		module string
 		name   string
 	}{
-		{"prelude", "str_from_utf8"},
-		{"prelude", "str_concat"},
-		{"prelude", "str_eq"},
-		{"prelude", "val_from_i64"},
-		{"prelude", "val_from_f64"},
-		{"prelude", "val_from_bool"},
-		{"prelude", "val_to_i64"},
-		{"prelude", "val_to_f64"},
-		{"prelude", "val_to_bool"},
-		{"prelude", "val_kind"},
-		{"prelude", "obj_new"},
-		{"prelude", "obj_set"},
-		{"prelude", "obj_get"},
-		{"prelude", "arr_new"},
-		{"prelude", "arr_set"},
-		{"prelude", "arr_get"},
-		{"prelude", "arr_get_result"},
-		{"prelude", "arr_len"},
-		{"prelude", "arr_join"},
 		{"array", "range"},
-		{"prelude", "val_eq"},
-		{"prelude", "log"},
-		{"json", "stringify"},
-		{"json", "parse"},
-		{"json", "decode"},
-		{"prelude", "toString"},
-		{"prelude", "escape_html_attr"},
-		{"prelude", "sql_exec"},
-		{"prelude", "sql_query"},
-		{"prelude", "sql_fetch_one"},
-		{"prelude", "sql_fetch_optional"},
-		{"prelude", "sql_execute"},
-		{"prelude", "intern_string"},
-		{"sqlite", "db_open"},
-		{"prelude", "get_args"},
-		{"prelude", "get_env"},
-		{"runtime", "run_sandbox"},
-		{"runtime", "run_formatter"},
-		{"prelude", "register_tables"},
-		{"http", "http_create_server"},
 		{"http", "http_add_route"},
+		{"http", "http_create_server"},
 		{"http", "http_listen"},
-		{"prelude", "http_response_text"},
 		{"http", "http_response_html"},
-		{"prelude", "http_response_text_str"},
 		{"http", "http_response_html_str"},
 		{"http", "http_response_json"},
 		{"http", "http_response_redirect"},
 		{"http", "http_response_redirect_str"},
-		{"prelude", "http_get_path"},
+		{"json", "decode"},
+		{"json", "parse"},
+		{"json", "stringify"},
+		{"prelude", "arr_get"},
+		{"prelude", "arr_get_result"},
+		{"prelude", "arr_join"},
+		{"prelude", "arr_len"},
+		{"prelude", "arr_new"},
+		{"prelude", "arr_set"},
+		{"prelude", "escape_html_attr"},
+		{"prelude", "gc"},
+		{"prelude", "get_args"},
+		{"prelude", "get_env"},
 		{"prelude", "http_get_method"},
+		{"prelude", "http_get_path"},
+		{"prelude", "http_response_text"},
+		{"prelude", "http_response_text_str"},
+		{"prelude", "intern_string"},
+		{"prelude", "log"},
+		{"prelude", "obj_get"},
+		{"prelude", "obj_new"},
+		{"prelude", "obj_set"},
+		{"prelude", "register_tables"},
+		{"prelude", "sql_exec"},
+		{"prelude", "sql_execute"},
+		{"prelude", "sql_fetch_one"},
+		{"prelude", "sql_fetch_optional"},
+		{"prelude", "sql_query"},
+		{"prelude", "str_concat"},
+		{"prelude", "str_eq"},
+		{"prelude", "str_from_utf8"},
+		{"prelude", "toString"},
+		{"prelude", "val_eq"},
+		{"prelude", "val_from_bool"},
+		{"prelude", "val_from_f64"},
+		{"prelude", "val_from_i64"},
+		{"prelude", "val_kind"},
+		{"prelude", "val_null"},
+		{"prelude", "val_to_bool"},
+		{"prelude", "val_to_f64"},
+		{"prelude", "val_to_i64"},
+		{"prelude", "val_undefined"},
+		{"runtime", "run_formatter"},
+		{"runtime", "run_sandbox"},
+		{"sqlite", "db_open"},
 	}
 	for _, imp := range imports {
 		sig := importSig(imp.module, imp.name)
@@ -822,108 +825,114 @@ func (g *Generator) emitImports(w *watBuilder) {
 func importSig(module, name string) string {
 	prefix := fmt.Sprintf("$%s", module)
 	switch name {
-	case "str_from_utf8":
-		return fmt.Sprintf("(func %s.str_from_utf8 (param i32 i32) (result i32))", prefix)
-	case "str_concat":
-		return fmt.Sprintf("(func %s.str_concat (param i32 i32) (result i32))", prefix)
-	case "str_eq":
-		return fmt.Sprintf("(func %s.str_eq (param i32 i32) (result i32))", prefix)
-	case "val_from_i64":
-		return fmt.Sprintf("(func %s.val_from_i64 (param i64) (result i32))", prefix)
-	case "val_from_f64":
-		return fmt.Sprintf("(func %s.val_from_f64 (param f64) (result i32))", prefix)
-	case "val_from_bool":
-		return fmt.Sprintf("(func %s.val_from_bool (param i32) (result i32))", prefix)
-	case "val_to_i64":
-		return fmt.Sprintf("(func %s.val_to_i64 (param i32) (result i64))", prefix)
-	case "val_to_f64":
-		return fmt.Sprintf("(func %s.val_to_f64 (param i32) (result f64))", prefix)
-	case "val_to_bool":
-		return fmt.Sprintf("(func %s.val_to_bool (param i32) (result i32))", prefix)
-	case "val_kind":
-		return fmt.Sprintf("(func %s.val_kind (param i32) (result i32))", prefix)
-	case "obj_new":
-		return fmt.Sprintf("(func %s.obj_new (param i32) (result i32))", prefix)
-	case "obj_set":
-		return fmt.Sprintf("(func %s.obj_set (param i32 i32 i32))", prefix)
-	case "obj_get":
-		return fmt.Sprintf("(func %s.obj_get (param i32 i32) (result i32))", prefix)
-	case "arr_new":
-		return fmt.Sprintf("(func %s.arr_new (param i32) (result i32))", prefix)
-	case "arr_set":
-		return fmt.Sprintf("(func %s.arr_set (param i32 i32 i32))", prefix)
-	case "arr_get":
-		return fmt.Sprintf("(func %s.arr_get (param i32 i32) (result i32))", prefix)
-	case "arr_get_result":
-		return fmt.Sprintf("(func %s.arr_get_result (param i32 i32) (result i32))", prefix)
-	case "arr_len":
-		return fmt.Sprintf("(func %s.arr_len (param i32) (result i32))", prefix)
-	case "arr_join":
-		return fmt.Sprintf("(func %s.arr_join (param i32) (result i32))", prefix)
 	case "range":
-		return fmt.Sprintf("(func %s.range (param i64 i64) (result i32))", prefix)
-	case "val_eq":
-		return fmt.Sprintf("(func %s.val_eq (param i32 i32) (result i32))", prefix)
-	case "log":
-		return fmt.Sprintf("(func %s.log (param i32))", prefix)
-	case "stringify":
-		return fmt.Sprintf("(func %s.stringify (param i32) (result i32))", prefix)
-	case "parse":
-		return fmt.Sprintf("(func %s.parse (param i32) (result i32))", prefix)
+		return fmt.Sprintf("(func %s.range (param i64 i64) (result externref))", prefix)
+	case "http_add_route":
+		return fmt.Sprintf("(func %s.http_add_route (param externref externref i32 i32 externref))", prefix)
+	case "http_create_server":
+		return fmt.Sprintf("(func %s.http_create_server (result externref))", prefix)
+	case "http_listen":
+		return fmt.Sprintf("(func %s.http_listen (param externref externref))", prefix)
+	case "http_response_html":
+		return fmt.Sprintf("(func %s.http_response_html (param i32 i32) (result externref))", prefix)
+	case "http_response_html_str":
+		return fmt.Sprintf("(func %s.http_response_html_str (param externref) (result externref))", prefix)
+	case "http_response_json":
+		return fmt.Sprintf("(func %s.http_response_json (param externref) (result externref))", prefix)
+	case "http_response_redirect":
+		return fmt.Sprintf("(func %s.http_response_redirect (param i32 i32) (result externref))", prefix)
+	case "http_response_redirect_str":
+		return fmt.Sprintf("(func %s.http_response_redirect_str (param externref) (result externref))", prefix)
 	case "decode":
-		return fmt.Sprintf("(func %s.decode (param i32 i32) (result i32))", prefix)
-	case "toString":
-		return fmt.Sprintf("(func %s.toString (param i32) (result i32))", prefix)
+		return fmt.Sprintf("(func %s.decode (param externref externref) (result externref))", prefix)
+	case "parse":
+		return fmt.Sprintf("(func %s.parse (param externref) (result externref))", prefix)
+	case "stringify":
+		return fmt.Sprintf("(func %s.stringify (param externref) (result externref))", prefix)
+	case "arr_get":
+		return fmt.Sprintf("(func %s.arr_get (param externref i32) (result externref))", prefix)
+	case "arr_get_result":
+		return fmt.Sprintf("(func %s.arr_get_result (param externref i32) (result externref))", prefix)
+	case "arr_join":
+		return fmt.Sprintf("(func %s.arr_join (param externref) (result externref))", prefix)
+	case "arr_len":
+		return fmt.Sprintf("(func %s.arr_len (param externref) (result i32))", prefix)
+	case "arr_new":
+		return fmt.Sprintf("(func %s.arr_new (param i32) (result externref))", prefix)
+	case "arr_set":
+		return fmt.Sprintf("(func %s.arr_set (param externref i32 externref))", prefix)
 	case "escape_html_attr":
-		return fmt.Sprintf("(func %s.escape_html_attr (param i32) (result i32))", prefix)
-	case "sql_exec":
-		return fmt.Sprintf("(func %s.sql_exec (param i32 i32) (result i32))", prefix)
-	case "sql_query":
-		return fmt.Sprintf("(func %s.sql_query (param i32 i32 i32) (result i32))", prefix)
-	case "sql_fetch_one":
-		return fmt.Sprintf("(func %s.sql_fetch_one (param i32 i32 i32) (result i32))", prefix)
-	case "sql_fetch_optional":
-		return fmt.Sprintf("(func %s.sql_fetch_optional (param i32 i32 i32) (result i32))", prefix)
-	case "sql_execute":
-		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 i32) (result i32))", prefix)
-	case "intern_string":
-		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result i32))", prefix)
-	case "db_open":
-		return fmt.Sprintf("(func %s.db_open (param i32) (result i32))", prefix)
+		return fmt.Sprintf("(func %s.escape_html_attr (param externref) (result externref))", prefix)
+	case "gc":
+		return fmt.Sprintf("(func %s.gc)", prefix)
 	case "get_args":
-		return fmt.Sprintf("(func %s.get_args (result i32))", prefix)
+		return fmt.Sprintf("(func %s.get_args (result externref))", prefix)
 	case "get_env":
-		return fmt.Sprintf("(func %s.get_env (param i32) (result i32))", prefix)
-	case "run_sandbox":
-		return fmt.Sprintf("(func %s.run_sandbox (param i32) (result i32))", prefix)
-	case "run_formatter":
-		return fmt.Sprintf("(func %s.run_formatter (param i32) (result i32))", prefix)
+		return fmt.Sprintf("(func %s.get_env (param externref) (result externref))", prefix)
+	case "http_get_method":
+		return fmt.Sprintf("(func %s.http_get_method (param externref) (result externref))", prefix)
+	case "http_get_path":
+		return fmt.Sprintf("(func %s.http_get_path (param externref) (result externref))", prefix)
+	case "http_response_text":
+		return fmt.Sprintf("(func %s.http_response_text (param i32 i32) (result externref))", prefix)
+	case "http_response_text_str":
+		return fmt.Sprintf("(func %s.http_response_text_str (param externref) (result externref))", prefix)
+	case "intern_string":
+		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result externref))", prefix)
+	case "log":
+		return fmt.Sprintf("(func %s.log (param externref))", prefix)
+	case "obj_get":
+		return fmt.Sprintf("(func %s.obj_get (param externref externref) (result externref))", prefix)
+	case "obj_new":
+		return fmt.Sprintf("(func %s.obj_new (param i32) (result externref))", prefix)
+	case "obj_set":
+		return fmt.Sprintf("(func %s.obj_set (param externref externref externref))", prefix)
 	case "register_tables":
 		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
-	case "http_create_server":
-		return fmt.Sprintf("(func %s.http_create_server (result i32))", prefix)
-	case "http_add_route":
-		return fmt.Sprintf("(func %s.http_add_route (param i32 i32 i32 i32 i32))", prefix)
-	case "http_listen":
-		return fmt.Sprintf("(func %s.http_listen (param i32 i32))", prefix)
-	case "http_response_text":
-		return fmt.Sprintf("(func %s.http_response_text (param i32 i32) (result i32))", prefix)
-	case "http_response_html":
-		return fmt.Sprintf("(func %s.http_response_html (param i32 i32) (result i32))", prefix)
-	case "http_response_text_str":
-		return fmt.Sprintf("(func %s.http_response_text_str (param i32) (result i32))", prefix)
-	case "http_response_html_str":
-		return fmt.Sprintf("(func %s.http_response_html_str (param i32) (result i32))", prefix)
-	case "http_response_json":
-		return fmt.Sprintf("(func %s.http_response_json (param i32) (result i32))", prefix)
-	case "http_response_redirect":
-		return fmt.Sprintf("(func %s.http_response_redirect (param i32 i32) (result i32))", prefix)
-	case "http_response_redirect_str":
-		return fmt.Sprintf("(func %s.http_response_redirect_str (param i32) (result i32))", prefix)
-	case "http_get_path":
-		return fmt.Sprintf("(func %s.http_get_path (param i32) (result i32))", prefix)
-	case "http_get_method":
-		return fmt.Sprintf("(func %s.http_get_method (param i32) (result i32))", prefix)
+	case "sql_exec":
+		return fmt.Sprintf("(func %s.sql_exec (param i32 i32) (result externref))", prefix)
+	case "sql_execute":
+		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 externref) (result externref))", prefix)
+	case "sql_fetch_one":
+		return fmt.Sprintf("(func %s.sql_fetch_one (param i32 i32 externref) (result externref))", prefix)
+	case "sql_fetch_optional":
+		return fmt.Sprintf("(func %s.sql_fetch_optional (param i32 i32 externref) (result externref))", prefix)
+	case "sql_query":
+		return fmt.Sprintf("(func %s.sql_query (param i32 i32 externref) (result externref))", prefix)
+	case "str_concat":
+		return fmt.Sprintf("(func %s.str_concat (param externref externref) (result externref))", prefix)
+	case "str_eq":
+		return fmt.Sprintf("(func %s.str_eq (param externref externref) (result i32))", prefix)
+	case "str_from_utf8":
+		return fmt.Sprintf("(func %s.str_from_utf8 (param i32 i32) (result externref))", prefix)
+	case "toString":
+		return fmt.Sprintf("(func %s.toString (param externref) (result externref))", prefix)
+	case "val_eq":
+		return fmt.Sprintf("(func %s.val_eq (param externref externref) (result i32))", prefix)
+	case "val_from_bool":
+		return fmt.Sprintf("(func %s.val_from_bool (param i32) (result externref))", prefix)
+	case "val_from_f64":
+		return fmt.Sprintf("(func %s.val_from_f64 (param f64) (result externref))", prefix)
+	case "val_from_i64":
+		return fmt.Sprintf("(func %s.val_from_i64 (param i64) (result externref))", prefix)
+	case "val_kind":
+		return fmt.Sprintf("(func %s.val_kind (param externref) (result i32))", prefix)
+	case "val_null":
+		return fmt.Sprintf("(func %s.val_null (result externref))", prefix)
+	case "val_to_bool":
+		return fmt.Sprintf("(func %s.val_to_bool (param externref) (result i32))", prefix)
+	case "val_to_f64":
+		return fmt.Sprintf("(func %s.val_to_f64 (param externref) (result f64))", prefix)
+	case "val_to_i64":
+		return fmt.Sprintf("(func %s.val_to_i64 (param externref) (result i64))", prefix)
+	case "val_undefined":
+		return fmt.Sprintf("(func %s.val_undefined (result externref))", prefix)
+	case "run_formatter":
+		return fmt.Sprintf("(func %s.run_formatter (param externref) (result externref))", prefix)
+	case "run_sandbox":
+		return fmt.Sprintf("(func %s.run_sandbox (param externref) (result externref))", prefix)
+	case "db_open":
+		return fmt.Sprintf("(func %s.db_open (param externref) (result externref))", prefix)
 	default:
 		return ""
 	}
@@ -948,10 +957,10 @@ func (g *Generator) emitMemory(w *watBuilder) {
 func (g *Generator) emitGlobals(w *watBuilder) {
 	w.line("(global $__inited (mut i32) (i32.const 0))")
 	// Entry main() result storage.
-	// void main の場合は undefined(=1) のまま。main が (void | Error) を返す場合に実行結果が格納される。
-	w.line("(global $__main_result (mut i32) (i32.const 1))")
+	// void main の場合は null(ref.null extern) のまま。main が (void | Error) を返す場合に実行結果が格納される。
+	w.line("(global $__main_result (mut externref) (ref.null extern))")
 	for _, d := range g.stringData {
-		w.line(fmt.Sprintf("(global %s (mut i32) (i32.const 0))", d.name))
+		w.line(fmt.Sprintf("(global %s (mut externref) (ref.null extern))", d.name))
 	}
 	for _, mod := range g.modules {
 		for _, sym := range mod.Top {
@@ -959,8 +968,12 @@ func (g *Generator) emitGlobals(w *watBuilder) {
 				continue
 			}
 			wasmName := g.globalNames[sym]
-			wasmType := wasmType(sym.Type)
-			w.line(fmt.Sprintf("(global %s (mut %s) (%s.const 0))", wasmName, wasmType, wasmType))
+			wt := wasmType(sym.Type)
+			if wt == "externref" {
+				w.line(fmt.Sprintf("(global %s (mut externref) (ref.null extern))", wasmName))
+			} else {
+				w.line(fmt.Sprintf("(global %s (mut %s) (%s.const 0))", wasmName, wt, wt))
+			}
 			if g.globalExports[sym] {
 				w.line(fmt.Sprintf("(export \"%s\" (global %s))", sym.Name, wasmName))
 			}
@@ -1080,7 +1093,7 @@ func (g *Generator) emitStart(w *watBuilder, entryAbs string) {
 	w.line("(export \"_start\" (func $_start))")
 
 	// Runner が main の (void | Error) を検査するためのアクセサ。
-	w.line("(func $__get_main_result (result i32)")
+	w.line("(func $__get_main_result (result externref)")
 	w.indent++
 	w.line("(global.get $__main_result)")
 	w.indent--
@@ -1184,7 +1197,7 @@ func (g *Generator) emitFuncBody(w *watBuilder, sym *types.Symbol, params []ast.
 	}
 	emitter.emitBlock(body)
 	if funcType.Ret != nil && funcType.Ret.Kind != types.KindVoid && canOmitReturnValue(funcType.Ret) {
-		emitter.emit("(i32.const 1)")
+		emitter.emit("(call $prelude.val_undefined)")
 		emitter.emitCoerce(types.Undefined(), funcType.Ret)
 		emitter.emit("return")
 	}
@@ -1364,9 +1377,9 @@ func wasmType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	case types.KindString, types.KindJSON, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion, types.KindNull, types.KindUndefined:
-		return "i32"
+		return "externref"
 	default:
-		return "i32"
+		return "externref"
 	}
 }
 
@@ -1511,7 +1524,7 @@ func (f *funcEmitter) emitStmt(stmt ast.Stmt) {
 			f.emitExpr(s.Value, valType)
 			f.emitCoerce(valType, f.ret)
 		} else if f.ret != nil && f.ret.Kind != types.KindVoid {
-			f.emit("(i32.const 1)")
+			f.emit("(call $prelude.val_undefined)")
 			f.emitCoerce(types.Undefined(), f.ret)
 		}
 		f.emit("return")
@@ -1544,7 +1557,7 @@ func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
 
 	// Store the array/tuple in a temporary local
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
 
@@ -1584,7 +1597,7 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
 
 	// Store the object in a temporary local
-	objLocal := f.addLocalRaw("i32")
+	objLocal := f.addLocalRaw("externref")
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", objLocal))
 
@@ -1618,10 +1631,10 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	iterType := f.g.checker.ExprTypes[s.Iter]
 	elem := elemType(iterType)
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
-	valLocal := f.addLocalRaw("i32")
+	valLocal := f.addLocalRaw("externref")
 
 	f.emitExpr(s.Iter, iterType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -1769,9 +1782,9 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 			f.emit("(i32.const 0)")
 		}
 	case *ast.NullLit:
-		f.emit("(i32.const 0)")
+		f.emit("(call $prelude.val_null)")
 	case *ast.UndefinedLit:
-		f.emit("(i32.const 1)")
+		f.emit("(call $prelude.val_undefined)")
 	case *ast.StringLit:
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(e.Value)))
 	case *ast.TemplateLit:
@@ -1903,7 +1916,7 @@ func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
 	if !isVoid {
 		if thenType != nil && thenType.Kind == types.KindVoid {
 			// No value produced; treat as undefined
-			f.emit("(i32.const 1)")
+			f.emit("(call $prelude.val_undefined)")
 			f.emitCoerce(types.Undefined(), t)
 		} else {
 			f.emitCoerce(thenType, t)
@@ -1920,7 +1933,7 @@ func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
 		f.emitExpr(e.Else, elseType)
 		if !isVoid {
 			if elseType != nil && elseType.Kind == types.KindVoid {
-				f.emit("(i32.const 1)")
+				f.emit("(call $prelude.val_undefined)")
 				f.emitCoerce(types.Undefined(), t)
 			} else {
 				f.emitCoerce(elseType, t)
@@ -1928,7 +1941,7 @@ func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
 		}
 	} else if !isVoid {
 		// else omitted: undefined
-		f.emit("(i32.const 1)")
+		f.emit("(call $prelude.val_undefined)")
 		f.emitCoerce(types.Undefined(), t)
 	}
 	f.indent--
@@ -2005,6 +2018,8 @@ func (f *funcEmitter) emitTryExpr(e *ast.TryExpr, t *types.Type) {
 		f.emit("(i64.const 0)")
 	} else if wasmType(successType) == "f64" {
 		f.emit("(f64.const 0)")
+	} else if wasmType(successType) == "externref" {
+		f.emit("(call $prelude.val_null)")
 	} else {
 		f.emit("(i32.const 0)")
 	}
@@ -2049,8 +2064,10 @@ func (f *funcEmitter) emitBlockExpr(e *ast.BlockExpr, t *types.Type) {
 			f.emit("(i64.const 0)")
 		case "f64":
 			f.emit("(f64.const 0)")
+		case "externref":
+			f.emit("(call $prelude.val_undefined)")
 		default:
-			f.emit("(i32.const 1)") // undefined
+			f.emit("(i32.const 0)")
 		}
 	}
 
@@ -2093,6 +2110,8 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 				f.emit("(i64.const 0)")
 			case "f64":
 				f.emit("(f64.const 0)")
+			case "externref":
+				f.emit("(call $prelude.val_undefined)")
 			}
 		}
 		return
@@ -2305,7 +2324,7 @@ func (f *funcEmitter) emitBinaryExpr(e *ast.BinaryExpr, t *types.Type) {
 		return
 	}
 	if e.Op == "==" || e.Op == "!=" {
-		if leftType.Kind == types.KindString || leftType.Kind == types.KindObject || leftType.Kind == types.KindArray || leftType.Kind == types.KindTuple || leftType.Kind == types.KindUnion {
+		if leftType.Kind == types.KindString || leftType.Kind == types.KindObject || leftType.Kind == types.KindArray || leftType.Kind == types.KindTuple || leftType.Kind == types.KindUnion || leftType.Kind == types.KindNull || leftType.Kind == types.KindUndefined || leftType.Kind == types.KindJSON {
 			f.emitExpr(e.Left, leftType)
 			f.emitExpr(e.Right, rightType)
 			f.emit("(call $prelude.val_eq)")
@@ -2493,7 +2512,7 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 	case "Error":
 		arg := call.Args[0]
 		argType := f.g.checker.ExprTypes[arg]
-		objLocal := f.addLocalRaw("i32")
+		objLocal := f.addLocalRaw("externref")
 		f.emit("(call $prelude.obj_new (i32.const 2))")
 		f.emit(fmt.Sprintf("(local.set %s)", objLocal))
 
@@ -2538,6 +2557,8 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.get_env)", module))
+	case "gc":
+		f.emit(fmt.Sprintf("(call $%s.gc)", module))
 	case "runSandbox":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -2815,11 +2836,11 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	fnExpr := call.Args[1]
 	arrType := f.g.checker.ExprTypes[arrExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
-	resultLocal := f.addLocalRaw("i32")
-	valueLocal := f.addLocalRaw("i32")
+	resultLocal := f.addLocalRaw("externref")
+	valueLocal := f.addLocalRaw("externref")
 
 	f.emitExpr(arrExpr, arrType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -2870,13 +2891,13 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	fnExpr := call.Args[1]
 	arrType := f.g.checker.ExprTypes[arrExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	countLocal := f.addLocalRaw("i32")
-	resultLocal := f.addLocalRaw("i32")
+	resultLocal := f.addLocalRaw("externref")
 	outIdxLocal := f.addLocalRaw("i32")
-	valueLocal := f.addLocalRaw("i32")
+	valueLocal := f.addLocalRaw("externref")
 
 	f.emitExpr(arrExpr, arrType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -2988,7 +3009,7 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 	arrType := f.g.checker.ExprTypes[arrExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
 	accType := fnType.Ret
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	accLocal := f.addLocalRaw(valueLocalType(accType))
@@ -3067,7 +3088,7 @@ func (f *funcEmitter) emitDynamicArrayLit(lit *ast.ArrayLit, t *types.Type) {
 	f.emit("(i32.const 0)")
 	f.emit(fmt.Sprintf("(local.set %s)", totalLocal))
 	for _, entry := range lit.Entries {
-		info := entryInfo{entry: entry, handleLocal: f.addLocalRaw("i32")}
+		info := entryInfo{entry: entry, handleLocal: f.addLocalRaw("externref")}
 		if entry.Kind == ast.ArrayValue {
 			f.emitExpr(entry.Value, f.g.checker.ExprTypes[entry.Value])
 			f.emitBoxIfPrimitive(f.g.checker.ExprTypes[entry.Value])
@@ -3090,9 +3111,9 @@ func (f *funcEmitter) emitDynamicArrayLit(lit *ast.ArrayLit, t *types.Type) {
 		}
 		infos = append(infos, info)
 	}
-	arrLocal := f.addLocalRaw("i32")
+	arrLocal := f.addLocalRaw("externref")
 	idxLocal := f.addLocalRaw("i32")
-	valueLocal := f.addLocalRaw("i32")
+	valueLocal := f.addLocalRaw("externref")
 	f.emit(fmt.Sprintf("(local.get %s)", totalLocal))
 	f.emit("(call $prelude.arr_new)")
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -3204,7 +3225,7 @@ func (f *funcEmitter) emitSQLExpr(e *ast.SQLExpr, t *types.Type) {
 	}
 
 	// Build params array if needed
-	paramsLocal := f.addLocalRaw("i32")
+	paramsLocal := f.addLocalRaw("externref")
 	if len(e.Params) == 0 {
 		// Empty params array
 		f.emit("(i32.const 0)")
@@ -3309,7 +3330,7 @@ func valueLocalType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	default:
-		return "i32"
+		return "externref"
 	}
 }
 
@@ -3339,6 +3360,9 @@ func eqOp(t *types.Type) string {
 	}
 	if t.Kind == types.KindF64 {
 		return "f64.eq"
+	}
+	if wasmType(t) == "externref" {
+		return "ref.eq"
 	}
 	return "i32.eq"
 }
@@ -3391,6 +3415,7 @@ func elemType(t *types.Type) *types.Type {
 func builtinModule(name string) (string, bool) {
 	switch name {
 	case "log", "Error", "toString", "getArgs", "sqlQuery",
+		"gc",
 		"getEnv", "responseText", "getPath", "getMethod":
 		return "prelude", true
 	case "stringify", "parse", "decode":
@@ -3449,10 +3474,10 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 			//
 			// Approach: Use a local to store the current string, evaluate condition,
 			// then conditionally concat
-			tempLocal := f.addLocalRaw("i32")
+			tempLocal := f.addLocalRaw("externref")
 			f.emit(fmt.Sprintf("(local.set %s)", tempLocal)) // save str
 			f.emitExpr(attr.Value, attrType)
-			f.emit("(if (result i32)")
+			f.emit("(if (result externref)")
 			f.emit("(then")
 			f.emit(fmt.Sprintf("(local.get %s)", tempLocal))
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(" "+attr.Name)))

@@ -137,16 +137,20 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 		if err != nil {
 			return rt, err
 		}
-		handle, ok := result.(int32)
-		if !ok {
-			return rt, fmt.Errorf("__main_result is not int32: %T", result)
-		}
-		if msg, isErr, err := rt.resultErrorMessage(handle); err != nil {
-			return rt, err
-		} else if isErr {
-			return rt, errors.New(msg)
+		if result != nil {
+			handle, ok := result.(*Value)
+			if !ok {
+				return rt, fmt.Errorf("__main_result is not externref: %T", result)
+			}
+			if msg, isErr, err := rt.resultErrorMessage(handle); err != nil {
+				return rt, err
+			} else if isErr {
+				return rt, errors.New(msg)
+			}
 		}
 	}
+	// _start終了時は1回強制GCして短命なexternrefを回収する。
+	rt.maybeStoreGC(true)
 	if sandbox {
 		return rt, nil
 	}
