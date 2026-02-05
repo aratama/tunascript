@@ -8,7 +8,7 @@ substitutions:
   _IMAGE_NAME: tuna-examples
   _TODO_SERVICE_NAME: tuna-todo
   _PLAYGROUND_SERVICE_NAME: tuna-playground
-  _REGION: us-central1
+  _REGION: asia-northeast1
   _PORT: "8888"
 
 steps:
