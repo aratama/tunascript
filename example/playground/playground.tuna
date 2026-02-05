@@ -39,7 +39,7 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
           <section class="panel">
             <form method="POST" action={runPath} class="editor-form">
               <header class="bar">
-                <span class="title">TunaScript Source</span>
+                <span class="title">TunaScript Playground</span>
                 <span class="actions">
                   <button class="button" type="submit">Format & Run</button>
                 </span>

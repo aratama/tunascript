@@ -1,0 +1,15 @@
+// expect: <ul><li>A</li><li>B</li></ul>
+
+import { log } from "prelude"
+import { map } from "array"
+import { type JSX } from "http"
+
+function List(props: { rows: { title: string }[] }): JSX {
+  const items = map(props.rows, function (row) { return <li>{row.title}</li> })
+  return <ul>{items}</ul>
+}
+
+export function main(): void {
+  const rows = [{ title: "A" }, { title: "B" }]
+  log(<List rows={rows} />)
+}

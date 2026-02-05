@@ -1629,9 +1629,6 @@ func (c *Checker) checkJSXComponent(env *Env, e *ast.JSXElement) *Type {
 		attrType := Bool()
 		if attr.Value != nil {
 			attrType = c.checkExpr(env, attr.Value, nil)
-			if attrType != nil && !isPrimitiveKind(attrType.Kind) {
-				c.errorf(attr.Span, "JSX attribute value must be a primitive type")
-			}
 		}
 
 		targetType := paramType.PropType(attr.Name)
