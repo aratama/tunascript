@@ -49,4 +49,4 @@ ENTRYPOINT ["/app/tuna"]
 # - cloudbuild.yaml の Playground サービスでは `--args` により:
 #     /app/tuna launch example/playground/playground.wasm /tmp/playground.sqlite3
 # というように、同一イメージでも起動対象を切り替えている。
-CMD ["launch", "example/server/server.wasm", "example/server/todo.sqlite3"]
+CMD ["launch", "example/playground/playground.wasm", "example/playground/playground.sqlite3"]
