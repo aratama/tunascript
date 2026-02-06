@@ -36,6 +36,9 @@ body {
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
   min-width: 0;
 }
+.panel > .editor-form {
+  grid-row: 1 / -1;
+}
 .bar {
   display: flex;
   align-items: center;
@@ -70,22 +73,23 @@ body {
   flex-shrink: 0;
 }
 .editor-form {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto 1fr;
   min-height: 0;
   height: 100%;
   min-width: 0;
+  overflow: hidden;
 }
 .editor-shell {
   display: none;
   width: 100%;
-  flex: 1;
+  height: 100%;
   min-height: 0;
   min-width: 0;
 }
 .editor-source {
   width: 100%;
-  flex: 1;
+  height: 100%;
   min-height: 0;
   border: 0;
   resize: none;

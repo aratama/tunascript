@@ -1,4 +1,4 @@
-export const PLAYGROUND_EDITOR_JS: string = `import { EditorState } from "https://esm.sh/@codemirror/state@6"
+import { EditorState, Compartment } from "https://esm.sh/@codemirror/state@6"
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "https://esm.sh/@codemirror/view@6"
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "https://esm.sh/@codemirror/commands@6"
 import { LRLanguage, LanguageSupport, bracketMatching, syntaxHighlighting, HighlightStyle } from "https://esm.sh/@codemirror/language@6"
@@ -96,6 +96,7 @@ async function setupEditor() {
     return
   }
 
+  const languageCompartment = new Compartment()
   const extensions = [
     lineNumbers(),
     highlightActiveLineGutter(),
@@ -104,19 +105,11 @@ async function setupEditor() {
     keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
     editorTheme,
     bracketMatching(),
-    syntaxHighlighting(tunaHighlightStyle)
+    syntaxHighlighting(tunaHighlightStyle),
+    languageCompartment.of([])
   ]
 
-  try {
-    const response = await fetch(grammarPath, { cache: "no-store" })
-    if (!response.ok) {
-      throw new Error("failed to load grammar: " + response.status)
-    }
-    const grammarText = await response.text()
-    extensions.push(buildTunaLanguageSupport(grammarText))
-  } catch (error) {
-    console.error("TunaScript grammar load failed", error)
-  }
+  form.classList.add("editor-ready")
 
   const view = new EditorView({
     state: EditorState.create({
@@ -126,11 +119,22 @@ async function setupEditor() {
     parent: editorRoot
   })
 
-  form.classList.add("editor-ready")
   form.addEventListener("submit", function () {
     sourceField.value = view.state.doc.toString()
   })
+
+  try {
+    const response = await fetch(grammarPath, { cache: "no-store" })
+    if (!response.ok) {
+      throw new Error("failed to load grammar: " + response.status)
+    }
+    const grammarText = await response.text()
+    view.dispatch({
+      effects: languageCompartment.reconfigure(buildTunaLanguageSupport(grammarText))
+    })
+  } catch (error) {
+    console.error("TunaScript grammar load failed", error)
+  }
 }
 
 setupEditor()
-`

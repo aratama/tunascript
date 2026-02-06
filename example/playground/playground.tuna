@@ -6,7 +6,7 @@ import { createServer, addRoute, listen, responseHtml, responseRedirect, type JS
 import { dbOpen } from "sqlite"
 import { readText } from "file"
 import style from "./style.css"
-import { PLAYGROUND_EDITOR_JS } from "./editor_script.tuna"
+import PLAYGROUND_EDITOR_JS from "./editor_script.js"
 import TUNASCRIPT_LEZER_GRAMMAR from "./tunascript.grammar"
 
 type RunResult = {
