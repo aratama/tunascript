@@ -9,6 +9,17 @@ export function fallback<T>(value: T | error, defaultValue: T): T {
   }
 }
 
+export function andThen<T, U>(value: T | error, fn: (v: T) => U | error): U | error {
+  return switch (value) {
+    case e as error: e
+    case v as T: fn(v)
+  }
+}
+
+export function error(message: string): error {
+  return { "type": "error", message }
+}
+
 extern function log<T>(value: T): void
 export extern function toString(value: integer | number | boolean | string): string
 export extern function gc(): void
@@ -41,6 +52,7 @@ extern function arr_get(arr: RawValue, index: short): RawValue
 extern function arr_get_result(arr: RawValue, index: short): RawValue
 extern function arr_len(arr: RawValue): short
 extern function arr_join(arr: RawValue): string
+extern function call_fn(fn: string, args: RawValue): RawValue
 
 extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
 extern function register_tables(schemaPtr: short, schemaLen: short): void

@@ -1,0 +1,12 @@
+// expect: hello
+// expect: hello
+
+import { log } from "prelude"
+
+export function main(): void {
+  const message: string = "hello"
+  const obj = { message }
+  const err: error = { "type": "error", message }
+  log(obj.message)
+  log(err.message)
+}

@@ -1965,7 +1965,7 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 		c.errorf(call.Span, "type arguments are only supported for builtin functions")
 		return nil
 	}
-	if sym.Kind != SymFunc || sym.Type == nil || sym.Type.Kind != KindFunc {
+	if sym.Type == nil || sym.Type.Kind != KindFunc {
 		c.errorf(call.Span, "%s is not function", ident.Name)
 		return nil
 	}
@@ -3916,7 +3916,7 @@ func getFileTypeAlias(name string) *TypeAlias {
 func resultErrorType() *Type {
 	return NewObject([]Prop{
 		{Name: "message", Type: String()},
-		{Name: "type", Type: LiteralString("Error")},
+		{Name: "type", Type: LiteralString("error")},
 	})
 }
 
@@ -3929,7 +3929,7 @@ func isResultErrorType(t *Type) bool {
 	if typ == nil || msg == nil {
 		return false
 	}
-	if !typ.Equals(LiteralString("Error")) {
+	if !typ.Equals(LiteralString("error")) {
 		return false
 	}
 	return msg.AssignableTo(String())

@@ -106,6 +106,99 @@ export function main(): void {
 	}
 }
 
+func TestPreludeAndThen(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString, andThen, error } from "prelude"
+
+function parseValue(text: string): integer | error {
+  if (text == "bad") {
+    return error("boom")
+  }
+  return 20
+}
+
+function plusOne(v: integer): integer | error {
+  return v + 1
+}
+
+export function main(): void {
+  const ok: integer | error = andThen(parseValue("ok"), plusOne)
+  const ng: integer | error = andThen(parseValue("bad"), plusOne)
+
+  const okText: string = switch (ok) {
+    case v as integer: toString(v)
+    case e as error: e.message
+  }
+  const ngText: string = switch (ng) {
+    case v as integer: toString(v)
+    case e as error: e.message
+  }
+  log(okText)
+  log(ngText)
+}
+`,
+	}, "main.ts")
+	want := "21\nboom\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
+func TestHigherOrderFunctionVariableCall(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+
+function apply(v: integer, fn: (integer) => integer): integer {
+  return fn(v)
+}
+
+function inc(v: integer): integer {
+  return v + 1
+}
+
+function add2(v: integer): integer {
+  return v + 2
+}
+
+export function main(): void {
+  log(toString(apply(40, inc)))
+  log(toString(apply(40, add2)))
+}
+`,
+	}, "main.ts")
+	want := "41\n42\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
+func TestMapWithFunctionVariable(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+import { map } from "array"
+
+function applyMap(xs: integer[], fn: (integer) => integer): integer[] {
+  return map(xs, fn)
+}
+
+function add3(x: integer): integer {
+  return x + 3
+}
+
+export function main(): void {
+  const ys: integer[] = applyMap([1, 2, 3], add3)
+  for (const y: integer of ys) {
+    log(toString(y))
+  }
+}
+`,
+	}, "main.ts")
+	want := "4\n5\n6\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
 func TestObjectSpreadAndStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log } from "prelude"

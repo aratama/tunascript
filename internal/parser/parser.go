@@ -845,15 +845,31 @@ func (p *Parser) parseObjectLit() ast.Expr {
 				keyTok := p.curr
 				found := true
 				switch keyTok.Kind {
-				case lexer.TokenString, lexer.TokenIdent:
+				case lexer.TokenString:
 					p.next()
 					key := keyTok.Text
-					keyQuoted := keyTok.Kind == lexer.TokenString
 					p.expect(lexer.TokenColon)
 					value := p.parseExpr(0)
-					entries = append(entries, ast.ObjectEntry{Kind: ast.ObjectProp, Key: key, KeyQuoted: keyQuoted, Value: value, Span: spanFromPos(posFromLex(keyTok.Pos), value.GetSpan().End)})
+					entries = append(entries, ast.ObjectEntry{Kind: ast.ObjectProp, Key: key, KeyQuoted: true, Value: value, Span: spanFromPos(posFromLex(keyTok.Pos), value.GetSpan().End)})
+				case lexer.TokenIdent:
+					p.next()
+					key := keyTok.Text
+					var value ast.Expr
+					if p.curr.Kind == lexer.TokenColon {
+						p.next()
+						value = p.parseExpr(0)
+					} else if p.curr.Kind == lexer.TokenComma || p.curr.Kind == lexer.TokenRBrace {
+						// Object property shorthand: { message } => { message: message }
+						value = &ast.IdentExpr{Name: key, Span: spanFrom(keyTok.Pos, keyTok.Pos)}
+					} else {
+						p.err("':' required after object key")
+						found = false
+					}
+					if found {
+						entries = append(entries, ast.ObjectEntry{Kind: ast.ObjectProp, Key: key, KeyQuoted: false, Value: value, Span: spanFromPos(posFromLex(keyTok.Pos), value.GetSpan().End)})
+					}
 				default:
-					p.err("string literal key required")
+					p.err("object key required")
 					found = false
 				}
 				if !found {

@@ -699,11 +699,21 @@ func (f *Formatter) formatObjectLit(e *ast.ObjectLit) {
 			f.formatExpr(entry.Value)
 		} else {
 			f.formatObjectKey(entry.Key, entry.KeyQuoted)
-			f.buf.WriteString(": ")
-			f.formatExpr(entry.Value)
+			if !isObjectPropShorthand(entry) {
+				f.buf.WriteString(": ")
+				f.formatExpr(entry.Value)
+			}
 		}
 	}
 	f.buf.WriteString(" }")
+}
+
+func isObjectPropShorthand(entry ast.ObjectEntry) bool {
+	if entry.Kind != ast.ObjectProp || entry.KeyQuoted {
+		return false
+	}
+	ident, ok := entry.Value.(*ast.IdentExpr)
+	return ok && ident.Name == entry.Key
 }
 
 func (f *Formatter) formatCallExpr(e *ast.CallExpr) {

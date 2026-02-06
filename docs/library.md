@@ -16,7 +16,7 @@ TunaScriptには以下の組み込みライブラリがあります。
 
 - `error`
   - 言語組み込み型です（`prelude` からの import は不要）。
-  - 実データ構造は `{ type: "Error", message: string }` です。
+  - 実データ構造は `{ type: "error", message: string }` です。
 
 ### 12.1 関数
 
@@ -24,8 +24,13 @@ TunaScriptには以下の組み込みライブラリがあります。
   - 文字列はそのまま出力します。
   - それ以外は `stringify` 相当で出力します。
   - `tuna run --sandbox` では標準出力へ直接は出さず、内部バッファに蓄積されて最終JSONの `stdout` フィールドに入ります。
+- `error(message: string): error`
+  - `error` 値を生成するユーティリティー関数です（`{ type: "error", message }` を返します）。
 - `fallback<T>(result: T | error, defaultValue: T): T`
   - `result` が `error` の場合は `defaultValue` を返し、それ以外は `result` を返します。
+- `andThen<T, U>(value: T | error, fn: (v: T) => U | error): U | error`
+  - `value` が成功値なら `fn` を適用し、`error` ならそのまま返します。
+  - `fn` には関数値（関数名・関数リテラル・関数型変数）を渡せます。
 
 例:
 

@@ -109,7 +109,7 @@ func (g *Generator) collectStrings() {
 	g.internString("")
 	// Built-in error handling relies on these strings even if user code doesn't reference them directly.
 	g.internString("type")
-	g.internString("Error")
+	g.internString("error")
 	// addRoute のメソッド省略時に使うワイルドカード。
 	g.internString("*")
 	// Generate and intern table definitions JSON if any tables exist
@@ -387,6 +387,11 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		g.internString(e.Value)
+	case *ast.IdentExpr:
+		sym := resolveSymbolAlias(g.checker.IdentSymbols[e])
+		if sym != nil && sym.Kind == types.SymFunc {
+			g.internString(g.funcValueExportName(sym))
+		}
 	case *ast.TemplateLit:
 		for _, segment := range e.Segments {
 			g.internString(segment)
@@ -475,6 +480,7 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 			g.collectStringsStmt(stmt)
 		}
 	case *ast.ArrowFunc:
+		g.internString(g.lambdaValueExportName(e))
 		if e.Body != nil {
 			g.collectStringsBlock(e.Body)
 		}
@@ -993,6 +999,7 @@ func (g *Generator) emitFunctions(w *watBuilder, entry string) {
 	}
 
 	g.emitLambdaFuncs(w)
+	g.emitFunctionValueWrappers(w)
 	g.emitStart(w, entryAbs)
 }
 
@@ -1307,6 +1314,67 @@ func (g *Generator) emitLambda(w *watBuilder, info *lambdaInfo) {
 	}
 }
 
+func (g *Generator) emitFunctionValueWrappers(w *watBuilder) {
+	emitted := map[*types.Symbol]bool{}
+	for _, mod := range g.modules {
+		for _, sym := range mod.Top {
+			target := resolveSymbolAlias(sym)
+			if target == nil || emitted[target] {
+				continue
+			}
+			if target.Kind != types.SymFunc || target.Type == nil || target.Type.Kind != types.KindFunc {
+				continue
+			}
+			if _, ok := g.funcNames[target]; !ok {
+				continue
+			}
+			emitted[target] = true
+			g.emitFunctionValueWrapper(
+				w,
+				g.funcValueWrapperName(target),
+				g.funcValueExportName(target),
+				g.funcCallName(target),
+				target.Type,
+			)
+		}
+	}
+	for _, info := range g.lambdaOrder {
+		if info.typ == nil || info.typ.Kind != types.KindFunc {
+			continue
+		}
+		g.emitFunctionValueWrapper(
+			w,
+			g.lambdaValueWrapperName(info.fn),
+			g.lambdaValueExportName(info.fn),
+			info.name,
+			info.typ,
+		)
+	}
+}
+
+func (g *Generator) emitFunctionValueWrapper(w *watBuilder, wrapperName, exportName, targetName string, fnType *types.Type) {
+	if fnType == nil || fnType.Kind != types.KindFunc {
+		return
+	}
+	w.line(fmt.Sprintf("(func %s (param $args externref) (result externref)", wrapperName))
+	w.indent++
+	for i, p := range fnType.Params {
+		w.line("(local.get $args)")
+		w.line(fmt.Sprintf("(i32.const %d)", i))
+		w.line("(call $prelude.arr_get)")
+		emitUnboxPrimitive(w, p)
+	}
+	w.line(fmt.Sprintf("(call %s)", targetName))
+	if fnType.Ret == nil || fnType.Ret.Kind == types.KindVoid {
+		w.line("(call $prelude.val_undefined)")
+	} else {
+		emitBoxPrimitive(w, fnType.Ret)
+	}
+	w.indent--
+	w.line(")")
+	w.line(fmt.Sprintf("(export \"%s\" (func %s))", exportName, wrapperName))
+}
+
 // emitHttpLambdaWrapper creates a wrapper function for HTTP handler lambdas
 func (g *Generator) emitHttpLambdaWrapper(w *watBuilder, info *lambdaInfo) {
 	funcType := info.typ
@@ -1369,6 +1437,22 @@ func (g *Generator) funcCallName(sym *types.Symbol) string {
 		return fmt.Sprintf("$%s.%s", moduleName, sym.Name)
 	}
 	return g.funcImplName(sym)
+}
+
+func (g *Generator) funcValueWrapperName(sym *types.Symbol) string {
+	return fmt.Sprintf("%s_fnvalue", g.funcNames[sym])
+}
+
+func (g *Generator) funcValueExportName(sym *types.Symbol) string {
+	return strings.TrimPrefix(g.funcValueWrapperName(sym), "$")
+}
+
+func (g *Generator) lambdaValueWrapperName(fn *ast.ArrowFunc) string {
+	return fmt.Sprintf("%s_fnvalue", g.lambdaName(fn))
+}
+
+func (g *Generator) lambdaValueExportName(fn *ast.ArrowFunc) string {
+	return strings.TrimPrefix(g.lambdaValueWrapperName(fn), "$")
 }
 
 func wasmType(t *types.Type) string {
@@ -1795,11 +1879,13 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 	case *ast.TemplateLit:
 		f.emitTemplateLit(e)
 	case *ast.IdentExpr:
-		sym := f.g.checker.IdentSymbols[e]
+		sym := resolveSymbolAlias(f.g.checker.IdentSymbols[e])
 		if local, ok := f.lookup(e.Name); ok {
 			f.emit(fmt.Sprintf("(local.get %s)", local))
 		} else if sym != nil && sym.Kind == types.SymVar {
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.globalNames[sym]))
+		} else if sym != nil && sym.Kind == types.SymFunc {
+			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(f.g.funcValueExportName(sym))))
 		}
 		if sym != nil && sym.Kind == types.SymVar {
 			storageType := sym.StorageType
@@ -1810,6 +1896,8 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 				f.emitUnboxIfPrimitive(t)
 			}
 		}
+	case *ast.ArrowFunc:
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(f.g.lambdaValueExportName(e))))
 	case *ast.UnaryExpr:
 		if e.Op == "+" {
 			f.emitExpr(e.Expr, f.g.checker.ExprTypes[e.Expr])
@@ -1982,7 +2070,7 @@ func splitResultMembers(t *types.Type) (success *types.Type, err *types.Type) {
 		if typeProp == nil || msgProp == nil {
 			return false
 		}
-		return typeProp.Equals(types.LiteralString("Error")) && msgProp.AssignableTo(types.String())
+		return typeProp.Equals(types.LiteralString("error")) && msgProp.AssignableTo(types.String())
 	}
 	var successMembers []*types.Type
 	var errMembers []*types.Type
@@ -2393,6 +2481,10 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 
 	ident, ok := call.Callee.(*ast.IdentExpr)
 	if !ok {
+		calleeType := f.g.checker.ExprTypes[call.Callee]
+		if calleeType != nil && calleeType.Kind == types.KindFunc {
+			f.emitFunctionValueCallExpr(call.Callee, calleeType, call.Args, t)
+		}
 		return
 	}
 	name := ident.Name
@@ -2409,7 +2501,10 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		}
 		return
 	}
-	if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Kind == types.KindFunc {
+	if sym.Type == nil || sym.Type.Kind != types.KindFunc {
+		return
+	}
+	if sym.Kind == types.SymFunc {
 		for i, arg := range call.Args {
 			argType := f.g.checker.ExprTypes[arg]
 			f.emitExpr(arg, argType)
@@ -2417,15 +2512,65 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 				f.emitCoerce(argType, sym.Type.Params[i])
 			}
 		}
-	} else {
-		for _, arg := range call.Args {
-			f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(sym)))
+		if sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
+			f.emitUnboxIfPrimitive(t)
 		}
+		return
 	}
-	f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(sym)))
-	if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
-		f.emitUnboxIfPrimitive(t)
+	f.emitFunctionValueCallExpr(call.Callee, sym.Type, call.Args, t)
+}
+
+func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.Type, args []ast.Expr, t *types.Type) {
+	fnLocal := f.addLocalRaw("externref")
+	argsLocal := f.addLocalRaw("externref")
+
+	f.emitExpr(callee, fnType)
+	f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
+	f.emit(fmt.Sprintf("(i32.const %d)", len(args)))
+	f.emit("(call $prelude.arr_new)")
+	f.emit(fmt.Sprintf("(local.set %s)", argsLocal))
+
+	for i, arg := range args {
+		argType := f.g.checker.ExprTypes[arg]
+		paramType := argType
+		if fnType != nil && i < len(fnType.Params) {
+			paramType = fnType.Params[i]
+		}
+		f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+		f.emit(fmt.Sprintf("(i32.const %d)", i))
+		f.emitExpr(arg, argType)
+		if fnType != nil && i < len(fnType.Params) {
+			f.emitCoerce(argType, fnType.Params[i])
+		}
+		f.emitBoxIfPrimitive(paramType)
+		f.emit("(call $prelude.arr_set)")
 	}
+
+	f.emit(fmt.Sprintf("(local.get %s)", fnLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+	f.emit("(call $prelude.call_fn)")
+	if t != nil && t.Kind == types.KindVoid {
+		f.emit("drop")
+		return
+	}
+	f.emitUnboxIfPrimitive(t)
+}
+
+func (f *funcEmitter) emitFunctionValueCallFromBoxedLocals(fnLocal string, argLocals []string) {
+	argsLocal := f.addLocalRaw("externref")
+	f.emit(fmt.Sprintf("(i32.const %d)", len(argLocals)))
+	f.emit("(call $prelude.arr_new)")
+	f.emit(fmt.Sprintf("(local.set %s)", argsLocal))
+	for i, argLocal := range argLocals {
+		f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+		f.emit(fmt.Sprintf("(i32.const %d)", i))
+		f.emit(fmt.Sprintf("(local.get %s)", argLocal))
+		f.emit("(call $prelude.arr_set)")
+	}
+	f.emit(fmt.Sprintf("(local.get %s)", fnLocal))
+	f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+	f.emit("(call $prelude.call_fn)")
 }
 
 // emitMethodCallExpr emits code for method-style calls: obj.func(args) => func(obj, args)
@@ -2481,9 +2626,12 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 func (f *funcEmitter) resolveFunctionExpr(expr ast.Expr) (string, *types.Type) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
-		sym := f.g.checker.IdentSymbols[e]
-		if sym == nil {
+		sym := resolveSymbolAlias(f.g.checker.IdentSymbols[e])
+		if sym == nil || sym.Type == nil || sym.Type.Kind != types.KindFunc {
 			return "", nil
+		}
+		if sym.Kind != types.SymFunc {
+			return "", sym.Type
 		}
 		return f.g.funcCallName(sym), sym.Type
 	case *ast.ArrowFunc:
@@ -2850,12 +2998,23 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	arrExpr := call.Args[0]
 	fnExpr := call.Args[1]
 	arrType := f.g.checker.ExprTypes[arrExpr]
+	fnExprType := f.g.checker.ExprTypes[fnExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
+	if fnType == nil {
+		return
+	}
+	useIndirect := fnName == ""
+	fnLocal := ""
 	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	resultLocal := f.addLocalRaw("externref")
 	valueLocal := f.addLocalRaw("externref")
+	if useIndirect {
+		fnLocal = f.addLocalRaw("externref")
+		f.emitExpr(fnExpr, fnExprType)
+		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
+	}
 
 	f.emitExpr(arrExpr, arrType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -2879,11 +3038,17 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
 	f.emit("(call $prelude.arr_get)")
-	if len(fnType.Params) > 0 {
-		f.emitUnboxIfPrimitive(fnType.Params[0])
+	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
+	if useIndirect {
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+	} else {
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		if len(fnType.Params) > 0 {
+			f.emitUnboxIfPrimitive(fnType.Params[0])
+		}
+		f.emit(fmt.Sprintf("(call %s)", fnName))
+		f.emitBoxIfPrimitive(fnType.Ret)
 	}
-	f.emit(fmt.Sprintf("(call %s)", fnName))
-	f.emitBoxIfPrimitive(fnType.Ret)
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", resultLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
@@ -2905,7 +3070,13 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	arrExpr := call.Args[0]
 	fnExpr := call.Args[1]
 	arrType := f.g.checker.ExprTypes[arrExpr]
+	fnExprType := f.g.checker.ExprTypes[fnExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
+	if fnType == nil {
+		return
+	}
+	useIndirect := fnName == ""
+	fnLocal := ""
 	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
@@ -2913,6 +3084,11 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	resultLocal := f.addLocalRaw("externref")
 	outIdxLocal := f.addLocalRaw("i32")
 	valueLocal := f.addLocalRaw("externref")
+	if useIndirect {
+		fnLocal = f.addLocalRaw("externref")
+		f.emitExpr(fnExpr, fnExprType)
+		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
+	}
 
 	f.emitExpr(arrExpr, arrType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -2937,11 +3113,16 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
 	f.emit("(call $prelude.arr_get)")
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
-	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
-	if len(fnType.Params) > 0 {
-		f.emitUnboxIfPrimitive(fnType.Params[0])
+	if useIndirect {
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+		f.emitUnboxIfPrimitive(types.Bool())
+	} else {
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		if len(fnType.Params) > 0 {
+			f.emitUnboxIfPrimitive(fnType.Params[0])
+		}
+		f.emit(fmt.Sprintf("(call %s)", fnName))
 	}
-	f.emit(fmt.Sprintf("(call %s)", fnName))
 	f.emit("(if")
 	f.indent++
 	f.emit("(then")
@@ -2984,11 +3165,16 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
 	f.emit("(call $prelude.arr_get)")
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
-	f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
-	if len(fnType.Params) > 0 {
-		f.emitUnboxIfPrimitive(fnType.Params[0])
+	if useIndirect {
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+		f.emitUnboxIfPrimitive(types.Bool())
+	} else {
+		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
+		if len(fnType.Params) > 0 {
+			f.emitUnboxIfPrimitive(fnType.Params[0])
+		}
+		f.emit(fmt.Sprintf("(call %s)", fnName))
 	}
-	f.emit(fmt.Sprintf("(call %s)", fnName))
 	f.emit("(if")
 	f.indent++
 	f.emit("(then")
@@ -3022,12 +3208,27 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 	fnExpr := call.Args[1]
 	initExpr := call.Args[2]
 	arrType := f.g.checker.ExprTypes[arrExpr]
+	fnExprType := f.g.checker.ExprTypes[fnExpr]
 	fnName, fnType := f.resolveFunctionExpr(fnExpr)
+	if fnType == nil {
+		return
+	}
+	useIndirect := fnName == ""
+	fnLocal := ""
 	accType := fnType.Ret
 	arrLocal := f.addLocalRaw("externref")
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	accLocal := f.addLocalRaw(valueLocalType(accType))
+	accHandleLocal := ""
+	valueHandleLocal := ""
+	if useIndirect {
+		fnLocal = f.addLocalRaw("externref")
+		accHandleLocal = f.addLocalRaw("externref")
+		valueHandleLocal = f.addLocalRaw("externref")
+		f.emitExpr(fnExpr, fnExprType)
+		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
+	}
 
 	f.emitExpr(arrExpr, arrType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -3047,14 +3248,26 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 	f.emit(fmt.Sprintf("(local.get %s)", lenLocal))
 	f.emit("i32.ge_u")
 	f.emit("br_if $reduce_end")
-	f.emit(fmt.Sprintf("(local.get %s)", accLocal))
-	f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
-	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
-	f.emit("(call $prelude.arr_get)")
-	if len(fnType.Params) > 1 {
-		f.emitUnboxIfPrimitive(fnType.Params[1])
+	if useIndirect {
+		f.emit(fmt.Sprintf("(local.get %s)", accLocal))
+		f.emitBoxIfPrimitive(accType)
+		f.emit(fmt.Sprintf("(local.set %s)", accHandleLocal))
+		f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
+		f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+		f.emit("(call $prelude.arr_get)")
+		f.emit(fmt.Sprintf("(local.set %s)", valueHandleLocal))
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{accHandleLocal, valueHandleLocal})
+		f.emitUnboxIfPrimitive(accType)
+	} else {
+		f.emit(fmt.Sprintf("(local.get %s)", accLocal))
+		f.emit(fmt.Sprintf("(local.get %s)", arrLocal))
+		f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
+		f.emit("(call $prelude.arr_get)")
+		if len(fnType.Params) > 1 {
+			f.emitUnboxIfPrimitive(fnType.Params[1])
+		}
+		f.emit(fmt.Sprintf("(call %s)", fnName))
 	}
-	f.emit(fmt.Sprintf("(call %s)", fnName))
 	f.emit(fmt.Sprintf("(local.set %s)", accLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
 	f.emit("(i32.const 1)")
@@ -3299,6 +3512,9 @@ func (f *funcEmitter) emitBoxIfPrimitive(t *types.Type) {
 	switch t.Kind {
 	case types.KindI64:
 		f.emit("(call $prelude.val_from_i64)")
+	case types.KindI32:
+		f.emit("i64.extend_i32_s")
+		f.emit("(call $prelude.val_from_i64)")
 	case types.KindF64:
 		f.emit("(call $prelude.val_from_f64)")
 	case types.KindBool:
@@ -3313,6 +3529,9 @@ func (f *funcEmitter) emitUnboxIfPrimitive(t *types.Type) {
 	switch t.Kind {
 	case types.KindI64:
 		f.emit("(call $prelude.val_to_i64)")
+	case types.KindI32:
+		f.emit("(call $prelude.val_to_i64)")
+		f.emit("i32.wrap_i64")
 	case types.KindF64:
 		f.emit("(call $prelude.val_to_f64)")
 	case types.KindBool:
@@ -3338,6 +3557,40 @@ func (f *funcEmitter) emitCoerce(from, to *types.Type) {
 	}
 	if from.Kind == types.KindUnion && to.Kind != types.KindUnion {
 		f.emitUnboxIfPrimitive(to)
+	}
+}
+
+func emitBoxPrimitive(w *watBuilder, t *types.Type) {
+	if t == nil {
+		return
+	}
+	switch t.Kind {
+	case types.KindI64:
+		w.line("(call $prelude.val_from_i64)")
+	case types.KindI32:
+		w.line("i64.extend_i32_s")
+		w.line("(call $prelude.val_from_i64)")
+	case types.KindF64:
+		w.line("(call $prelude.val_from_f64)")
+	case types.KindBool:
+		w.line("(call $prelude.val_from_bool)")
+	}
+}
+
+func emitUnboxPrimitive(w *watBuilder, t *types.Type) {
+	if t == nil {
+		return
+	}
+	switch t.Kind {
+	case types.KindI64:
+		w.line("(call $prelude.val_to_i64)")
+	case types.KindI32:
+		w.line("(call $prelude.val_to_i64)")
+		w.line("i32.wrap_i64")
+	case types.KindF64:
+		w.line("(call $prelude.val_to_f64)")
+	case types.KindBool:
+		w.line("(call $prelude.val_to_bool)")
 	}
 }
 

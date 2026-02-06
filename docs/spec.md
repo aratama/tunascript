@@ -29,7 +29,7 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 
 `json` は任意のJSON値を表すプリミティブ型です。`json` はUnion型ではないため、`switch` 式の `case v as T` による型の絞り込み（値の取り出し）はできません。
 
-`error` は言語組み込みのエラー型です。実データ構造は `{ type: "Error", message: string }` で、`?` 演算子や `T | error` の失敗側として使います。
+`error` は言語組み込みのエラー型です。実データ構造は `{ type: "error", message: string }` で、`?` 演算子や `T | error` の失敗側として使います。
 
 `short` は Wasm の `i32` に対応する32bit整数型です。主に `prelude` の低レベル `extern function` 宣言で使うための型で、通常のアプリケーションコードでは `integer` の使用を推奨します。
 
@@ -369,7 +369,7 @@ switch (expr) {
 - `default` は省略可能です（値を返すswitch式では推奨します）。
 - Union型の分岐は `case pattern as T:` を使います。
   - `pattern` は束縛パターンです（例: `name`, `{ prop }`, `[a, b]`）
-  - `T` は型名（型エイリアス）でも型式でも構いません（例: `error`, `string`, `{ type: "Error", message: string }`）
+  - `T` は型名（型エイリアス）でも型式でも構いません（例: `error`, `string`, `{ type: "error", message: string }`）
   - `case name as T` の中では `name` は `T` として扱われます（`name` は任意の識別子で構いません）
   - `switch (x)` の `case x as T` は `x` の型だけを絞り込む構文で、新しい変数宣言（シャドーイング）ではありません
   - `case y as T` のように別名 `y` を束縛する場合、外側スコープに同名 `y` があるとシャドーイングエラーになります
@@ -467,7 +467,8 @@ line2`
 
 ## 8. オブジェクト
 
-- キーは **文字列リテラルのみ** です。
+- キーは識別子または文字列リテラルです（例: `{ message: "x", "type": "error" }`）。
+- オブジェクトリテラルでは、識別子キーと同名の変数を値に使う場合に省略記法が使えます（例: `{ message }` は `{ message: message }` と同じ）。
 - アクセスは `obj.foo` のみです。
 - イミュータブルです。
 - スプレッド: `{ ...obj, prop: value }` です。

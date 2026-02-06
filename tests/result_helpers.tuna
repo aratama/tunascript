@@ -3,7 +3,7 @@
 // expect: error
 // expect: oops
 
-import { log } from "prelude"
+import { log, error } from "prelude"
 
 export function main(): void {
   const a: string | error = "ready"
@@ -18,7 +18,7 @@ export function main(): void {
     }
   }
 
-  const b: string | error = { "type": "Error", "message": "oops" }
+  const b: string | error = error("oops")
   switch (b) {
     case b as string: {
       log("ok")

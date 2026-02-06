@@ -219,7 +219,7 @@ export function main(): void {
       log(toString(ok.exitCode))
       log(ok.stdout)
     }
-    case err as { type: "Error", message: string }: {
+    case err as { type: "error", message: string }: {
       log("decode error: " + err.message)
     }
   }
@@ -250,7 +250,7 @@ export function main(): void {
     case formatted as string: {
       log(formatted)
     }
-    case err as { type: "Error", message: string }: {
+    case err as { type: "error", message: string }: {
       log("unexpected formatter error: " + err.message)
     }
   }
@@ -260,7 +260,7 @@ export function main(): void {
     case formatted as string: {
       log("unexpected formatter success: " + formatted)
     }
-    case err as { type: "Error", message: string }: {
+    case err as { type: "error", message: string }: {
       log("formatter-error")
     }
   }

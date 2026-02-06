@@ -59,7 +59,7 @@ func TestMainResultErrorFailsProcess(t *testing.T) {
 
 	src := `
 export function main(): void | error {
-  return { "type": "Error", "message": "boom-from-main" }
+  return { "type": "error", "message": "boom-from-main" }
 }
 `
 
@@ -82,7 +82,7 @@ func TestMainResultErrorFailsSandbox(t *testing.T) {
 
 	src := `
 export function main(): void | error {
-  return { "type": "Error", "message": "sandbox-main-error" }
+  return { "type": "error", "message": "sandbox-main-error" }
 }
 `
 

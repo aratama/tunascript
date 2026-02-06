@@ -411,6 +411,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := define("call_fn", func(fnHandle *Value, argsHandle *Value) *Value {
+		return must(r.callFn(fnHandle, argsHandle))
+	}); err != nil {
+		return err
+	}
 	if err := defineArray("range", func(start int64, end int64) *Value {
 		return r.rangeFunc(start, end)
 	}); err != nil {
@@ -1137,6 +1142,47 @@ func (r *Runtime) arrJoin(arrHandle *Value) (*Value, error) {
 	return r.newValue(Value{Kind: KindString, Str: result}), nil
 }
 
+func (r *Runtime) callFn(fnHandle *Value, argsHandle *Value) (*Value, error) {
+	if r.instance == nil || r.store == nil {
+		return nil, errors.New("no instance")
+	}
+
+	fnVal, err := r.getValue(fnHandle)
+	if err != nil {
+		return nil, err
+	}
+	if fnVal.Kind != KindString {
+		return nil, errors.New("call_fn expects function name string")
+	}
+
+	argsVal, err := r.getValue(argsHandle)
+	if err != nil {
+		return nil, err
+	}
+	if argsVal.Kind != KindArray {
+		return nil, errors.New("call_fn expects argument array")
+	}
+
+	fn := r.instance.GetFunc(r.store, fnVal.Str)
+	if fn == nil {
+		return nil, fmt.Errorf("function not found: %s", fnVal.Str)
+	}
+
+	result, err := fn.Call(r.store, argsHandle)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return undefinedValue, nil
+	}
+
+	handle, ok := result.(*Value)
+	if !ok {
+		return nil, fmt.Errorf("call_fn result is not externref: %T", result)
+	}
+	return handle, nil
+}
+
 func (r *Runtime) rangeFunc(start int64, end int64) *Value {
 	if end < start {
 		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}})
@@ -1378,7 +1424,7 @@ func (r *Runtime) getDecodeSchema(schemaJSON string) (*decodeSchema, error) {
 func (r *Runtime) decodeError(message string) *Value {
 	props := map[string]*Value{
 		"message": r.newValue(Value{Kind: KindString, Str: message}),
-		"type":    r.newValue(Value{Kind: KindString, Str: "Error"}),
+		"type":    r.newValue(Value{Kind: KindString, Str: "error"}),
 	}
 	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}})
 }
@@ -1400,10 +1446,10 @@ func (r *Runtime) resultErrorMessage(handle *Value) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if typeVal.Kind != KindString || typeVal.Str != "Error" {
+	if typeVal.Kind != KindString || typeVal.Str != "error" {
 		return "", false, nil
 	}
-	msg := "Error"
+	msg := "error"
 	if msgHandle, ok := v.Obj.Props["message"]; ok {
 		msgVal, err := r.getValue(msgHandle)
 		if err != nil {
