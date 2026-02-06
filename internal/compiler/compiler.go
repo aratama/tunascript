@@ -29,6 +29,9 @@ func (c *Compiler) Compile(entry string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := c.loadPrelude(abs); err != nil {
+		return nil, err
+	}
 	if err := c.loadRecursive(abs); err != nil {
 		return nil, err
 	}
@@ -49,6 +52,45 @@ func (c *Compiler) Compile(entry string) (*Result, error) {
 		return nil, err
 	}
 	return &Result{Wat: wat, Wasm: wasm}, nil
+}
+
+func (c *Compiler) loadPrelude(entryAbs string) error {
+	if _, ok := c.Modules["prelude"]; ok {
+		return nil
+	}
+	preludePath, ok := findPreludePath(filepath.Dir(entryAbs))
+	if !ok {
+		return nil
+	}
+	src, err := os.ReadFile(preludePath)
+	if err != nil {
+		return err
+	}
+	p := parser.New(preludePath, string(src))
+	mod, err := p.ParseModule()
+	if err != nil {
+		return err
+	}
+	mod.Path = "prelude"
+
+	dir := filepath.Dir(preludePath)
+	for i := range mod.Imports {
+		imp := &mod.Imports[i]
+		if imp.From == "prelude" || imp.From == "json" || imp.From == "array" || imp.From == "runtime" || imp.From == "http" || imp.From == "sqlite" || imp.From == "file" {
+			continue
+		}
+		resolved, err := resolveImport(dir, imp.From)
+		if err != nil {
+			return err
+		}
+		imp.From = resolved
+		if err := c.loadRecursive(resolved); err != nil {
+			return err
+		}
+	}
+
+	c.Modules["prelude"] = mod
+	return nil
 }
 
 func (c *Compiler) loadRecursive(path string) error {
@@ -85,6 +127,33 @@ func (c *Compiler) loadRecursive(path string) error {
 	}
 	c.Modules[path] = mod
 	return nil
+}
+
+func findPreludePath(startDir string) (string, bool) {
+	searchUp := func(dir string) (string, bool) {
+		cur := dir
+		for {
+			candidate := filepath.Join(cur, "lib", "prelude.tuna")
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, true
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+		return "", false
+	}
+	if path, ok := searchUp(startDir); ok {
+		return path, true
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if path, ok := searchUp(cwd); ok {
+			return path, true
+		}
+	}
+	return "", false
 }
 
 func (c *Compiler) loadTextModule(path string) error {

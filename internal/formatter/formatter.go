@@ -124,6 +124,16 @@ func (f *Formatter) formatFuncDecl(d *ast.FuncDecl) {
 	}
 	f.buf.WriteString("function ")
 	f.buf.WriteString(d.Name)
+	if len(d.TypeParams) > 0 {
+		f.buf.WriteString("<")
+		for i, name := range d.TypeParams {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.buf.WriteString(name)
+		}
+		f.buf.WriteString(">")
+	}
 	f.buf.WriteString("(")
 	for i, param := range d.Params {
 		if i > 0 {

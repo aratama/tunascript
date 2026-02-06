@@ -130,12 +130,16 @@ func (p *Parser) parseFuncDecl(export bool) ast.Decl {
 	start := p.curr.Pos
 	p.expect(lexer.TokenFunction)
 	nameTok := p.expect(lexer.TokenIdent)
+	var typeParams []string
+	if p.curr.Kind == lexer.TokenLT {
+		typeParams = p.parseTypeParamList()
+	}
 	params := p.parseParamList()
 	p.expect(lexer.TokenColon)
 	ret := p.parseType()
 	body := p.parseBlock()
 	end := p.curr.Pos
-	return &ast.FuncDecl{Name: nameTok.Text, Export: export, Params: params, Ret: ret, Body: body, Span: spanFrom(start, end)}
+	return &ast.FuncDecl{Name: nameTok.Text, Export: export, TypeParams: typeParams, Params: params, Ret: ret, Body: body, Span: spanFrom(start, end)}
 }
 
 func (p *Parser) parseTableDecl() ast.Decl {

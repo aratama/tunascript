@@ -421,18 +421,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("fallback", func(resultHandle *Value, defaultHandle *Value) *Value {
-		_, isErr, err := r.resultErrorMessage(resultHandle)
-		if err != nil {
-			panic(wasmtime.NewTrap(err.Error()))
-		}
-		if isErr {
-			return must(r.getValue(defaultHandle))
-		}
-		return must(r.getValue(resultHandle))
-	}); err != nil {
-		return err
-	}
 	if err := defineJSON("stringify", func(handle *Value) *Value {
 		return must(r.stringify(handle))
 	}); err != nil {

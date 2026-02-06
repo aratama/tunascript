@@ -39,12 +39,13 @@ func (*ConstDecl) declNode()       {}
 func (d *ConstDecl) GetSpan() Span { return d.Span }
 
 type FuncDecl struct {
-	Name   string
-	Export bool
-	Params []Param
-	Ret    TypeExpr
-	Body   *BlockStmt
-	Span   Span
+	Name       string
+	Export     bool
+	TypeParams []string
+	Params     []Param
+	Ret        TypeExpr
+	Body       *BlockStmt
+	Span       Span
 }
 
 func (*FuncDecl) declNode()       {}

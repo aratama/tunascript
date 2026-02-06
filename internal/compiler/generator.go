@@ -793,7 +793,6 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "http_response_text"},
 		{"prelude", "http_response_text_str"},
 		{"prelude", "intern_string"},
-		{"prelude", "fallback"},
 		{"prelude", "log"},
 		{"prelude", "obj_get"},
 		{"prelude", "obj_new"},
@@ -897,8 +896,6 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result externref))", prefix)
 	case "log":
 		return fmt.Sprintf("(func %s.log (param externref))", prefix)
-	case "fallback":
-		return fmt.Sprintf("(func %s.fallback (param externref externref) (result externref))", prefix)
 	case "obj_get":
 		return fmt.Sprintf("(func %s.obj_get (param externref externref) (result externref))", prefix)
 	case "obj_new":
@@ -1819,7 +1816,7 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 			if storageType == nil {
 				storageType = sym.Type
 			}
-			if storageType != nil && storageType.Kind == types.KindUnion {
+			if storageType != nil && (storageType.Kind == types.KindUnion || storageType.Kind == types.KindTypeParam) {
 				f.emitUnboxIfPrimitive(t)
 			}
 		}
@@ -2271,6 +2268,10 @@ func (f *funcEmitter) emitSwitchCaseBindings(asExpr *ast.AsExpr, valueLocal stri
 }
 
 func (f *funcEmitter) emitTypeGuard(valueLocal string, targetType *types.Type) {
+	if targetType != nil && targetType.Kind == types.KindTypeParam {
+		f.emit("(i32.const 1)")
+		return
+	}
 	if targetType != nil && targetType.Kind == types.KindJSON {
 		// json は実行時にあらゆる値を受け入れるため、型ガードは常に真。
 		f.emit("(i32.const 1)")
@@ -2405,12 +2406,11 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		return
 	}
 	name := ident.Name
-	if module, ok := builtinModule(name); ok {
-		f.emitBuiltinCall(module, name, call, t)
-		return
-	}
 	sym := resolveSymbolAlias(f.g.checker.IdentSymbols[ident])
 	if sym == nil {
+		if module, ok := builtinModule(name); ok {
+			f.emitBuiltinCall(module, name, call, t)
+		}
 		return
 	}
 	if sym.Kind == types.SymBuiltin {
@@ -2433,27 +2433,15 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		}
 	}
 	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
+	if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
+		f.emitUnboxIfPrimitive(t)
+	}
 }
 
 // emitMethodCallExpr emits code for method-style calls: obj.func(args) => func(obj, args)
 func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberExpr, t *types.Type) {
 	funcName := member.Property
-
-	if module, ok := builtinModule(funcName); ok {
-		// Create a synthetic call with object as first argument
-		allArgs := append([]ast.Expr{member.Object}, call.Args...)
-		syntheticCall := &ast.CallExpr{
-			Callee: &ast.IdentExpr{Name: funcName, Span: member.Span},
-			Args:   allArgs,
-			Span:   call.Span,
-		}
-		f.emitBuiltinCall(module, funcName, syntheticCall, t)
-		return
-	}
-
-	// Look up the function symbol
-	// We need to find the symbol for funcName
-	// Since checkMethodCall validated this, we can assume it exists
+	// Look up the function symbol (non-builtin)
 	var targetSym *types.Symbol
 	for _, mod := range f.g.modules {
 		if sym, ok := mod.Top[funcName]; ok && sym.Kind == types.SymFunc {
@@ -2461,7 +2449,20 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 			break
 		}
 	}
-	if targetSym == nil || targetSym.Type == nil || targetSym.Type.Kind != types.KindFunc {
+	if targetSym == nil {
+		if module, ok := builtinModule(funcName); ok {
+			// Create a synthetic call with object as first argument
+			allArgs := append([]ast.Expr{member.Object}, call.Args...)
+			syntheticCall := &ast.CallExpr{
+				Callee: &ast.IdentExpr{Name: funcName, Span: member.Span},
+				Args:   allArgs,
+				Span:   call.Span,
+			}
+			f.emitBuiltinCall(module, funcName, syntheticCall, t)
+		}
+		return
+	}
+	if targetSym.Type == nil || targetSym.Type.Kind != types.KindFunc {
 		return
 	}
 
@@ -2482,6 +2483,9 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 	}
 
 	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(targetSym)))
+	if targetSym.Type.Ret != nil && targetSym.Type.Ret.Kind == types.KindTypeParam {
+		f.emitUnboxIfPrimitive(t)
+	}
 }
 
 func (f *funcEmitter) resolveFunctionExpr(expr ast.Expr) (string, *types.Type) {
@@ -2527,38 +2531,6 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		}
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(schemaStr)))
 		f.emit(fmt.Sprintf("(call $%s.decode)", module))
-	case "Error":
-		arg := call.Args[0]
-		argType := f.g.checker.ExprTypes[arg]
-		objLocal := f.addLocalRaw("externref")
-		f.emit("(call $prelude.obj_new (i32.const 2))")
-		f.emit(fmt.Sprintf("(local.set %s)", objLocal))
-
-		// message: <arg>
-		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
-		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("message")))
-		f.emitExpr(arg, argType)
-		f.emitBoxIfPrimitive(argType)
-		f.emit("(call $prelude.obj_set)")
-
-		// type: "Error"
-		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
-		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("type")))
-		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("Error")))
-		f.emit("(call $prelude.obj_set)")
-
-		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
-	case "fallback":
-		resultArg := call.Args[0]
-		defaultArg := call.Args[1]
-		resultType := f.g.checker.ExprTypes[resultArg]
-		defaultType := f.g.checker.ExprTypes[defaultArg]
-		f.emitExpr(resultArg, resultType)
-		f.emitBoxIfPrimitive(resultType)
-		f.emitExpr(defaultArg, defaultType)
-		f.emitBoxIfPrimitive(defaultType)
-		f.emit(fmt.Sprintf("(call $%s.fallback)", module))
-		f.emitUnboxIfPrimitive(t)
 	case "toString":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -3362,6 +3334,14 @@ func (f *funcEmitter) emitCoerce(from, to *types.Type) {
 	if from == nil || to == nil {
 		return
 	}
+	if to.Kind == types.KindTypeParam {
+		f.emitBoxIfPrimitive(from)
+		return
+	}
+	if from.Kind == types.KindTypeParam && to.Kind != types.KindUnion {
+		f.emitUnboxIfPrimitive(to)
+		return
+	}
 	if to.Kind == types.KindUnion && from.Kind != types.KindUnion {
 		f.emitBoxIfPrimitive(from)
 		return
@@ -3467,7 +3447,7 @@ func elemType(t *types.Type) *types.Type {
 
 func builtinModule(name string) (string, bool) {
 	switch name {
-	case "log", "Error", "fallback", "toString", "getArgs", "sqlQuery",
+	case "log", "toString", "getArgs", "sqlQuery",
 		"gc",
 		"getEnv", "responseText", "getPath", "getMethod":
 		return "prelude", true

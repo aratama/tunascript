@@ -102,15 +102,29 @@ func (c *Checker) AddModule(mod *ast.Module) {
 }
 
 func (c *Checker) Check() bool {
-	// First: process imports (including type aliases from built-in modules)
+	preludeMod := c.Modules["prelude"]
+
+	// First: process imports for prelude, then collect its top-level declarations.
+	if preludeMod != nil {
+		c.processImports(preludeMod)
+		c.collectTop(preludeMod)
+	}
+
+	// Second: process imports (including type aliases from built-in modules)
 	for _, mod := range c.Modules {
+		if mod == preludeMod {
+			continue
+		}
 		c.processImports(mod)
 	}
-	// Second: collect top-level declarations
+	// Third: collect top-level declarations
 	for _, mod := range c.Modules {
+		if mod == preludeMod {
+			continue
+		}
 		c.collectTop(mod)
 	}
-	// Third: type check the module
+	// Fourth: type check the module
 	for _, mod := range c.Modules {
 		c.checkModule(mod)
 	}
@@ -121,9 +135,20 @@ func (c *Checker) Check() bool {
 func (c *Checker) processImports(mod *ModuleInfo) {
 	for _, imp := range mod.AST.Imports {
 		if imp.From == "prelude" {
+			preludeMod := c.Modules["prelude"]
 			for _, item := range imp.Items {
 				if item.IsType {
 					// Check if it's a prelude type
+					if preludeMod != nil {
+						if aliasInfo := preludeMod.TypeAliases[item.Name]; aliasInfo != nil {
+							mod.TypeAliases[item.Name] = aliasInfo
+							continue
+						}
+						if exp := preludeMod.Exports[item.Name]; exp != nil && exp.Kind == SymType {
+							mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
+							continue
+						}
+					}
 					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias != nil {
 						mod.TypeAliases[item.Name] = preludeAlias
 					}
@@ -222,7 +247,7 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
 				continue
 			}
-			sig := c.funcTypeFromDecl(d, mod)
+			sig, _ := c.funcTypeFromDecl(d, mod)
 			sym := &Symbol{Name: d.Name, Kind: SymFunc, Type: sig, Decl: d}
 			mod.Top[d.Name] = sym
 			if d.Export {
@@ -278,13 +303,39 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			if imp.DefaultName != "" {
 				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
 			}
+			preludeMod := c.Modules["prelude"]
 			for _, item := range imp.Items {
 				if item.IsType {
-					// Type imports are already handled in processImports
-					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in prelude", item.Name)
+					if preludeMod != nil {
+						if aliasInfo := preludeMod.TypeAliases[item.Name]; aliasInfo != nil {
+							mod.TypeAliases[item.Name] = aliasInfo
+							continue
+						}
+						if exp := preludeMod.Exports[item.Name]; exp != nil {
+							if exp.Kind != SymType {
+								c.errorf(imp.Span, "%s is not a type", item.Name)
+								continue
+							}
+							mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
+							continue
+						}
 					}
+					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias != nil {
+						mod.TypeAliases[item.Name] = preludeAlias
+						continue
+					}
+					c.errorf(imp.Span, "%s is not a type in prelude", item.Name)
 					continue
+				}
+				if preludeMod != nil {
+					if exp := preludeMod.Exports[item.Name]; exp != nil {
+						if exp.Kind == SymType {
+							c.errorf(imp.Span, "%s is a type, use 'type %s' to import", item.Name, item.Name)
+							continue
+						}
+						c.bindImportedValue(env, item.Name, exp, imp.Span)
+						continue
+					}
 				}
 				if !isPreludeName(item.Name) {
 					c.errorf(imp.Span, "%s is not in prelude", item.Name)
@@ -456,7 +507,7 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 }
 
 func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
-	declType := c.resolveType(d.Type, env.mod)
+	declType := c.resolveTypeInEnv(d.Type, env)
 	if declType == nil {
 		return
 	}
@@ -493,11 +544,11 @@ func (c *Checker) checkConstDecl(env *Env, d *ast.ConstDecl) {
 }
 
 func (c *Checker) checkFuncDecl(env *Env, d *ast.FuncDecl) {
-	sig := c.funcTypeFromDecl(d, env.mod)
+	sig, typeParams := c.funcTypeFromDecl(d, env.mod)
 	if sig == nil {
 		return
 	}
-	c.checkFuncBody(env, d.Params, d.Body, sig)
+	c.checkFuncBody(env, d.Params, d.Body, sig, typeParams)
 }
 
 func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) *Type {
@@ -507,6 +558,7 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 	}
 	var expectedParams []*Type
 	var expectedRet *Type
+	var typeParams map[string]*Type
 	if expected != nil && expected.Kind == KindFunc {
 		if len(expected.Params) != len(fn.Params) {
 			c.errorf(fn.Span, "param count mismatch")
@@ -514,6 +566,14 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 		}
 		expectedParams = expected.Params
 		expectedRet = expected.Ret
+		if len(expected.TypeParams) > 0 {
+			typeParams = funcTypeParamMap(expected)
+		}
+	}
+	typeEnv := env
+	if typeParams != nil {
+		typeEnv = env.child()
+		typeEnv.typeParams = typeParams
 	}
 
 	params := make([]*Type, len(fn.Params))
@@ -526,7 +586,7 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 			params[i] = expectedParams[i]
 			continue
 		}
-		params[i] = c.resolveType(p.Type, env.mod)
+		params[i] = c.resolveTypeInEnv(p.Type, typeEnv)
 		if params[i] == nil {
 			return nil
 		}
@@ -546,7 +606,7 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 	}
 
 	if fn.Ret != nil {
-		ret := c.resolveType(fn.Ret, env.mod)
+		ret := c.resolveTypeInEnv(fn.Ret, typeEnv)
 		if ret == nil {
 			return nil
 		}
@@ -555,13 +615,13 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 			return nil
 		}
 		sig := NewFunc(params, ret)
-		c.checkFuncBody(env, fn.Params, body, sig)
+		c.checkFuncBody(env, fn.Params, body, sig, typeParams)
 		return sig
 	}
 
 	if expectedRet != nil {
 		sig := NewFunc(params, expectedRet)
-		c.checkFuncBody(env, fn.Params, body, sig)
+		c.checkFuncBody(env, fn.Params, body, sig, typeParams)
 		return sig
 	}
 
@@ -572,27 +632,41 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 	return NewFunc(params, ret)
 }
 
-func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) *Type {
+func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) (*Type, map[string]*Type) {
+	var typeParams map[string]*Type
+	if len(d.TypeParams) > 0 {
+		typeParams = make(map[string]*Type, len(d.TypeParams))
+		for _, name := range d.TypeParams {
+			typeParams[name] = NewTypeParam(name)
+		}
+	}
 	params := make([]*Type, len(d.Params))
 	for i, p := range d.Params {
 		if p.Type == nil {
 			c.errorf(p.Span, "param type required")
-			return nil
+			return nil, nil
 		}
-		params[i] = c.resolveType(p.Type, mod)
+		params[i] = c.resolveTypeRec(p.Type, mod, typeParams)
 		if params[i] == nil {
-			return nil
+			return nil, nil
 		}
 	}
-	ret := c.resolveType(d.Ret, mod)
+	ret := c.resolveTypeRec(d.Ret, mod, typeParams)
 	if ret == nil {
-		return nil
+		return nil, nil
 	}
-	return NewFunc(params, ret)
+	sig := NewFunc(params, ret)
+	if len(d.TypeParams) > 0 {
+		sig.TypeParams = append([]string(nil), d.TypeParams...)
+	}
+	return sig, typeParams
 }
 
-func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStmt, sig *Type) {
+func (c *Checker) checkFuncBody(env *Env, params []ast.Param, body *ast.BlockStmt, sig *Type, typeParams map[string]*Type) {
 	fnEnv := env.child()
+	if typeParams != nil {
+		fnEnv.typeParams = typeParams
+	}
 	fnEnv.retType = sig.Ret
 	for i, p := range params {
 		c.declareVar(fnEnv, p.Name, sig.Params[i], p.Span)
@@ -643,7 +717,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 	case *ast.ConstStmt:
 		var declType *Type
 		if s.Type != nil {
-			declType = c.resolveType(s.Type, env.mod)
+			declType = c.resolveTypeInEnv(s.Type, env)
 			initType := c.checkExpr(env, s.Init, declType)
 			if initType != nil && !initType.AssignableTo(declType) {
 				c.errorf(s.Span, "type mismatch")
@@ -682,7 +756,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 		for i, name := range s.Names {
 			var declType *Type
 			if s.Types[i] != nil {
-				declType = c.resolveType(s.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(s.Types[i], env)
 				if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", name)
 				}
@@ -708,7 +782,7 @@ func (c *Checker) checkStmtInfer(env *Env, stmt ast.Stmt, info *returnInfo) {
 				continue
 			}
 			if s.Types[i] != nil {
-				declType = c.resolveType(s.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(s.Types[i], env)
 				if declType != nil && propType != nil && !propType.AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", key)
 				}
@@ -825,7 +899,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 		var declType *Type
 		if s.Type != nil {
 			// 型注釈がある場合
-			declType = c.resolveType(s.Type, env.mod)
+			declType = c.resolveTypeInEnv(s.Type, env)
 			initType := c.checkExpr(env, s.Init, declType)
 			if initType != nil && !initType.AssignableTo(declType) {
 				c.errorf(s.Span, "type mismatch")
@@ -871,7 +945,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 			var declType *Type
 			if s.Types[i] != nil {
 				// Explicit type annotation
-				declType = c.resolveType(s.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(s.Types[i], env)
 				if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", name)
 				}
@@ -907,7 +981,7 @@ func (c *Checker) checkStmt(env *Env, stmt ast.Stmt, retType *Type) {
 
 			if s.Types[i] != nil {
 				// Explicit type annotation
-				declType = c.resolveType(s.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(s.Types[i], env)
 				if declType != nil && propType != nil && !propType.AssignableTo(declType) {
 					c.errorf(s.Span, "destructuring type mismatch for %s", key)
 				}
@@ -1046,7 +1120,7 @@ func (c *Checker) resolveForOfBindings(env *Env, binding ast.ForOfVar, elemType 
 		}
 		var varType *Type
 		if b.Type != nil {
-			varType = c.resolveType(b.Type, env.mod)
+			varType = c.resolveTypeInEnv(b.Type, env)
 			if varType == nil {
 				return nil, false
 			}
@@ -1087,7 +1161,7 @@ func (c *Checker) resolveForOfBindings(env *Env, binding ast.ForOfVar, elemType 
 			}
 			var declType *Type
 			if i < len(b.Types) && b.Types[i] != nil {
-				declType = c.resolveType(b.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(b.Types[i], env)
 				if declType == nil {
 					return nil, false
 				}
@@ -1114,7 +1188,7 @@ func (c *Checker) resolveForOfBindings(env *Env, binding ast.ForOfVar, elemType 
 			}
 			var declType *Type
 			if i < len(b.Types) && b.Types[i] != nil {
-				declType = c.resolveType(b.Types[i], env.mod)
+				declType = c.resolveTypeInEnv(b.Types[i], env)
 				if declType == nil {
 					return nil, false
 				}
@@ -1223,7 +1297,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		c.ExprTypes[expr] = inner
 		return inner
 	case *ast.AsExpr:
-		targetType := c.resolveType(e.Type, env.mod)
+		targetType := c.resolveTypeInEnv(e.Type, env)
 		if targetType == nil {
 			return nil
 		}
@@ -1296,7 +1370,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		for _, cas := range e.Cases {
 			caseEnv := env
 			if asExpr, ok := cas.Pattern.(*ast.AsExpr); ok {
-				targetType := c.resolveType(asExpr.Type, env.mod)
+				targetType := c.resolveTypeInEnv(asExpr.Type, env)
 				if targetType != nil {
 					if targetType.Kind == KindUnion {
 						c.errorf(asExpr.Span, "as target must be non-union")
@@ -1343,7 +1417,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 							}
 							declType := propType
 							if i < len(bind.Types) && bind.Types[i] != nil {
-								declType = c.resolveType(bind.Types[i], env.mod)
+								declType = c.resolveTypeInEnv(bind.Types[i], env)
 								if declType != nil && !propType.AssignableTo(declType) {
 									c.errorf(asExpr.Span, "destructuring type mismatch for %s", key)
 								}
@@ -1374,7 +1448,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 							}
 							var declType *Type
 							if i < len(bind.Types) && bind.Types[i] != nil {
-								declType = c.resolveType(bind.Types[i], env.mod)
+								declType = c.resolveTypeInEnv(bind.Types[i], env)
 								if declType != nil && elemTypes[i] != nil && !elemTypes[i].AssignableTo(declType) {
 									c.errorf(asExpr.Span, "destructuring type mismatch for %s", name)
 								}
@@ -1898,19 +1972,101 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 	return retType
 }
 
+func normalizeTypeParamBinding(typ *Type) *Type {
+	if typ == nil {
+		return nil
+	}
+	if typ.Kind == KindUnion {
+		members := make([]*Type, 0, len(typ.Union))
+		for _, member := range typ.Union {
+			normalized := normalizeTypeParamBinding(member)
+			if normalized != nil {
+				members = append(members, normalized)
+			}
+		}
+		return NewUnion(members)
+	}
+	return baseType(typ)
+}
+
 func (c *Checker) matchType(expected, actual *Type, bindings map[*Type]*Type) bool {
 	if expected == nil || actual == nil {
 		return false
 	}
 	if expected.Kind == KindTypeParam {
+		actual = normalizeTypeParamBinding(actual)
 		if bound, ok := bindings[expected]; ok {
-			return actual.Equals(bound)
+			if actual.AssignableTo(bound) {
+				return true
+			}
+			if bound.AssignableTo(actual) {
+				bindings[expected] = actual
+				return true
+			}
+			bindings[expected] = normalizeTypeParamBinding(NewUnion([]*Type{bound, actual}))
+			return true
 		}
 		bindings[expected] = actual
 		return true
 	}
+	if expected.Kind == KindUnion {
+		var typeParams []*Type
+		var fixed []*Type
+		for _, member := range expected.Union {
+			if member.Kind == KindTypeParam {
+				typeParams = append(typeParams, member)
+			} else {
+				fixed = append(fixed, member)
+			}
+		}
+		if len(typeParams) == 0 {
+			return actual.AssignableTo(expected)
+		}
+		if len(typeParams) > 1 {
+			return false
+		}
+		param := typeParams[0]
+		actualMembers := []*Type{actual}
+		if actual.Kind == KindUnion {
+			actualMembers = actual.Union
+		}
+		unmatched := make([]*Type, 0, len(actualMembers))
+		for _, act := range actualMembers {
+			if act.Kind == KindTypeParam && act == param {
+				// "expected" 由来の自己参照型パラメータは推論の拘束に使わない。
+				continue
+			}
+			matchedFixed := false
+			for _, exp := range fixed {
+				if act.AssignableTo(exp) {
+					matchedFixed = true
+					break
+				}
+			}
+			if !matchedFixed {
+				unmatched = append(unmatched, act)
+			}
+		}
+		if len(unmatched) == 0 {
+			return true
+		}
+		target := normalizeTypeParamBinding(NewUnion(unmatched))
+		if bound, ok := bindings[param]; ok {
+			if target.AssignableTo(bound) {
+				return true
+			}
+			if bound.AssignableTo(target) {
+				bindings[param] = target
+				return true
+			}
+			bindings[param] = normalizeTypeParamBinding(NewUnion([]*Type{bound, target}))
+			return true
+		}
+		bindings[param] = target
+		return true
+	}
 	if expected.Kind != actual.Kind {
-		return false
+		return actual.AssignableTo(expected)
 	}
 	switch expected.Kind {
 	case KindArray:
@@ -1935,8 +2091,27 @@ func (c *Checker) matchType(expected, actual *Type, bindings map[*Type]*Type) bo
 			}
 		}
 		return true
+	case KindObject:
+		if len(expected.Props) != len(actual.Props) {
+			return false
+		}
+		if (expected.Index == nil) != (actual.Index == nil) {
+			return false
+		}
+		if expected.Index != nil && !c.matchType(expected.Index, actual.Index, bindings) {
+			return false
+		}
+		for i := range expected.Props {
+			if expected.Props[i].Name != actual.Props[i].Name {
+				return false
+			}
+			if !c.matchType(expected.Props[i].Type, actual.Props[i].Type, bindings) {
+				return false
+			}
+		}
+		return true
 	default:
-		return actual.Equals(expected)
+		return actual.AssignableTo(expected)
 	}
 }
 
@@ -2073,7 +2248,13 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	}
 
 	// Check object type matches first parameter
-	if !objType.AssignableTo(sig.Params[0]) {
+	bindings := map[*Type]*Type{}
+	if typeContainsTypeParam(sig.Params[0]) {
+		if !c.matchType(sig.Params[0], objType, bindings) {
+			c.errorf(call.Span, "receiver type mismatch")
+			return nil
+		}
+	} else if !objType.AssignableTo(sig.Params[0]) {
 		c.errorf(call.Span, "receiver type mismatch")
 		return nil
 	}
@@ -2081,14 +2262,24 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	// Check remaining arguments
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i+1])
-		if argType != nil && !argType.AssignableTo(sig.Params[i+1]) {
-			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(sig.Params[i+1]), typeNameForError(argType))
+		if argType == nil {
+			return nil
+		}
+		expectedParam := sig.Params[i+1]
+		if typeContainsTypeParam(expectedParam) {
+			if !c.matchType(expectedParam, argType, bindings) {
+				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
+				return nil
+			}
+		} else if !argType.AssignableTo(expectedParam) {
+			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
 			return nil
 		}
 	}
 
-	c.ExprTypes[call] = sig.Ret
-	return sig.Ret
+	retType := c.substituteTypeParams(sig.Ret, bindings)
+	c.ExprTypes[call] = retType
+	return retType
 }
 
 func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, expected *Type) *Type {
@@ -2136,7 +2327,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "decode expects json")
 			return nil
 		}
-		target := c.resolveType(call.TypeArgs[0], env.mod)
+		target := c.resolveTypeInEnv(call.TypeArgs[0], env)
 		if target == nil {
 			return nil
 		}
@@ -2151,90 +2342,6 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		ret := NewUnion([]*Type{target, errorObj})
 		c.ExprTypes[call] = ret
 		return ret
-	case "Error":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "Error expects 1 arg")
-			return nil
-		}
-		if len(call.TypeArgs) != 0 {
-			c.errorf(call.Span, "Error does not take type arguments")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "Error expects string")
-			return nil
-		}
-		errorObj := NewObject([]Prop{
-			{Name: "message", Type: String()},
-			{Name: "type", Type: LiteralString("Error")},
-		})
-		c.ExprTypes[call] = errorObj
-		return errorObj
-	case "fallback":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "fallback expects 2 args")
-			return nil
-		}
-		if len(call.TypeArgs) > 1 {
-			c.errorf(call.Span, "fallback expects 0 or 1 type argument")
-			return nil
-		}
-		errorType := resultErrorType()
-		if len(call.TypeArgs) == 1 {
-			target := c.resolveType(call.TypeArgs[0], env.mod)
-			if target == nil {
-				return nil
-			}
-			resultExpected := NewUnion([]*Type{target, errorType})
-			resultType := c.checkExpr(env, call.Args[0], resultExpected)
-			if resultType == nil {
-				return nil
-			}
-			if !resultType.AssignableTo(resultExpected) {
-				c.errorf(call.Span, "fallback expects (T | Error) as first arg")
-				return nil
-			}
-			defaultType := c.checkExpr(env, call.Args[1], target)
-			if defaultType == nil {
-				return nil
-			}
-			if !defaultType.AssignableTo(target) {
-				c.errorf(call.Span, "fallback expects default value of type %s", typeNameForError(target))
-				return nil
-			}
-			c.ExprTypes[call] = target
-			return target
-		}
-		resultType := c.checkExpr(env, call.Args[0], nil)
-		if resultType == nil {
-			return nil
-		}
-		defaultType := c.checkExpr(env, call.Args[1], nil)
-		if defaultType == nil {
-			return nil
-		}
-		var target *Type
-		if resultType.Kind == KindUnion {
-			if successType, _ := splitResultType(resultType); successType != nil {
-				target = successType
-			} else {
-				target = resultType
-			}
-		} else if isResultErrorType(resultType) {
-			target = defaultType
-		} else {
-			target = resultType
-		}
-		if target == nil {
-			return nil
-		}
-		if !defaultType.AssignableTo(target) {
-			c.errorf(call.Span, "fallback expects default value of type %s", typeNameForError(target))
-			return nil
-		}
-		c.ExprTypes[call] = target
-		return target
 	case "toString":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "toString expects 1 arg")
@@ -2959,6 +3066,16 @@ func (c *Checker) recordType(expr ast.TypeExpr, typ *Type) *Type {
 	return typ
 }
 
+func (c *Checker) resolveTypeInEnv(expr ast.TypeExpr, env *Env) *Type {
+	if env == nil {
+		return nil
+	}
+	if env.typeParams != nil {
+		return c.resolveTypeRec(expr, env.mod, env.typeParams)
+	}
+	return c.resolveType(expr, env.mod)
+}
+
 func (c *Checker) resolveType(expr ast.TypeExpr, mod *ModuleInfo) *Type {
 	return c.resolveTypeRec(expr, mod, nil)
 }
@@ -3153,6 +3270,49 @@ func cloneTypeParams(src map[string]*Type) map[string]*Type {
 		clone[k] = v
 	}
 	return clone
+}
+
+func funcTypeParamMap(t *Type) map[string]*Type {
+	if t == nil || len(t.TypeParams) == 0 {
+		return nil
+	}
+	params := map[string]*Type{}
+	var visit func(*Type)
+	visit = func(cur *Type) {
+		if cur == nil {
+			return
+		}
+		switch cur.Kind {
+		case KindTypeParam:
+			if _, ok := params[cur.Name]; !ok && cur.Name != "" {
+				params[cur.Name] = cur
+			}
+		case KindArray:
+			visit(cur.Elem)
+		case KindFunc:
+			for _, p := range cur.Params {
+				visit(p)
+			}
+			visit(cur.Ret)
+		case KindTuple:
+			for _, elem := range cur.Tuple {
+				visit(elem)
+			}
+		case KindObject:
+			for _, prop := range cur.Props {
+				visit(prop.Type)
+			}
+			if cur.Index != nil {
+				visit(cur.Index)
+			}
+		case KindUnion:
+			for _, member := range cur.Union {
+				visit(member)
+			}
+		}
+	}
+	visit(t)
+	return params
 }
 
 func typeNameForError(t *Type) string {
@@ -3610,7 +3770,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "log", "Error", "fallback", "toString", "getArgs", "sqlQuery",
+	case "log", "toString", "getArgs", "sqlQuery",
 		"getEnv", "gc", "responseText", "getPath", "getMethod":
 		return true
 	default:
@@ -3779,10 +3939,19 @@ type Env struct {
 	parent  *Env
 	vars    map[string]*Symbol
 	retType *Type
+	// typeParams holds function type parameter bindings in scope.
+	typeParams map[string]*Type
 }
 
 func (e *Env) child() *Env {
-	return &Env{checker: e.checker, mod: e.mod, parent: e, vars: map[string]*Symbol{}, retType: e.retType}
+	return &Env{
+		checker:    e.checker,
+		mod:        e.mod,
+		parent:     e,
+		vars:       map[string]*Symbol{},
+		retType:    e.retType,
+		typeParams: e.typeParams,
+	}
 }
 
 func (e *Env) root() *Env {
@@ -3798,7 +3967,13 @@ func (e *Env) clone() *Env {
 	for k, v := range e.vars {
 		vars[k] = v
 	}
-	return &Env{checker: e.checker, mod: e.mod, vars: vars, retType: e.retType}
+	return &Env{
+		checker:    e.checker,
+		mod:        e.mod,
+		vars:       vars,
+		retType:    e.retType,
+		typeParams: e.typeParams,
+	}
 }
 
 func (e *Env) lookup(name string) *Symbol {

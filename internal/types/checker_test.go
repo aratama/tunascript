@@ -113,6 +113,33 @@ const evens2: integer[] = filter(nums, isEven)
 	assertArrayElemKind(t, checker.ExprTypes[evens2.Init], KindI64, "evens2")
 }
 
+func TestGenericFallbackMethodInference(t *testing.T) {
+	const src = `
+type Error = { type: "Error", message: string }
+
+function fallback<T>(value: T | Error, defaultValue: T): T {
+  return defaultValue
+}
+
+const maybeOk: string | Error = { "type": "Error", "message": "bad" }
+const resolved: string = maybeOk.fallback("")
+const fromValue: string = fallback("hello", "")
+const fromError: string = fallback({ "type": "Error", "message": "boom" }, "")
+`
+
+	mod := mustParseModule(t, "fallback_method_infer.tuna", src)
+	checker := runChecker(t, mod)
+
+	resolved := findConstDecl(t, mod, "resolved")
+	assertTypeKind(t, checker.ExprTypes[resolved.Init], KindString, "resolved")
+
+	fromValue := findConstDecl(t, mod, "fromValue")
+	assertTypeKind(t, checker.ExprTypes[fromValue.Init], KindString, "fromValue")
+
+	fromError := findConstDecl(t, mod, "fromError")
+	assertTypeKind(t, checker.ExprTypes[fromError.Init], KindString, "fromError")
+}
+
 func TestUnionSwitchAs(t *testing.T) {
 	const src = `
 const v: integer | string = 42
