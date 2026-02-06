@@ -1,4 +1,4 @@
-export const DEFAULT_SOURCE: string = `import { log, type Error } from "prelude"
+import { log, type Error } from "prelude"
 import { map } from "array"
 import { createServer, addRoute, listen, responseHtml, type Request, type Response, type JSX } from "http"
 
@@ -46,7 +46,7 @@ function root(req: Request): Response {
       responseHtml(
         <html>
           <head>
-            <style>{\`
+            <style>{`
               html, body { margin: 0; min-height: 100%; }
               body { display: grid; place-items: center; font-family: 'Fira Sans', 'Noto Sans JP', sans-serif; color: #0b1f33; background: linear-gradient(135deg, #e0f2ff 0%, #fff4d9 50%, #ffdfe3 100%); }
               .card { width: min(92vw, 760px); padding: 32px 36px; border-radius: 18px; background: rgba(255, 255, 255, 0.88); border: 1px solid rgba(255, 255, 255, 0.96); box-shadow: 0 18px 48px rgba(14, 47, 79, 0.18); text-align: left; }
@@ -60,7 +60,7 @@ function root(req: Request): Response {
               .todo-item input { width: 16px; height: 16px; accent-color: #0ea5e9; }
               .todo-title { font-weight: 700; color: #0f3559; }
               .todo-time { color: #475569; font-size: 13px; }
-            \`}</style>
+            `}</style>
           </head>
           <body>
             <main class="card">
@@ -93,4 +93,4 @@ export function main(): void {
 
   // log関数で標準出力できます
   log("Server is running at http://localhost:8888/")
-}`
+}

@@ -1,0 +1,101 @@
+// expect: missing
+// expect: write_ok
+// expect: exists
+// expect: hello
+// expect: append_ok
+// expect: hello world
+// expect: dir_ok
+// expect: missing_read_error
+
+import { log, type Error } from "prelude"
+import { readText, writeText, appendText, readDir, exists } from "file"
+import { filter, length } from "array"
+
+const filename: string = "file_api_test.txt"
+const missing: string = "file_api_missing.txt"
+
+export function main(): void {
+  if (exists(missing)) {
+    log("missing_exists")
+  } else {
+    log("missing")
+  }
+
+  const writeRes: undefined | Error = writeText(filename, "hello")
+  switch (writeRes) {
+    case _ as undefined: {
+      log("write_ok")
+    }
+    case err as Error: {
+      log("write_error")
+      log(err.message)
+    }
+  }
+
+  if (exists(filename)) {
+    log("exists")
+  } else {
+    log("not_exists")
+  }
+
+  const readRes: string | Error = readText(filename)
+  switch (readRes) {
+    case text as string: {
+      log(text)
+    }
+    case err as Error: {
+      log("read_error")
+      log(err.message)
+    }
+  }
+
+  const appendRes: undefined | Error = appendText(filename, " world")
+  switch (appendRes) {
+    case _ as undefined: {
+      log("append_ok")
+    }
+    case err as Error: {
+      log("append_error")
+      log(err.message)
+    }
+  }
+
+  const readRes2: string | Error = readText(filename)
+  switch (readRes2) {
+    case text as string: {
+      log(text)
+    }
+    case err as Error: {
+      log("read2_error")
+      log(err.message)
+    }
+  }
+
+  const dirRes: string[] | Error = readDir(".")
+  switch (dirRes) {
+    case entries as string[]: {
+      const matches = filter(entries, function (name: string): boolean {
+        return name == filename
+      })
+      if (length(matches) > 0) {
+        log("dir_ok")
+      } else {
+        log("dir_missing")
+      }
+    }
+    case err as Error: {
+      log("dir_error")
+      log(err.message)
+    }
+  }
+
+  const missingRead: string | Error = readText(missing)
+  switch (missingRead) {
+    case _ as string: {
+      log("missing_read_unexpected")
+    }
+    case _ as Error: {
+      log("missing_read_error")
+    }
+  }
+}

@@ -3,6 +3,7 @@ package compiler_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"tuna/internal/compiler"
@@ -51,6 +52,23 @@ func compileExpectError(t *testing.T, src string) {
 	_, err := comp.Compile(entryPath)
 	if err == nil {
 		t.Fatalf("error expected")
+	}
+}
+
+func compileExpectErrorContains(t *testing.T, src, want string) {
+	t.Helper()
+	dir := t.TempDir()
+	entryPath := filepath.Join(dir, "main.ts")
+	if err := os.WriteFile(entryPath, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	comp := compiler.New()
+	_, err := comp.Compile(entryPath)
+	if err == nil {
+		t.Fatalf("error expected")
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("expected error to contain %q, got %q", want, err.Error())
 	}
 }
 
@@ -376,6 +394,15 @@ export function main(): void {
   log("x")
 }
 `)
+}
+
+func TestArgumentTypeMismatchShowsExpectedAndFound(t *testing.T) {
+	compileExpectErrorContains(t, `export function takeInt(x: integer): void {}
+export function main(): void {
+  const s: string = "x"
+  takeInt(s)
+}
+`, "argument type mismatch: expect integer, found string")
 }
 
 func TestSQLCreateAndSelect(t *testing.T) {

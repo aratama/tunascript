@@ -8,6 +8,7 @@ TunaScriptには以下の組み込みライブラリがあります。
 - `runtime`
 - `http`
 - `sqlite`
+- `file`
 
 ## prelude
 
@@ -110,6 +111,28 @@ switch (parsed) {
   - 指定したSQLiteファイルを直接開きます。ファイルが存在しない場合は新規作成され、書き込みはそのままファイルに反映されます。`create_table` 定義がある場合、テーブルの自動作成と検証が行われます。
   - この関数は `import { dbOpen } from "sqlite";` でインポートしてください。
   - `tuna run --sandbox` では no-op になり、常にインメモリDB (`:memory:`) が使われます。
+
+### 12.1.5 fileモジュール
+
+`file` モジュールはテキストファイルとディレクトリの入出力を提供します。バイナリファイルは未対応です。
+
+- `readText(path: string): string | Error`
+  - `path` のテキストファイルをUTF-8として読み込みます。BOMがある場合は取り除きます。
+  - UTF-8として不正なバイト列の場合は `Error` を返します。
+  - `tuna run --sandbox` では `Error` を返します。
+- `writeText(path: string, content: string): undefined | Error`
+  - `path` にUTF-8テキストを書き込みます（既存ファイルは上書き）。
+  - `tuna run --sandbox` では `Error` を返します。
+- `appendText(path: string, content: string): undefined | Error`
+  - `path` の末尾にUTF-8テキストを追記します。ファイルが無ければ作成します。
+  - `tuna run --sandbox` では `Error` を返します。
+- `readDir(path: string): string[] | Error`
+  - `path` 直下のエントリ名を配列で返します（ファイル・ディレクトリ混在）。
+  - 返却順序は名前順にソートされます。
+  - `tuna run --sandbox` では `Error` を返します。
+- `exists(path: string): boolean`
+  - `path` が存在すれば `true`、存在しないかアクセスできなければ `false` を返します。
+  - `tuna run --sandbox` では常に `false` を返します。
 
 ### 12.2 HTTPサーバー
 

@@ -933,6 +933,11 @@ func (p *Parser) parseSwitchCaseBody() ast.Expr {
 	if p.curr.Kind == lexer.TokenLBrace {
 		return p.parseBlockExpr()
 	}
+	if p.curr.Kind == lexer.TokenReturn {
+		ret := p.parseReturn()
+		span := ret.GetSpan()
+		return &ast.BlockExpr{Stmts: []ast.Stmt{ret}, Span: span}
+	}
 	return p.parseExpr(0)
 }
 

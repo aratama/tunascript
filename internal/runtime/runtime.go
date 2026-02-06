@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
 	_ "modernc.org/sqlite"
@@ -292,6 +293,9 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	defineRuntime := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "runtime", name, fn)
 	}
+	defineFile := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "file", name, fn)
+	}
 	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.strFromUTF8(caller, ptr, length))
 	}); err != nil {
@@ -484,6 +488,33 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := defineFile("read_text", func(pathHandle *Value) *Value {
+		value, err := r.fileReadText(pathHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineFile("write_text", func(pathHandle *Value, contentHandle *Value) *Value {
+		return r.resultError(r.fileWriteText(pathHandle, contentHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineFile("append_text", func(pathHandle *Value, contentHandle *Value) *Value {
+		return r.resultError(r.fileAppendText(pathHandle, contentHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineFile("read_dir", func(pathHandle *Value) *Value {
+		value, err := r.fileReadDir(pathHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineFile("exists", func(pathHandle *Value) int32 {
+		return r.fileExists(pathHandle)
+	}); err != nil {
+		return err
+	}
 	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
@@ -671,6 +702,124 @@ func (r *Runtime) getEnv(nameHandle *Value) (*Value, error) {
 	}
 	value := os.Getenv(valueHandle.Str)
 	return r.newValue(Value{Kind: KindString, Str: value}), nil
+}
+
+func (r *Runtime) fileReadText(pathHandle *Value) (*Value, error) {
+	if r.sandbox {
+		return nil, errors.New("readText is not available in sandbox mode")
+	}
+	pathValue, err := r.getValue(pathHandle)
+	if err != nil {
+		return nil, err
+	}
+	if pathValue.Kind != KindString {
+		return nil, errors.New("readText expects string")
+	}
+	data, err := os.ReadFile(pathValue.Str)
+	if err != nil {
+		return nil, err
+	}
+	if !utf8.Valid(data) {
+		return nil, errors.New("readText expects UTF-8 text")
+	}
+	text := string(data)
+	text = strings.TrimPrefix(text, "\uFEFF")
+	return r.newValue(Value{Kind: KindString, Str: text}), nil
+}
+
+func (r *Runtime) fileWriteText(pathHandle *Value, contentHandle *Value) error {
+	if r.sandbox {
+		return errors.New("writeText is not available in sandbox mode")
+	}
+	pathValue, err := r.getValue(pathHandle)
+	if err != nil {
+		return err
+	}
+	if pathValue.Kind != KindString {
+		return errors.New("writeText expects string path")
+	}
+	contentValue, err := r.getValue(contentHandle)
+	if err != nil {
+		return err
+	}
+	if contentValue.Kind != KindString {
+		return errors.New("writeText expects string content")
+	}
+	if !utf8.ValidString(contentValue.Str) {
+		return errors.New("writeText expects UTF-8 text")
+	}
+	return os.WriteFile(pathValue.Str, []byte(contentValue.Str), 0644)
+}
+
+func (r *Runtime) fileAppendText(pathHandle *Value, contentHandle *Value) error {
+	if r.sandbox {
+		return errors.New("appendText is not available in sandbox mode")
+	}
+	pathValue, err := r.getValue(pathHandle)
+	if err != nil {
+		return err
+	}
+	if pathValue.Kind != KindString {
+		return errors.New("appendText expects string path")
+	}
+	contentValue, err := r.getValue(contentHandle)
+	if err != nil {
+		return err
+	}
+	if contentValue.Kind != KindString {
+		return errors.New("appendText expects string content")
+	}
+	if !utf8.ValidString(contentValue.Str) {
+		return errors.New("appendText expects UTF-8 text")
+	}
+	f, err := os.OpenFile(pathValue.Str, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(contentValue.Str)
+	return err
+}
+
+func (r *Runtime) fileReadDir(pathHandle *Value) (*Value, error) {
+	if r.sandbox {
+		return nil, errors.New("readDir is not available in sandbox mode")
+	}
+	pathValue, err := r.getValue(pathHandle)
+	if err != nil {
+		return nil, err
+	}
+	if pathValue.Kind != KindString {
+		return nil, errors.New("readDir expects string")
+	}
+	entries, err := os.ReadDir(pathValue.Str)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	elems := make([]*Value, len(names))
+	for i, name := range names {
+		elems[i] = r.newValue(Value{Kind: KindString, Str: name})
+	}
+	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
+}
+
+func (r *Runtime) fileExists(pathHandle *Value) int32 {
+	if r.sandbox {
+		return 0
+	}
+	pathValue, err := r.getValue(pathHandle)
+	if err != nil || pathValue.Kind != KindString {
+		return 0
+	}
+	if _, err := os.Stat(pathValue.Str); err == nil {
+		return 1
+	}
+	return 0
 }
 
 func (r *Runtime) runSandbox(sourceHandle *Value) (*Value, error) {

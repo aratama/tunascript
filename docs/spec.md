@@ -357,6 +357,7 @@ switch (expr) {
 ```
 
 - 各caseは値を返す式を持ちます。
+- `return expr` をcase本体として書くと、switch式からではなく「現在の関数」から即座に戻ります（このcaseはswitch式の戻り値に参加しません）。
 - 複数の文を実行する場合は `{ }` でブロックを囲みます（ブロックの最後が式文ならその値、そうでなければ `void`）。
 - `default` は省略可能です（値を返すswitch式では推奨します）。
 - Union型の分岐は `case pattern as T:` を使います。
@@ -413,6 +414,12 @@ const v: integer | string = 42
 const message = switch (v) {
   case n as integer: "v is integer: " + toString(n)
   case s as string: "v is string: " + s
+}
+
+// returnで関数から戻る
+const code = switch (formatted) {
+  case e as Error: return responseHtml("format error: " + e.message)
+  case formatted as string: formatted
 }
 ```
 

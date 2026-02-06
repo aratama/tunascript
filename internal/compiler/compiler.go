@@ -71,7 +71,7 @@ func (c *Compiler) loadRecursive(path string) error {
 	dir := filepath.Dir(path)
 	for i := range mod.Imports {
 		imp := &mod.Imports[i]
-		if imp.From == "prelude" || imp.From == "json" || imp.From == "array" || imp.From == "runtime" || imp.From == "http" || imp.From == "sqlite" {
+		if imp.From == "prelude" || imp.From == "json" || imp.From == "array" || imp.From == "runtime" || imp.From == "http" || imp.From == "sqlite" || imp.From == "file" {
 			continue
 		}
 		resolved, err := resolveImport(dir, imp.From)
@@ -127,6 +127,9 @@ func resolveImport(baseDir, spec string) (string, error) {
 		return spec, nil
 	}
 	if spec == "sqlite" {
+		return spec, nil
+	}
+	if spec == "file" {
 		return spec, nil
 	}
 	if len(spec) >= 2 && (spec[:2] == "./" || spec[:3] == "../") {

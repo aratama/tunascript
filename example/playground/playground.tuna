@@ -4,7 +4,7 @@ import { length } from "array"
 import { runSandbox, runFormatter } from "runtime"
 import { createServer, addRoute, listen, responseHtml, responseRedirect, type JSX, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
-import { DEFAULT_SOURCE } from "./default_source.tuna"
+import { readText } from "file"
 import style from "./style.css"
 import { PLAYGROUND_EDITOR_JS } from "./editor_script.tuna"
 import TUNASCRIPT_LEZER_GRAMMAR from "./tunascript.grammar"
@@ -23,6 +23,17 @@ create_table playground_sources {
 }
 
 const MAX_SOURCE_SIZE_BYTES: integer = 10240
+const DEFAULT_SOURCE_PATH: string = "example/playground/default_source.tuna"
+
+function loadDefaultSource(): string {
+  const fallback: string | Error = readText(DEFAULT_SOURCE_PATH)
+  return switch (fallback) {
+    case source as string: source
+    case fallbackError as Error: ""
+  } 
+}
+
+const DEFAULT_SOURCE: string = loadDefaultSource()
 
 function Layout(source: string, stdout: string, html: string, error: string, exitCode: string, runPath: string, pagePath: string): JSX {
   return (
@@ -116,26 +127,25 @@ function handleRunRoot(req: Request): Response {
     return responseHtml(Layout(source, "", "", sizeError, "1", "/run", "/"))
   }
   const formatted = runFormatter(source)
-  return switch (formatted) {
-    case e as Error: responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
-    case code as string: {
-      const generated = fetch_one {
-        SELECT lower(hex(randomblob(8))) AS id
-      }
-      switch (generated) {
-        case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
-        case row as { id: string }: {
-          const inserted = execute {
-            INSERT INTO playground_sources (id, source, updated_at)
-            VALUES ({row.id}, {code}, datetime('now'))
-          }
-          switch (inserted) {
-            case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
-            case ok as undefined: responseRedirect("/" + row.id)
-          }
-        }
-      }
-    }
+  const code = switch (formatted) {
+    case e as Error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
+    case formatted as string: formatted
+  }
+  const generated = fetch_one {
+    SELECT lower(hex(randomblob(8))) AS id
+  }
+  const { id } = switch (generated) {
+    case e as Error: return responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case generated as { id: string }: generated
+  }
+
+  const inserted = execute {
+    INSERT INTO playground_sources (id, source, updated_at)
+    VALUES ({id}, {code}, datetime('now'))
+  }
+  return switch (inserted) {
+    case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case ok as undefined: responseRedirect("/" + id)
   }
 }
 
@@ -154,33 +164,33 @@ function handleRunByID(req: Request): Response {
   }
 
   const formatted = runFormatter(source)
-  return switch (formatted) {
-    case e as Error: responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
-    case code as string: {
-      const updated = execute {
-        INSERT OR REPLACE INTO playground_sources (id, source, updated_at)
-        VALUES ({id}, {code}, datetime('now'))
-      }
-      switch (updated) {
-        case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
-        case ok as undefined: responseRedirect(pagePath)
-      }
-    }
+  const code = switch (formatted) {
+    case e as Error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
+    case formatted as string: formatted
+  }
+    
+  const updated = execute {
+    INSERT OR REPLACE INTO playground_sources (id, source, updated_at)
+    VALUES ({id}, {code}, datetime('now'))
+  }
+  return switch (updated) {
+    case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
+    case ok as undefined: responseRedirect(pagePath)
   }
 }
 
 function runSource(source: string, runPath: string, pagePath: string): Response {
   const parsed = parse(runSandbox(source))
-  return switch (parsed) {
-    case e as Error: responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
-    case raw as json: {
-      const decoded: RunResult | Error = decode<RunResult>(raw)
-      switch (decoded) {
-        case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode), runPath, pagePath))
-        case e as Error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
-      }
-    }
+  const raw = switch (parsed) {
+    case e as Error: return responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
+    case raw as json: raw
   }
+
+  const decoded: RunResult | Error = decode<RunResult>(raw)
+  return switch (decoded) {
+    case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode), runPath, pagePath))
+    case e as Error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
+  }  
 }
 
 export function main(): void {

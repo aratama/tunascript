@@ -762,6 +762,11 @@ func (g *Generator) emitImports(w *watBuilder) {
 		name   string
 	}{
 		{"array", "range"},
+		{"file", "append_text"},
+		{"file", "exists"},
+		{"file", "read_dir"},
+		{"file", "read_text"},
+		{"file", "write_text"},
 		{"http", "http_add_route"},
 		{"http", "http_create_server"},
 		{"http", "http_listen"},
@@ -825,8 +830,18 @@ func (g *Generator) emitImports(w *watBuilder) {
 func importSig(module, name string) string {
 	prefix := fmt.Sprintf("$%s", module)
 	switch name {
+	case "append_text":
+		return fmt.Sprintf("(func %s.append_text (param externref externref) (result externref))", prefix)
+	case "exists":
+		return fmt.Sprintf("(func %s.exists (param externref) (result i32))", prefix)
+	case "read_dir":
+		return fmt.Sprintf("(func %s.read_dir (param externref) (result externref))", prefix)
+	case "read_text":
+		return fmt.Sprintf("(func %s.read_text (param externref) (result externref))", prefix)
 	case "range":
 		return fmt.Sprintf("(func %s.range (param i64 i64) (result externref))", prefix)
+	case "write_text":
+		return fmt.Sprintf("(func %s.write_text (param externref externref) (result externref))", prefix)
 	case "http_add_route":
 		return fmt.Sprintf("(func %s.http_add_route (param externref externref i32 i32 externref))", prefix)
 	case "http_create_server":
@@ -2567,6 +2582,30 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.run_formatter)", module))
+	case "readText":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.read_text)", module))
+	case "writeText":
+		pathArg := call.Args[0]
+		contentArg := call.Args[1]
+		f.emitExpr(pathArg, f.g.checker.ExprTypes[pathArg])
+		f.emitExpr(contentArg, f.g.checker.ExprTypes[contentArg])
+		f.emit(fmt.Sprintf("(call $%s.write_text)", module))
+	case "appendText":
+		pathArg := call.Args[0]
+		contentArg := call.Args[1]
+		f.emitExpr(pathArg, f.g.checker.ExprTypes[pathArg])
+		f.emitExpr(contentArg, f.g.checker.ExprTypes[contentArg])
+		f.emit(fmt.Sprintf("(call $%s.append_text)", module))
+	case "readDir":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.read_dir)", module))
+	case "exists":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.exists)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
 	case "createServer":
@@ -3424,6 +3463,8 @@ func builtinModule(name string) (string, bool) {
 		return "array", true
 	case "runSandbox", "runFormatter":
 		return "runtime", true
+	case "readText", "writeText", "appendText", "readDir", "exists":
+		return "file", true
 	case "dbOpen":
 		return "sqlite", true
 	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":

@@ -175,6 +175,15 @@ func (c *Checker) processImports(mod *ModuleInfo) {
 				}
 			}
 		}
+		if imp.From == "file" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if fileAlias := getFileTypeAlias(item.Name); fileAlias != nil {
+						mod.TypeAliases[item.Name] = fileAlias
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -374,6 +383,22 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 				}
 				if !isRuntimeName(item.Name) {
 					c.errorf(imp.Span, "%s is not in runtime", item.Name)
+					continue
+				}
+				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
+			}
+			continue
+		}
+		if imp.From == "file" {
+			for _, item := range imp.Items {
+				if item.IsType {
+					if fileAlias := getFileTypeAlias(item.Name); fileAlias == nil {
+						c.errorf(imp.Span, "%s is not a type in file", item.Name)
+					}
+					continue
+				}
+				if !isFileName(item.Name) {
+					c.errorf(imp.Span, "%s is not in file", item.Name)
 					continue
 				}
 				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
@@ -778,6 +803,13 @@ func returns(stmt ast.Stmt) bool {
 	default:
 		return false
 	}
+}
+
+func blockExprReturns(expr *ast.BlockExpr) bool {
+	if expr == nil || len(expr.Stmts) == 0 {
+		return false
+	}
+	return returns(&ast.BlockStmt{Stmts: expr.Stmts, Span: expr.Span})
 }
 
 func (c *Checker) checkBlock(env *Env, block *ast.BlockStmt, retType *Type) {
@@ -1368,6 +1400,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			if bodyType == nil {
 				continue
 			}
+			if block, ok := cas.Body.(*ast.BlockExpr); ok && blockExprReturns(block) {
+				continue
+			}
 			if expected != nil {
 				if !bodyType.AssignableTo(expected) {
 					c.errorf(cas.Body.GetSpan(), "switch case body type mismatch")
@@ -1383,7 +1418,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if e.Default != nil {
 			defaultType := c.checkExpr(env, e.Default, expected)
 			if defaultType != nil {
-				if expected != nil {
+				if block, ok := e.Default.(*ast.BlockExpr); ok && blockExprReturns(block) {
+					// Default returns from the function; it does not participate in switch result typing.
+				} else if expected != nil {
 					if !defaultType.AssignableTo(expected) {
 						c.errorf(e.Default.GetSpan(), "switch default type mismatch")
 					}
@@ -1502,11 +1539,11 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 					c.ExprTypes[expr] = valType
 					return valType
 				}
-				c.checkStmt(blockEnv, stmt, Void())
+				c.checkStmt(blockEnv, stmt, env.retType)
 				c.ExprTypes[expr] = Void()
 				return Void()
 			}
-			c.checkStmt(blockEnv, stmt, Void())
+			c.checkStmt(blockEnv, stmt, env.retType)
 		}
 		c.ExprTypes[expr] = Void()
 		return Void()
@@ -1848,11 +1885,11 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 		expectedParam := sig.Params[i]
 		if typeContainsTypeParam(expectedParam) {
 			if !c.matchType(expectedParam, argType, bindings) {
-				c.errorf(call.Span, "argument type mismatch")
+				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
 				return nil
 			}
 		} else if !argType.AssignableTo(expectedParam) {
-			c.errorf(call.Span, "argument type mismatch")
+			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
 			return nil
 		}
 	}
@@ -2045,7 +2082,7 @@ func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.Memb
 	for i, arg := range call.Args {
 		argType := c.checkExpr(env, arg, sig.Params[i+1])
 		if argType != nil && !argType.AssignableTo(sig.Params[i+1]) {
-			c.errorf(call.Span, "argument type mismatch")
+			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(sig.Params[i+1]), typeNameForError(argType))
 			return nil
 		}
 	}
@@ -2354,6 +2391,72 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		ret := NewUnion([]*Type{String(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
+	case "readText":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "readText expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "readText expects string")
+			return nil
+		}
+		ret := NewUnion([]*Type{String(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
+	case "writeText":
+		if len(call.Args) != 2 {
+			c.errorf(call.Span, "writeText expects 2 args")
+			return nil
+		}
+		pathType := c.checkExpr(env, call.Args[0], String())
+		contentType := c.checkExpr(env, call.Args[1], String())
+		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
+			c.errorf(call.Span, "writeText expects string, string")
+			return nil
+		}
+		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
+	case "appendText":
+		if len(call.Args) != 2 {
+			c.errorf(call.Span, "appendText expects 2 args")
+			return nil
+		}
+		pathType := c.checkExpr(env, call.Args[0], String())
+		contentType := c.checkExpr(env, call.Args[1], String())
+		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
+			c.errorf(call.Span, "appendText expects string, string")
+			return nil
+		}
+		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
+	case "readDir":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "readDir expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "readDir expects string")
+			return nil
+		}
+		ret := NewUnion([]*Type{NewArray(String()), resultErrorType()})
+		c.ExprTypes[call] = ret
+		return ret
+	case "exists":
+		if len(call.Args) != 1 {
+			c.errorf(call.Span, "exists expects 1 arg")
+			return nil
+		}
+		argType := c.checkExpr(env, call.Args[0], String())
+		if argType == nil || argType.Kind != KindString {
+			c.errorf(call.Span, "exists expects string")
+			return nil
+		}
+		c.ExprTypes[call] = Bool()
+		return Bool()
 	case "sqlQuery":
 		if len(call.Args) != 2 {
 			c.errorf(call.Span, "sqlQuery expects 2 args: query string and params array")
@@ -2988,6 +3091,91 @@ func cloneTypeParams(src map[string]*Type) map[string]*Type {
 	return clone
 }
 
+func typeNameForError(t *Type) string {
+	if t == nil {
+		return "unknown"
+	}
+	if t.Literal {
+		switch t.Kind {
+		case KindI64:
+			return fmt.Sprintf("%d", t.LiteralValue.(int64))
+		case KindF64:
+			return fmt.Sprintf("%g", t.LiteralValue.(float64))
+		case KindBool:
+			if t.LiteralValue.(bool) {
+				return "true"
+			}
+			return "false"
+		case KindString:
+			return fmt.Sprintf("%q", t.LiteralValue.(string))
+		}
+	}
+	switch t.Kind {
+	case KindI64:
+		return "integer"
+	case KindF64:
+		return "number"
+	case KindBool:
+		return "boolean"
+	case KindString:
+		return "string"
+	case KindJSON:
+		return "json"
+	case KindVoid:
+		return "void"
+	case KindNull:
+		return "null"
+	case KindUndefined:
+		return "undefined"
+	case KindTypeParam:
+		if t.Name != "" {
+			return t.Name
+		}
+		return "typeparam"
+	case KindArray:
+		if t.Elem == nil {
+			return "unknown[]"
+		}
+		return typeNameForError(t.Elem) + "[]"
+	case KindTuple:
+		parts := make([]string, len(t.Tuple))
+		for i, elem := range t.Tuple {
+			parts[i] = typeNameForError(elem)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case KindFunc:
+		params := make([]string, len(t.Params))
+		for i, p := range t.Params {
+			params[i] = typeNameForError(p)
+		}
+		ret := "unknown"
+		if t.Ret != nil {
+			ret = typeNameForError(t.Ret)
+		}
+		return "(" + strings.Join(params, ", ") + ") => " + ret
+	case KindObject:
+		if len(t.Props) == 0 && t.Index == nil {
+			return "{}"
+		}
+		parts := make([]string, 0, len(t.Props)+1)
+		for _, prop := range t.Props {
+			parts = append(parts, prop.Name+": "+typeNameForError(prop.Type))
+		}
+		if t.Index != nil {
+			parts = append(parts, "[key: string]: "+typeNameForError(t.Index))
+		}
+		return "{ " + strings.Join(parts, ", ") + " }"
+	case KindUnion:
+		parts := make([]string, len(t.Union))
+		for i, member := range t.Union {
+			parts[i] = typeNameForError(member)
+		}
+		return strings.Join(parts, " | ")
+	default:
+		return "unknown"
+	}
+}
+
 func (c *Checker) errorf(span ast.Span, format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
 	c.Errors = append(c.Errors, fmt.Errorf("%d:%d: %s", span.Start.Line, span.Start.Col, msg))
@@ -3393,6 +3581,15 @@ func isRuntimeName(name string) bool {
 	}
 }
 
+func isFileName(name string) bool {
+	switch name {
+	case "readText", "writeText", "appendText", "readDir", "exists":
+		return true
+	default:
+		return false
+	}
+}
+
 func isHTTPName(name string) bool {
 	switch name {
 	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":
@@ -3464,6 +3661,10 @@ func getArrayTypeAlias(name string) *TypeAlias {
 }
 
 func getRuntimeTypeAlias(name string) *TypeAlias {
+	return nil
+}
+
+func getFileTypeAlias(name string) *TypeAlias {
 	return nil
 }
 
