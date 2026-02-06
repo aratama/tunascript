@@ -1,4 +1,4 @@
-import { log, toString, getArgs, getEnv, type Error } from "prelude"
+import { log, toString, getArgs, getEnv, type Error, fallback } from "prelude"
 import { parse, decode } from "json"
 import { length } from "array"
 import { runSandbox, runFormatter } from "runtime"
@@ -24,16 +24,7 @@ create_table playground_sources {
 
 const MAX_SOURCE_SIZE_BYTES: integer = 10240
 const DEFAULT_SOURCE_PATH: string = "example/playground/default_source.tuna"
-
-function loadDefaultSource(): string {
-  const fallback: string | Error = readText(DEFAULT_SOURCE_PATH)
-  return switch (fallback) {
-    case source as string: source
-    case fallbackError as Error: ""
-  } 
-}
-
-const DEFAULT_SOURCE: string = loadDefaultSource()
+const DEFAULT_SOURCE: string = readText(DEFAULT_SOURCE_PATH).fallback("")
 
 function Layout(source: string, stdout: string, html: string, error: string, exitCode: string, runPath: string, pagePath: string): JSX {
   return (

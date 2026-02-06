@@ -24,6 +24,8 @@ TunaScriptには以下の組み込みライブラリがあります。
   - `tuna run --sandbox` では標準出力へ直接は出さず、内部バッファに蓄積されて最終JSONの `stdout` フィールドに入ります。
 - `Error(message: string): Error`
   - `T | Error` の失敗値を作成します（`{ "type": "Error", "message": message }` 相当）。
+- `fallback<T>(result: T | Error, defaultValue: T): T`
+  - `result` が `Error` の場合は `defaultValue` を返し、それ以外は `result` を返します。
 
 例:
 

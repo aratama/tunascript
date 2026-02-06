@@ -1,0 +1,12 @@
+export function fallback<T>(value: T | Error, defaultValue: T): T {
+  return switch (value) {
+    case v as T: v
+    case e as Error: defaultValue
+  }
+}
+
+export type Error = { message: string }
+
+function error(message: string): Error {
+  return { message: message }
+}

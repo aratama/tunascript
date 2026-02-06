@@ -2171,6 +2171,70 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		})
 		c.ExprTypes[call] = errorObj
 		return errorObj
+	case "fallback":
+		if len(call.Args) != 2 {
+			c.errorf(call.Span, "fallback expects 2 args")
+			return nil
+		}
+		if len(call.TypeArgs) > 1 {
+			c.errorf(call.Span, "fallback expects 0 or 1 type argument")
+			return nil
+		}
+		errorType := resultErrorType()
+		if len(call.TypeArgs) == 1 {
+			target := c.resolveType(call.TypeArgs[0], env.mod)
+			if target == nil {
+				return nil
+			}
+			resultExpected := NewUnion([]*Type{target, errorType})
+			resultType := c.checkExpr(env, call.Args[0], resultExpected)
+			if resultType == nil {
+				return nil
+			}
+			if !resultType.AssignableTo(resultExpected) {
+				c.errorf(call.Span, "fallback expects (T | Error) as first arg")
+				return nil
+			}
+			defaultType := c.checkExpr(env, call.Args[1], target)
+			if defaultType == nil {
+				return nil
+			}
+			if !defaultType.AssignableTo(target) {
+				c.errorf(call.Span, "fallback expects default value of type %s", typeNameForError(target))
+				return nil
+			}
+			c.ExprTypes[call] = target
+			return target
+		}
+		resultType := c.checkExpr(env, call.Args[0], nil)
+		if resultType == nil {
+			return nil
+		}
+		defaultType := c.checkExpr(env, call.Args[1], nil)
+		if defaultType == nil {
+			return nil
+		}
+		var target *Type
+		if resultType.Kind == KindUnion {
+			if successType, _ := splitResultType(resultType); successType != nil {
+				target = successType
+			} else {
+				target = resultType
+			}
+		} else if isResultErrorType(resultType) {
+			target = defaultType
+		} else {
+			target = resultType
+		}
+		if target == nil {
+			return nil
+		}
+		if !defaultType.AssignableTo(target) {
+			c.errorf(call.Span, "fallback expects default value of type %s", typeNameForError(target))
+			return nil
+		}
+		c.ExprTypes[call] = target
+		return target
 	case "toString":
 		if len(call.Args) != 1 {
 			c.errorf(call.Span, "toString expects 1 arg")
@@ -3546,7 +3610,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "log", "Error", "toString", "getArgs", "sqlQuery",
+	case "log", "Error", "fallback", "toString", "getArgs", "sqlQuery",
 		"getEnv", "gc", "responseText", "getPath", "getMethod":
 		return true
 	default:

@@ -793,6 +793,7 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"prelude", "http_response_text"},
 		{"prelude", "http_response_text_str"},
 		{"prelude", "intern_string"},
+		{"prelude", "fallback"},
 		{"prelude", "log"},
 		{"prelude", "obj_get"},
 		{"prelude", "obj_new"},
@@ -896,6 +897,8 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result externref))", prefix)
 	case "log":
 		return fmt.Sprintf("(func %s.log (param externref))", prefix)
+	case "fallback":
+		return fmt.Sprintf("(func %s.fallback (param externref externref) (result externref))", prefix)
 	case "obj_get":
 		return fmt.Sprintf("(func %s.obj_get (param externref externref) (result externref))", prefix)
 	case "obj_new":
@@ -2545,6 +2548,17 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emit("(call $prelude.obj_set)")
 
 		f.emit(fmt.Sprintf("(local.get %s)", objLocal))
+	case "fallback":
+		resultArg := call.Args[0]
+		defaultArg := call.Args[1]
+		resultType := f.g.checker.ExprTypes[resultArg]
+		defaultType := f.g.checker.ExprTypes[defaultArg]
+		f.emitExpr(resultArg, resultType)
+		f.emitBoxIfPrimitive(resultType)
+		f.emitExpr(defaultArg, defaultType)
+		f.emitBoxIfPrimitive(defaultType)
+		f.emit(fmt.Sprintf("(call $%s.fallback)", module))
+		f.emitUnboxIfPrimitive(t)
 	case "toString":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -3453,7 +3467,7 @@ func elemType(t *types.Type) *types.Type {
 
 func builtinModule(name string) (string, bool) {
 	switch name {
-	case "log", "Error", "toString", "getArgs", "sqlQuery",
+	case "log", "Error", "fallback", "toString", "getArgs", "sqlQuery",
 		"gc",
 		"getEnv", "responseText", "getPath", "getMethod":
 		return "prelude", true

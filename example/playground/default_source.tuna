@@ -75,7 +75,7 @@ function root(req: Request): Response {
   }
 }
 
-export function main(): void {
+export function main(): void | Error {
 
   // サンプルデータをデータベースに追加しておきます
   execute {
@@ -84,12 +84,12 @@ export function main(): void {
       ('買い物', '2026-02-05 10:00', '0'),
       ('犬の散歩', '2026-02-05 18:30', '1'),
       ('ランチ会', '2026-02-06 12:00', '0')
-  }
+  }?
 
   // Playgroundでは、ルートのページだけ出力されます
   const server = createServer()
   server.addRoute("get", "/", root)
-  listen(server, ":8888")
+  server.listen(":8888")
 
   // log関数で標準出力できます
   log("Server is running at http://localhost:8888/")

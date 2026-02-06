@@ -83,6 +83,16 @@
       },
       "problemMatcher": [],
       "isBackground": true
+    },
+    {
+      "label": "Format Tuna Files",
+      "type": "shell",
+      "command": "rg --files -0 -g '*.tuna' | xargs -0 -I {} go run ./cmd/tuna/ format --write {}",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
     }
   ]
 }
