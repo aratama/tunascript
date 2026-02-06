@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"tuna/internal/ast"
 	"tuna/internal/parser"
@@ -54,6 +55,10 @@ func (c *Compiler) loadRecursive(path string) error {
 	if _, ok := c.Modules[path]; ok {
 		return nil
 	}
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != "" && ext != ".tuna" && ext != ".ts" {
+		return c.loadTextModule(path)
+	}
 	src, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -77,6 +82,29 @@ func (c *Compiler) loadRecursive(path string) error {
 		if err := c.loadRecursive(resolved); err != nil {
 			return err
 		}
+	}
+	c.Modules[path] = mod
+	return nil
+}
+
+func (c *Compiler) loadTextModule(path string) error {
+	if _, ok := c.Modules[path]; ok {
+		return nil
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	mod := &ast.Module{
+		Path: path,
+		Decls: []ast.Decl{
+			&ast.ConstDecl{
+				Name:   "default",
+				Export: true,
+				Type:   &ast.NamedType{Name: "string"},
+				Init:   &ast.StringLit{Value: string(src)},
+			},
+		},
 	}
 	c.Modules[path] = mod
 	return nil

@@ -243,24 +243,21 @@ export function main(): void {
 `)
 }
 
-func TestJSXStyleAndScriptRequireTemplateLiteralExpression(t *testing.T) {
-	compileExpectError(t, `import { responseHtml } from "http"
+func TestJSXStyleAndScriptAllowStringExpressions(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log } from "prelude"
 export function main(): void {
-  responseHtml(<style>body color red</style>)
+  const style: string = "body { color: red; }"
+  const script: string = "const x = 1;"
+  const html: string = <html><head><style>{style}</style><script>{script}</script></head><body>Hello</body></html>
+  log(html)
 }
-`)
-
-	compileExpectError(t, `import { responseHtml } from "http"
-export function main(): void {
-  responseHtml(<style>{"body { color: red; }"}</style>)
-}
-`)
-
-	compileExpectError(t, `import { responseHtml } from "http"
-export function main(): void {
-  responseHtml(<script>{"const x = 1;"}</script>)
-}
-`)
+`,
+	}, "main.ts")
+	want := "<html><head><style>body { color: red; }</style><script>const x = 1;</script></head><body>Hello</body></html>\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
 }
 
 func TestModuleImport(t *testing.T) {
@@ -275,6 +272,23 @@ export function main(): void {
 `,
 	}, "main.ts")
 	want := "42\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
+func TestTextFileDefaultImport(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"style.css": `body { color: red; }`,
+		"main.ts": `import style from "./style.css"
+import { log } from "prelude"
+export function main(): void {
+  const s: string = style
+  log(s)
+}
+`,
+	}, "main.ts")
+	want := "body { color: red; }\n"
 	if out != want {
 		t.Fatalf("output mismatch: %q", out)
 	}

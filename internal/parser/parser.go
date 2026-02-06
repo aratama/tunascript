@@ -46,7 +46,30 @@ func (p *Parser) ParseModule() (*ast.Module, error) {
 func (p *Parser) parseImport() ast.ImportDecl {
 	start := p.curr.Pos
 	p.expect(lexer.TokenImport)
-	p.expect(lexer.TokenLBrace)
+	defaultName := ""
+	var items []ast.ImportItem
+	if p.curr.Kind == lexer.TokenIdent {
+		defaultName = p.curr.Text
+		p.next()
+		if p.curr.Kind == lexer.TokenComma {
+			p.next()
+			p.expect(lexer.TokenLBrace)
+			items = p.parseImportItems()
+			p.expect(lexer.TokenRBrace)
+		}
+	} else {
+		p.expect(lexer.TokenLBrace)
+		items = p.parseImportItems()
+		p.expect(lexer.TokenRBrace)
+	}
+	p.expect(lexer.TokenFrom)
+	modTok := p.expect(lexer.TokenString)
+	p.consumeForbiddenSemicolon()
+	end := p.curr.Pos
+	return ast.ImportDecl{DefaultName: defaultName, Items: items, From: modTok.Text, Span: spanFrom(start, end)}
+}
+
+func (p *Parser) parseImportItems() []ast.ImportItem {
 	var items []ast.ImportItem
 	for {
 		if p.curr.Kind == lexer.TokenRBrace {
@@ -65,12 +88,7 @@ func (p *Parser) parseImport() ast.ImportDecl {
 		}
 		break
 	}
-	p.expect(lexer.TokenRBrace)
-	p.expect(lexer.TokenFrom)
-	modTok := p.expect(lexer.TokenString)
-	p.consumeForbiddenSemicolon()
-	end := p.curr.Pos
-	return ast.ImportDecl{Items: items, From: modTok.Text, Span: spanFrom(start, end)}
+	return items
 }
 
 func (p *Parser) parseDecl() ast.Decl {
@@ -807,9 +825,10 @@ func (p *Parser) parseObjectLit() ast.Expr {
 				case lexer.TokenString, lexer.TokenIdent:
 					p.next()
 					key := keyTok.Text
+					keyQuoted := keyTok.Kind == lexer.TokenString
 					p.expect(lexer.TokenColon)
 					value := p.parseExpr(0)
-					entries = append(entries, ast.ObjectEntry{Kind: ast.ObjectProp, Key: key, Value: value, Span: spanFromPos(posFromLex(keyTok.Pos), value.GetSpan().End)})
+					entries = append(entries, ast.ObjectEntry{Kind: ast.ObjectProp, Key: key, KeyQuoted: keyQuoted, Value: value, Span: spanFromPos(posFromLex(keyTok.Pos), value.GetSpan().End)})
 				default:
 					p.err("string literal key required")
 					found = false
@@ -1039,9 +1058,10 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 				}
 				p.next()
 				key := keyTok.Text
+				keyQuoted := keyTok.Kind == lexer.TokenString
 				p.expect(lexer.TokenColon)
 				typeExpr := p.parseType()
-				props = append(props, ast.TypeProp{Key: key, Type: typeExpr, Span: spanFromPos(posFromLex(keyTok.Pos), typeExpr.GetSpan().End)})
+				props = append(props, ast.TypeProp{Key: key, KeyQuoted: keyQuoted, Type: typeExpr, Span: spanFromPos(posFromLex(keyTok.Pos), typeExpr.GetSpan().End)})
 				if p.curr.Kind != lexer.TokenComma {
 					break
 				}

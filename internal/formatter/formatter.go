@@ -64,7 +64,18 @@ func (f *Formatter) writeIndent() {
 }
 
 func (f *Formatter) formatImport(imp ast.ImportDecl) {
-	f.buf.WriteString("import { ")
+	f.buf.WriteString("import ")
+	if imp.DefaultName != "" {
+		f.buf.WriteString(imp.DefaultName)
+		if len(imp.Items) == 0 {
+			f.buf.WriteString(" from \"")
+			f.buf.WriteString(imp.From)
+			f.buf.WriteString("\"\n")
+			return
+		}
+		f.buf.WriteString(", ")
+	}
+	f.buf.WriteString("{ ")
 	for i, item := range imp.Items {
 		if i > 0 {
 			f.buf.WriteString(", ")
@@ -620,6 +631,16 @@ func (f *Formatter) formatTemplateLit(e *ast.TemplateLit) {
 	f.buf.WriteString("`")
 }
 
+func (f *Formatter) formatObjectKey(key string, quoted bool) {
+	if quoted {
+		f.buf.WriteString("\"")
+		f.buf.WriteString(escapeString(key))
+		f.buf.WriteString("\"")
+		return
+	}
+	f.buf.WriteString(key)
+}
+
 func (f *Formatter) formatObjectLit(e *ast.ObjectLit) {
 	if len(e.Entries) == 0 {
 		f.buf.WriteString("{}")
@@ -634,9 +655,8 @@ func (f *Formatter) formatObjectLit(e *ast.ObjectLit) {
 			f.buf.WriteString("...")
 			f.formatExpr(entry.Value)
 		} else {
-			f.buf.WriteString("\"")
-			f.buf.WriteString(entry.Key)
-			f.buf.WriteString("\": ")
+			f.formatObjectKey(entry.Key, entry.KeyQuoted)
+			f.buf.WriteString(": ")
 			f.formatExpr(entry.Value)
 		}
 	}
@@ -923,9 +943,8 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			if i > 0 {
 				f.buf.WriteString(", ")
 			}
-			f.buf.WriteString("\"")
-			f.buf.WriteString(prop.Key)
-			f.buf.WriteString("\": ")
+			f.formatObjectKey(prop.Key, prop.KeyQuoted)
+			f.buf.WriteString(": ")
 			f.formatType(prop.Type)
 		}
 		f.buf.WriteString(" }")

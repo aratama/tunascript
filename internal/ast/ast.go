@@ -16,9 +16,10 @@ type ImportItem struct {
 }
 
 type ImportDecl struct {
-	Items []ImportItem
-	From  string
-	Span  Span
+	DefaultName string
+	Items       []ImportItem
+	From        string
+	Span        Span
 }
 
 type Decl interface {
@@ -322,10 +323,11 @@ const (
 )
 
 type ObjectEntry struct {
-	Kind  ObjectEntryKind
-	Key   string
-	Value Expr
-	Span  Span
+	Kind      ObjectEntryKind
+	Key       string
+	KeyQuoted bool
+	Value     Expr
+	Span      Span
 }
 
 type CallExpr struct {
@@ -594,9 +596,10 @@ func (*ObjectType) typeNode()       {}
 func (t *ObjectType) GetSpan() Span { return t.Span }
 
 type TypeProp struct {
-	Key  string
-	Type TypeExpr
-	Span Span
+	Key       string
+	KeyQuoted bool
+	Type      TypeExpr
+	Span      Span
 }
 
 type Span struct {

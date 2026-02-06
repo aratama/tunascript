@@ -5,9 +5,9 @@ import { runSandbox, runFormatter } from "runtime"
 import { createServer, addRoute, listen, responseHtml, responseRedirect, type JSX, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
 import { DEFAULT_SOURCE } from "./default_source.tuna"
-import { PLAYGROUND_LAYOUT_CSS } from "./layout_style.tuna"
+import style from "./style.css"
 import { PLAYGROUND_EDITOR_JS } from "./editor_script.tuna"
-import { TUNASCRIPT_LEZER_GRAMMAR } from "./tunascript_lezer_grammar.tuna"
+import TUNASCRIPT_LEZER_GRAMMAR from "./tunascript.grammar"
 
 type RunResult = {
   stdout: string,
@@ -32,7 +32,7 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+1+Code:wght@400;500;700&display=swap" />
         <title>TunaScript Playground</title>
-        <style>{`${PLAYGROUND_LAYOUT_CSS}`}</style>
+        <style>{style}</style>
       </head>
       <body>
         <main class="layout">
@@ -65,7 +65,7 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
             </article>
           </section>
         </main>
-        <script type="module">{`${PLAYGROUND_EDITOR_JS}`}</script>
+        <script type="module">{PLAYGROUND_EDITOR_JS}</script>
       </body>
     </html>
   )

@@ -8,9 +8,9 @@ import { buildParser } from "https://esm.sh/@lezer/generator@1"
 const grammarPath = "/assets/tunascript.grammar"
 
 const tunaHighlightStyle = HighlightStyle.define([
-  { tag: [t.keyword, t.controlKeyword, t.moduleKeyword], color: "#0b4ad1", fontWeight: "700" },
-  { tag: [t.typeName], color: "#8a2be2", fontWeight: "600" },
-  { tag: [t.bool, t.null], color: "#c2410c", fontWeight: "600" },
+  { tag: [t.keyword, t.controlKeyword, t.moduleKeyword], color: "#0b4ad1" },
+  { tag: [t.typeName], color: "#8a2be2" },
+  { tag: [t.bool, t.null], color: "#c2410c" },
   { tag: [t.number], color: "#0f766e" },
   { tag: [t.string], color: "#b45309" },
   { tag: [t.comment], color: "#6b7280", fontStyle: "italic" },
@@ -19,27 +19,33 @@ const tunaHighlightStyle = HighlightStyle.define([
   { tag: [t.variableName], color: "#0f172a" }
 ])
 
+const editorFont = "'M PLUS 1 Code', 'JetBrains Mono', 'UDEV Gothic 35', monospace"
+
 const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
-    fontFamily: "'M PLUS 1 Code', 'JetBrains Mono', 'UDEV Gothic 35', monospace",
+    fontFamily: editorFont,
     fontSize: "14px",
     color: "#102236"
   },
   ".cm-scroller": {
-    overflow: "auto"
+    overflow: "scroll",
+    fontFamily: editorFont
   },
   ".cm-content": {
     padding: "16px 0",
-    minHeight: "100%"
+    minHeight: "100%",
+    fontFamily: editorFont
   },
   ".cm-line": {
-    padding: "0 16px"
+    padding: "0 16px",
+    fontFamily: editorFont
   },
   ".cm-gutters": {
     borderRight: "1px solid #dbe4ee",
     backgroundColor: "#f7faff",
-    color: "#8da2b5"
+    color: "#8da2b5",
+    fontFamily: editorFont
   },
   ".cm-activeLine": {
     backgroundColor: "rgba(14, 165, 233, 0.08)"

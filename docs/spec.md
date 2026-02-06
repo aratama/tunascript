@@ -479,8 +479,9 @@ line2`
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
 - `import { runSandbox, runFormatter } from "runtime"` です。
+- `import style from "./style.css"` のようにテキストファイルを `string` として読み込めます。
 - `export const name = ...` です。
-- 相対パスは `.ts` を省略可能です。
+- 相対パスは `.ts` を省略可能です（テキストファイルの import は拡張子の省略不可）。
 
 ## 11. SQL
 
@@ -688,8 +689,8 @@ const count = 42
 </div>
 ```
 
-`<style>` / `<script>` の子要素は、TypeScript JSX と同様に `{` と衝突するため生テキストを許可しません。  
-必ず `{` + テンプレートリテラル + `}` の形で 1 つだけ埋め込んでください。
+`<style>` / `<script>` も通常の JSX と同様に式を埋め込めます。  
+CSS/JavaScript をタグ内へ直接書く場合は `{` と衝突しやすいため、`{` + テンプレートリテラル + `}` か、`string` 変数（例: `import style from "./style.css"`）の埋め込みを推奨します。
 
 ```typescript
 <style>{`
@@ -762,7 +763,7 @@ export function main(): void {
 - イベントハンドラー（onClick等）は未対応です。
 - カスタムコンポーネント（大文字で始まるタグ）は 12.3.7 のルールに従って関数呼び出しに変換されます。
 - JSXの子要素に埋め込める式はプリミティブ（文字列、整数、浮動小数点、真偽値）または `string[]` のみです。オブジェクトやそれ以外の配列は埋め込み不可です。
-- `<style>` / `<script>` の中身は `{` + テンプレートリテラル + `}` を 1 つだけ置く必要があります（生テキスト不可）。
+- `<style>` / `<script>` でも通常の JSX 子要素ルールが適用されます。直接記述で `{` を含む場合はテンプレートリテラルか `string` 変数の埋め込みを使ってください。
 
 #### 12.3.7 カスタムコンポーネント
 

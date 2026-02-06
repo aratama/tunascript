@@ -266,6 +266,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 	}
 	for _, imp := range mod.AST.Imports {
 		if imp.From == "prelude" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					// Type imports are already handled in processImports
@@ -283,6 +286,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			continue
 		}
 		if imp.From == "http" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					if httpAlias := getHTTPTypeAlias(item.Name); httpAlias == nil {
@@ -299,6 +305,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			continue
 		}
 		if imp.From == "sqlite" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					if sqliteAlias := getSQLiteTypeAlias(item.Name); sqliteAlias == nil {
@@ -315,6 +324,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			continue
 		}
 		if imp.From == "json" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					if jsonAlias := getJSONTypeAlias(item.Name); jsonAlias == nil {
@@ -331,6 +343,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			continue
 		}
 		if imp.From == "array" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					if arrayAlias := getArrayTypeAlias(item.Name); arrayAlias == nil {
@@ -347,6 +362,9 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			continue
 		}
 		if imp.From == "runtime" {
+			if imp.DefaultName != "" {
+				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
+			}
 			for _, item := range imp.Items {
 				if item.IsType {
 					if runtimeAlias := getRuntimeTypeAlias(item.Name); runtimeAlias == nil {
@@ -366,6 +384,14 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 		if !ok {
 			c.errorf(imp.Span, "%s not found", imp.From)
 			continue
+		}
+		if imp.DefaultName != "" {
+			exp := dep.Exports["default"]
+			if exp == nil {
+				c.errorf(imp.Span, "default export not found in %s", imp.From)
+			} else {
+				c.bindImportedValue(env, imp.DefaultName, exp, imp.Span)
+			}
 		}
 		for _, item := range imp.Items {
 			exp := dep.Exports[item.Name]
@@ -1535,7 +1561,6 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if isJSXComponentTag(e.Tag) {
 			return c.checkJSXComponent(env, e)
 		}
-		c.checkStyleScriptJSXChildren(e)
 		// JSX element returns string
 		// Check attribute expressions
 		for _, attr := range e.Attributes {
@@ -1565,27 +1590,6 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		return String()
 	default:
 		return nil
-	}
-}
-
-func (c *Checker) checkStyleScriptJSXChildren(e *ast.JSXElement) {
-	if !strings.EqualFold(e.Tag, "style") && !strings.EqualFold(e.Tag, "script") {
-		return
-	}
-
-	if len(e.Children) != 1 {
-		c.errorf(e.Span, "<%s> must contain exactly one child expression in the form {`...`}", e.Tag)
-		return
-	}
-
-	child := e.Children[0]
-	if child.Kind != ast.JSXChildExpr || child.Expr == nil {
-		c.errorf(child.Span, "<%s> child must be a template literal expression: {`...`}", e.Tag)
-		return
-	}
-
-	if _, ok := child.Expr.(*ast.TemplateLit); !ok {
-		c.errorf(child.Span, "<%s> child must be a template literal expression: {`...`}", e.Tag)
 	}
 }
 

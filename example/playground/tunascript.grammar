@@ -12,30 +12,36 @@
   TemplateString { "`" (![`\\] | "\\" _)* "`" }
 
   Keyword {
-    "import" | "from" | "export" | "const" | "function" | "type" |
-    "if" | "else" | "for" | "of" | "return" | "switch" | "case" | "default" | "as" |
-    "create_table" | "execute" | "fetch_optional" | "fetch_all" | "fetch_one" | "fetch"
+    (
+      "import" | "from" | "export" | "const" | "function" | "type" |
+      "if" | "else" | "for" | "of" | "return" | "switch" | "case" | "default" | "as" |
+      "create_table" | "execute" | "fetch_optional" | "fetch_all" | "fetch_one" | "fetch"
+    ) ![A-Za-z0-9_]
   }
 
   BuiltinType {
-    "string" | "number" | "boolean" | "integer" | "json" | "void" |
-    "TEXT" | "INTEGER" | "REAL" | "BLOB" | "PRIMARY" | "KEY" | "AUTOINCREMENT" |
-    "NOT" | "NULL" | "DEFAULT" | "CURRENT_TIMESTAMP"
+    (
+      "string" | "number" | "boolean" | "integer" | "json" | "void" |
+      "TEXT" | "INTEGER" | "REAL" | "BLOB" | "PRIMARY" | "KEY" | "AUTOINCREMENT" |
+      "NOT" | "NULL" | "DEFAULT" | "CURRENT_TIMESTAMP"
+    ) ![A-Za-z0-9_]
   }
 
-  BooleanLiteral { "true" | "false" }
-  NullLiteral { "null" | "undefined" }
+  BooleanLiteral { ("true" | "false") ![A-Za-z0-9_] }
+  NullLiteral { ("null" | "undefined") ![A-Za-z0-9_] }
 
   SQLKeyword {
-    "SELECT" | "select" | "INSERT" | "insert" | "UPDATE" | "update" | "DELETE" | "delete" |
-    "FROM" | "from" | "WHERE" | "where" | "INTO" | "into" | "VALUES" | "values" |
-    "SET" | "set" | "ORDER" | "order" | "BY" | "by" | "GROUP" | "group" |
-    "HAVING" | "having" | "LIMIT" | "limit" | "OFFSET" | "offset" |
-    "JOIN" | "join" | "LEFT" | "left" | "RIGHT" | "right" | "INNER" | "inner" | "OUTER" | "outer" |
-    "ON" | "on" | "AND" | "and" | "OR" | "or" | "DISTINCT" | "distinct" | "ALL" | "all" |
-    "CREATE" | "create" | "TABLE" | "table" | "DROP" | "drop" | "ALTER" | "alter" |
-    "INDEX" | "index" | "FOREIGN" | "foreign" | "REFERENCES" | "references" |
-    "last_insert_rowid"
+    (
+      "SELECT" | "select" | "INSERT" | "insert" | "UPDATE" | "update" | "DELETE" | "delete" |
+      "FROM" | "from" | "WHERE" | "where" | "INTO" | "into" | "VALUES" | "values" |
+      "SET" | "set" | "ORDER" | "order" | "BY" | "by" | "GROUP" | "group" |
+      "HAVING" | "having" | "LIMIT" | "limit" | "OFFSET" | "offset" |
+      "JOIN" | "join" | "LEFT" | "left" | "RIGHT" | "right" | "INNER" | "inner" | "OUTER" | "outer" |
+      "ON" | "on" | "AND" | "and" | "OR" | "or" | "DISTINCT" | "distinct" | "ALL" | "all" |
+      "CREATE" | "create" | "TABLE" | "table" | "DROP" | "drop" | "ALTER" | "alter" |
+      "INDEX" | "index" | "FOREIGN" | "foreign" | "REFERENCES" | "references" |
+      "last_insert_rowid"
+    ) ![A-Za-z0-9_]
   }
 
   SQLInterpolation { "{" $[A-Za-z_] $[A-Za-z0-9_]* "}" }

@@ -65,7 +65,7 @@ function root(req: Request): Response {
           <body>
             <main class="card">
               <span class="badge">SQL TODO DEMO</span>
-              <h1>TunaScript TODO List</h1>
+              <h1>🐟TunaScript TODO List🍣</h1>
               <ul>{map(rows, function (row) { return <TodoListItem row={row} />})}</ul>
             </main>
           </body>
@@ -86,7 +86,7 @@ export function main(): void {
       ('ランチ会', '2026-02-06 12:00', '0')
   }
 
-  // Playgroundでは、ルーティング部分のコードは迂回されます
+  // Playgroundでは、ルートのページだけ出力されます
   const server = createServer()
   server.addRoute("get", "/", root)
   listen(server, ":8888")

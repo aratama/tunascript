@@ -245,7 +245,7 @@ import { runFormatter } from "runtime"
 import { log, type Error } from "prelude"
 
 export function main(): void {
-  const ok: string | Error = runFormatter("export function main(): void { const x: integer = 1 }")
+  const ok: string | Error = runFormatter("export function main(): void { const obj = { foo: 1, \"bar\": 2 } }")
   switch (ok) {
     case formatted as string: {
       log(formatted)
@@ -270,6 +270,9 @@ export function main(): void {
 	out := compileAndRunNormal(t, src, nil)
 	if !strings.Contains(out, "export function main(): void {") {
 		t.Fatalf("expected formatted output, got: %q", out)
+	}
+	if !strings.Contains(out, "{ foo: 1, \"bar\": 2 }") {
+		t.Fatalf("expected object key quotes preserved, got: %q", out)
 	}
 	if !strings.Contains(out, "formatter-error\n") {
 		t.Fatalf("expected formatter error branch, got: %q", out)

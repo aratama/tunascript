@@ -27,6 +27,17 @@
       "problemMatcher": []
     },
     {
+      "label": "Run Go Tests",
+      "type": "shell",
+      "command": "go test ./...",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$go"]
+    },
+    {
       "label": "Run HTTP Server Example",
       "type": "shell",
       "command": "go run ./cmd/tuna/ run example/server/server.tuna example/server/todo.sqlite3",
