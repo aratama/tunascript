@@ -51,6 +51,18 @@ type FuncDecl struct {
 func (*FuncDecl) declNode()       {}
 func (d *FuncDecl) GetSpan() Span { return d.Span }
 
+type ExternFuncDecl struct {
+	Name       string
+	Export     bool
+	TypeParams []string
+	Params     []Param
+	Ret        TypeExpr
+	Span       Span
+}
+
+func (*ExternFuncDecl) declNode()       {}
+func (d *ExternFuncDecl) GetSpan() Span { return d.Span }
+
 // TableDecl represents a table definition: table tableName { column definitions }
 type TableDecl struct {
 	Name    string

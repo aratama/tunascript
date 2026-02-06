@@ -7,6 +7,7 @@ type Kind int
 const (
 	KindInvalid Kind = iota
 	KindI64
+	KindI32
 	KindF64
 	KindBool
 	KindString
@@ -421,6 +422,8 @@ func baseType(typ *Type) *Type {
 	switch typ.Kind {
 	case KindI64:
 		return I64()
+	case KindI32:
+		return I32()
 	case KindF64:
 		return F64()
 	case KindBool:
@@ -461,6 +464,7 @@ func NewTypeParam(name string) *Type {
 
 var (
 	i64Type    = &Type{Kind: KindI64}
+	i32Type    = &Type{Kind: KindI32}
 	f64Type    = &Type{Kind: KindF64}
 	boolType   = &Type{Kind: KindBool}
 	stringType = &Type{Kind: KindString}
@@ -471,6 +475,7 @@ var (
 )
 
 func I64() *Type    { return i64Type }
+func I32() *Type    { return i32Type }
 func F64() *Type    { return f64Type }
 func Bool() *Type   { return boolType }
 func String() *Type { return stringType }

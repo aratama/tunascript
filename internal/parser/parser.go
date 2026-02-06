@@ -100,6 +100,8 @@ func (p *Parser) parseDecl() ast.Decl {
 	switch p.curr.Kind {
 	case lexer.TokenConst:
 		return p.parseConstDecl(export)
+	case lexer.TokenExtern:
+		return p.parseExternFuncDecl(export)
 	case lexer.TokenFunction:
 		return p.parseFuncDecl(export)
 	case lexer.TokenType:
@@ -140,6 +142,23 @@ func (p *Parser) parseFuncDecl(export bool) ast.Decl {
 	body := p.parseBlock()
 	end := p.curr.Pos
 	return &ast.FuncDecl{Name: nameTok.Text, Export: export, TypeParams: typeParams, Params: params, Ret: ret, Body: body, Span: spanFrom(start, end)}
+}
+
+func (p *Parser) parseExternFuncDecl(export bool) ast.Decl {
+	start := p.curr.Pos
+	p.expect(lexer.TokenExtern)
+	p.expect(lexer.TokenFunction)
+	nameTok := p.expect(lexer.TokenIdent)
+	var typeParams []string
+	if p.curr.Kind == lexer.TokenLT {
+		typeParams = p.parseTypeParamList()
+	}
+	params := p.parseParamList()
+	p.expect(lexer.TokenColon)
+	ret := p.parseType()
+	p.consumeForbiddenSemicolon()
+	end := p.curr.Pos
+	return &ast.ExternFuncDecl{Name: nameTok.Text, Export: export, TypeParams: typeParams, Params: params, Ret: ret, Span: spanFrom(start, end)}
 }
 
 func (p *Parser) parseTableDecl() ast.Decl {
@@ -1054,7 +1073,7 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 				keyTok := p.curr
 				switch keyTok.Kind {
 				case lexer.TokenString, lexer.TokenIdent,
-					lexer.TokenImport, lexer.TokenFrom, lexer.TokenExport, lexer.TokenConst, lexer.TokenType,
+					lexer.TokenImport, lexer.TokenFrom, lexer.TokenExport, lexer.TokenConst, lexer.TokenType, lexer.TokenExtern,
 					lexer.TokenIf, lexer.TokenElse, lexer.TokenFor, lexer.TokenOf, lexer.TokenReturn,
 					lexer.TokenTrue, lexer.TokenFalse, lexer.TokenNull, lexer.TokenUndefined, lexer.TokenFunction,
 					lexer.TokenSwitch, lexer.TokenCase, lexer.TokenDefault,
@@ -1511,7 +1530,7 @@ func (p *Parser) isJSXAttributeName() bool {
 	case lexer.TokenIdent, lexer.TokenType, lexer.TokenFor, lexer.TokenIf, lexer.TokenElse,
 		lexer.TokenConst, lexer.TokenReturn, lexer.TokenTrue, lexer.TokenFalse,
 		lexer.TokenSwitch, lexer.TokenCase, lexer.TokenDefault, lexer.TokenExport,
-		lexer.TokenImport, lexer.TokenFrom, lexer.TokenOf, lexer.TokenFunction:
+		lexer.TokenImport, lexer.TokenFrom, lexer.TokenOf, lexer.TokenExtern, lexer.TokenFunction:
 		return true
 	default:
 		return false

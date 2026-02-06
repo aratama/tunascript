@@ -24,6 +24,7 @@ const (
 	TokenFalse
 	TokenNull
 	TokenUndefined
+	TokenExtern
 	TokenFunction
 	TokenLParen
 	TokenRParen
@@ -131,6 +132,8 @@ func (k TokenKind) String() string {
 		return "null"
 	case TokenUndefined:
 		return "undefined"
+	case TokenExtern:
+		return "extern"
 	case TokenFunction:
 		return "function"
 	case TokenLParen:
@@ -253,6 +256,7 @@ var keywords = map[string]TokenKind{
 	"false":          TokenFalse,
 	"null":           TokenNull,
 	"undefined":      TokenUndefined,
+	"extern":         TokenExtern,
 	"function":       TokenFunction,
 	"switch":         TokenSwitch,
 	"case":           TokenCase,

@@ -253,6 +253,21 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 			if d.Export {
 				mod.Exports[d.Name] = sym
 			}
+		case *ast.ExternFuncDecl:
+			if _, exists := mod.Top[d.Name]; exists {
+				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
+				continue
+			}
+			if mod.AST.Path != "prelude" {
+				c.errorf(d.Span, "extern function is only supported in prelude")
+				continue
+			}
+			sig, _ := c.funcTypeFromExternDecl(d, mod)
+			sym := &Symbol{Name: d.Name, Kind: SymFunc, Type: sig, Decl: d}
+			mod.Top[d.Name] = sym
+			if d.Export {
+				mod.Exports[d.Name] = sym
+			}
 		case *ast.TableDecl:
 			// Collect table definition
 			tableInfo := &TableInfo{
@@ -502,6 +517,8 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 			c.checkConstDecl(env, d)
 		case *ast.FuncDecl:
 			c.checkFuncDecl(env, d)
+		case *ast.ExternFuncDecl:
+			// Extern functions have no body and are type-checked by signature only.
 		}
 	}
 }
@@ -633,15 +650,23 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 }
 
 func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) (*Type, map[string]*Type) {
+	return c.funcTypeFromSignature(d.TypeParams, d.Params, d.Ret, mod)
+}
+
+func (c *Checker) funcTypeFromExternDecl(d *ast.ExternFuncDecl, mod *ModuleInfo) (*Type, map[string]*Type) {
+	return c.funcTypeFromSignature(d.TypeParams, d.Params, d.Ret, mod)
+}
+
+func (c *Checker) funcTypeFromSignature(typeParamNames []string, paramsDecl []ast.Param, retDecl ast.TypeExpr, mod *ModuleInfo) (*Type, map[string]*Type) {
 	var typeParams map[string]*Type
-	if len(d.TypeParams) > 0 {
-		typeParams = make(map[string]*Type, len(d.TypeParams))
-		for _, name := range d.TypeParams {
+	if len(typeParamNames) > 0 {
+		typeParams = make(map[string]*Type, len(typeParamNames))
+		for _, name := range typeParamNames {
 			typeParams[name] = NewTypeParam(name)
 		}
 	}
-	params := make([]*Type, len(d.Params))
-	for i, p := range d.Params {
+	params := make([]*Type, len(paramsDecl))
+	for i, p := range paramsDecl {
 		if p.Type == nil {
 			c.errorf(p.Span, "param type required")
 			return nil, nil
@@ -651,13 +676,13 @@ func (c *Checker) funcTypeFromDecl(d *ast.FuncDecl, mod *ModuleInfo) (*Type, map
 			return nil, nil
 		}
 	}
-	ret := c.resolveTypeRec(d.Ret, mod, typeParams)
+	ret := c.resolveTypeRec(retDecl, mod, typeParams)
 	if ret == nil {
 		return nil, nil
 	}
 	sig := NewFunc(params, ret)
-	if len(d.TypeParams) > 0 {
-		sig.TypeParams = append([]string(nil), d.TypeParams...)
+	if len(typeParamNames) > 0 {
+		sig.TypeParams = append([]string(nil), typeParamNames...)
 	}
 	return sig, typeParams
 }
@@ -3094,6 +3119,8 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 		switch t.Name {
 		case "integer":
 			return c.recordType(expr, I64())
+		case "short":
+			return c.recordType(expr, I32())
 		case "boolean":
 			return c.recordType(expr, Bool())
 		case "string":
@@ -3337,6 +3364,8 @@ func typeNameForError(t *Type) string {
 	switch t.Kind {
 	case KindI64:
 		return "integer"
+	case KindI32:
+		return "short"
 	case KindF64:
 		return "number"
 	case KindBool:

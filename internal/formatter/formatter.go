@@ -94,6 +94,8 @@ func (f *Formatter) formatDecl(decl ast.Decl) {
 	switch d := decl.(type) {
 	case *ast.ConstDecl:
 		f.formatConstDecl(d)
+	case *ast.ExternFuncDecl:
+		f.formatExternFuncDecl(d)
 	case *ast.FuncDecl:
 		f.formatFuncDecl(d)
 	case *ast.TypeAliasDecl:
@@ -147,6 +149,37 @@ func (f *Formatter) formatFuncDecl(d *ast.FuncDecl) {
 	f.formatType(d.Ret)
 	f.buf.WriteString(" ")
 	f.formatBlockStmt(d.Body)
+	f.buf.WriteString("\n")
+}
+
+func (f *Formatter) formatExternFuncDecl(d *ast.ExternFuncDecl) {
+	f.writeIndent()
+	if d.Export {
+		f.buf.WriteString("export ")
+	}
+	f.buf.WriteString("extern function ")
+	f.buf.WriteString(d.Name)
+	if len(d.TypeParams) > 0 {
+		f.buf.WriteString("<")
+		for i, name := range d.TypeParams {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.buf.WriteString(name)
+		}
+		f.buf.WriteString(">")
+	}
+	f.buf.WriteString("(")
+	for i, param := range d.Params {
+		if i > 0 {
+			f.buf.WriteString(", ")
+		}
+		f.buf.WriteString(param.Name)
+		f.buf.WriteString(": ")
+		f.formatType(param.Type)
+	}
+	f.buf.WriteString("): ")
+	f.formatType(d.Ret)
 	f.buf.WriteString("\n")
 }
 

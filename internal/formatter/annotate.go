@@ -26,6 +26,8 @@ func (f *Formatter) AnnotateModuleTypes(mod *ast.Module) error {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			annotateBlock(d.Body, checker)
+		case *ast.ExternFuncDecl:
+			// No function body to annotate.
 		case *ast.ConstDecl:
 			// top-level consts have Type required by parser
 		}
@@ -267,6 +269,8 @@ func typeToTypeExpr(t *ttypes.Type) ast.TypeExpr {
 	switch t.Kind {
 	case ttypes.KindI64:
 		return &ast.NamedType{Name: "integer"}
+	case ttypes.KindI32:
+		return &ast.NamedType{Name: "short"}
 	case ttypes.KindF64:
 		return &ast.NamedType{Name: "number"}
 	case ttypes.KindBool:

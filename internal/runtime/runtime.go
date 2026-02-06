@@ -316,6 +316,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := define("str_len", func(handle *Value) int64 {
+		return must(r.strLen(handle))
+	}); err != nil {
+		return err
+	}
 	if err := define("val_from_i64", func(v int64) *Value {
 		return must(r.valFromI64(v))
 	}); err != nil {
@@ -1288,6 +1293,17 @@ func (r *Runtime) toString(handle *Value) (*Value, error) {
 	default:
 		return nil, errors.New("toString expects primitive")
 	}
+}
+
+func (r *Runtime) strLen(handle *Value) (int64, error) {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return 0, err
+	}
+	if v.Kind != KindString {
+		return 0, errors.New("str_len expects string")
+	}
+	return int64(utf8.RuneCountInString(v.Str)), nil
 }
 
 func (r *Runtime) escapeHTMLAttr(handle *Value) (*Value, error) {

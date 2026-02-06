@@ -140,6 +140,61 @@ const fromError: string = fallback({ "type": "Error", "message": "boom" }, "")
 	assertTypeKind(t, checker.ExprTypes[fromError.Init], KindString, "fromError")
 }
 
+func TestExternFunctionDeclaration(t *testing.T) {
+	const src = `
+extern function stringLength(str: string): integer
+
+const n: integer = stringLength("hello")
+`
+
+	mod := mustParseModule(t, "extern_decl.tuna", src)
+	checker := NewChecker()
+	checker.AddModule(mod)
+	if checker.Check() {
+		t.Fatalf("expected extern declaration outside prelude to fail")
+	}
+	if !hasErrorContaining(checker.Errors, "extern function is only supported in prelude") {
+		t.Fatalf("expected extern restriction error, got: %v", checker.Errors)
+	}
+}
+
+func TestExternFunctionDeclarationInPrelude(t *testing.T) {
+	const src = `
+export extern function stringLength(str: string): integer
+
+const n: integer = stringLength("hello")
+`
+
+	mod := mustParseModule(t, "prelude", src)
+	checker := runChecker(t, mod)
+
+	n := findConstDecl(t, mod, "n")
+	assertTypeKind(t, checker.ExprTypes[n.Init], KindI64, "n")
+}
+
+func TestExternFunctionDeclarationShortTypeInPrelude(t *testing.T) {
+	const src = `
+export extern function rawLen(ptr: short, len: short): short
+`
+
+	mod := mustParseModule(t, "prelude", src)
+	checker := runChecker(t, mod)
+
+	sym := checker.Modules[mod.Path].Top["rawLen"]
+	if sym == nil || sym.Type == nil || sym.Type.Kind != KindFunc {
+		t.Fatalf("rawLen symbol not found or not function")
+	}
+	if len(sym.Type.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(sym.Type.Params))
+	}
+	if sym.Type.Params[0].Kind != KindI32 || sym.Type.Params[1].Kind != KindI32 {
+		t.Fatalf("expected short params, got %v and %v", sym.Type.Params[0].Kind, sym.Type.Params[1].Kind)
+	}
+	if sym.Type.Ret == nil || sym.Type.Ret.Kind != KindI32 {
+		t.Fatalf("expected short return, got %v", sym.Type.Ret)
+	}
+}
+
 func TestUnionSwitchAs(t *testing.T) {
 	const src = `
 const v: integer | string = 42

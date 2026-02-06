@@ -105,7 +105,7 @@
         },
         {
           "name": "keyword.declaration.tuna",
-          "match": "\\b(const|function|export|import|from|create_table|type)\\b"
+          "match": "\\b(const|extern|function|export|import|from|create_table|type)\\b"
         }
       ]
     },
@@ -134,7 +134,7 @@
         },
         {
           "name": "support.type.primitive.tuna",
-          "match": "\\b(integer|number|boolean|string|json|void)\\b"
+          "match": "\\b(integer|short|number|boolean|string|json|void)\\b"
         },
         {
           "name": "storage.type.tuna",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,8 @@ type Generator struct {
 	funcExports   map[*types.Symbol]bool
 	globalNames   map[*types.Symbol]string
 	globalExports map[*types.Symbol]bool
+	symModulePath map[*types.Symbol]string
+	preludeWAT    string
 
 	lambdaFuncs map[*ast.ArrowFunc]*lambdaInfo
 	lambdaOrder []*lambdaInfo
@@ -59,6 +62,10 @@ func NewGenerator(checker *types.Checker) *Generator {
 	}
 }
 
+func (g *Generator) SetPreludeWAT(src string) {
+	g.preludeWAT = src
+}
+
 func (g *Generator) Generate(entry string) (string, error) {
 	g.initModules()
 	g.assignSymbols(entry)
@@ -70,6 +77,7 @@ func (g *Generator) Generate(entry string) (string, error) {
 	w.line("(module")
 	w.indent++
 	g.emitImports(w)
+	g.emitPreludeWAT(w)
 	g.emitMemory(w)
 	g.emitGlobals(w)
 	g.emitFunctions(w, entry)
@@ -280,6 +288,11 @@ func (g *Generator) collectStringsDecl(decl ast.Decl) {
 	case *ast.ConstDecl:
 		g.collectStringsType(d.Type)
 		g.collectStringsExpr(d.Init)
+	case *ast.ExternFuncDecl:
+		for _, p := range d.Params {
+			g.collectStringsType(p.Type)
+		}
+		g.collectStringsType(d.Ret)
 	case *ast.FuncDecl:
 		for _, p := range d.Params {
 			g.collectStringsType(p.Type)
@@ -572,6 +585,8 @@ func (g *Generator) collectFunctionNamesDecl(decl ast.Decl) {
 	switch d := decl.(type) {
 	case *ast.ConstDecl:
 		g.collectFunctionNamesExpr(d.Init)
+	case *ast.ExternFuncDecl:
+		// Extern declarations do not have a body.
 	case *ast.FuncDecl:
 		g.collectFunctionNamesBlock(d.Body)
 	}
@@ -728,11 +743,13 @@ func (g *Generator) assignSymbols(entry string) {
 	g.funcExports = map[*types.Symbol]bool{}
 	g.globalNames = map[*types.Symbol]string{}
 	g.globalExports = map[*types.Symbol]bool{}
+	g.symModulePath = map[*types.Symbol]string{}
 	entryAbs, _ := filepath.Abs(entry)
 
 	for _, mod := range g.modules {
 		prefix := fmt.Sprintf("m%d", g.modIDs[mod.AST.Path])
 		for _, sym := range mod.Top {
+			g.symModulePath[sym] = mod.AST.Path
 			name := fmt.Sprintf("$%s_%s", prefix, sym.Name)
 			if sym.Kind == types.SymFunc {
 				g.funcNames[sym] = name
@@ -778,45 +795,6 @@ func (g *Generator) emitImports(w *watBuilder) {
 		{"json", "decode"},
 		{"json", "parse"},
 		{"json", "stringify"},
-		{"prelude", "arr_get"},
-		{"prelude", "arr_get_result"},
-		{"prelude", "arr_join"},
-		{"prelude", "arr_len"},
-		{"prelude", "arr_new"},
-		{"prelude", "arr_set"},
-		{"prelude", "escape_html_attr"},
-		{"prelude", "gc"},
-		{"prelude", "get_args"},
-		{"prelude", "get_env"},
-		{"prelude", "http_get_method"},
-		{"prelude", "http_get_path"},
-		{"prelude", "http_response_text"},
-		{"prelude", "http_response_text_str"},
-		{"prelude", "intern_string"},
-		{"prelude", "log"},
-		{"prelude", "obj_get"},
-		{"prelude", "obj_new"},
-		{"prelude", "obj_set"},
-		{"prelude", "register_tables"},
-		{"prelude", "sql_exec"},
-		{"prelude", "sql_execute"},
-		{"prelude", "sql_fetch_one"},
-		{"prelude", "sql_fetch_optional"},
-		{"prelude", "sql_query"},
-		{"prelude", "str_concat"},
-		{"prelude", "str_eq"},
-		{"prelude", "str_from_utf8"},
-		{"prelude", "toString"},
-		{"prelude", "val_eq"},
-		{"prelude", "val_from_bool"},
-		{"prelude", "val_from_f64"},
-		{"prelude", "val_from_i64"},
-		{"prelude", "val_kind"},
-		{"prelude", "val_null"},
-		{"prelude", "val_to_bool"},
-		{"prelude", "val_to_f64"},
-		{"prelude", "val_to_i64"},
-		{"prelude", "val_undefined"},
 		{"runtime", "run_formatter"},
 		{"runtime", "run_sandbox"},
 		{"sqlite", "db_open"},
@@ -824,6 +802,19 @@ func (g *Generator) emitImports(w *watBuilder) {
 	for _, imp := range imports {
 		sig := importSig(imp.module, imp.name)
 		w.line(fmt.Sprintf("(import \"%s\" \"%s\" %s)", imp.module, imp.name, sig))
+	}
+	for _, imp := range g.preludeHostImports() {
+		w.line(fmt.Sprintf("(import \"prelude\" \"%s\" %s)", imp.name, imp.sig))
+	}
+}
+
+func (g *Generator) emitPreludeWAT(w *watBuilder) {
+	src := strings.TrimSpace(g.preludeWAT)
+	if src == "" {
+		return
+	}
+	for _, line := range strings.Split(src, "\n") {
+		w.line(strings.TrimRight(line, "\r"))
 	}
 }
 
@@ -864,84 +855,6 @@ func importSig(module, name string) string {
 		return fmt.Sprintf("(func %s.parse (param externref) (result externref))", prefix)
 	case "stringify":
 		return fmt.Sprintf("(func %s.stringify (param externref) (result externref))", prefix)
-	case "arr_get":
-		return fmt.Sprintf("(func %s.arr_get (param externref i32) (result externref))", prefix)
-	case "arr_get_result":
-		return fmt.Sprintf("(func %s.arr_get_result (param externref i32) (result externref))", prefix)
-	case "arr_join":
-		return fmt.Sprintf("(func %s.arr_join (param externref) (result externref))", prefix)
-	case "arr_len":
-		return fmt.Sprintf("(func %s.arr_len (param externref) (result i32))", prefix)
-	case "arr_new":
-		return fmt.Sprintf("(func %s.arr_new (param i32) (result externref))", prefix)
-	case "arr_set":
-		return fmt.Sprintf("(func %s.arr_set (param externref i32 externref))", prefix)
-	case "escape_html_attr":
-		return fmt.Sprintf("(func %s.escape_html_attr (param externref) (result externref))", prefix)
-	case "gc":
-		return fmt.Sprintf("(func %s.gc)", prefix)
-	case "get_args":
-		return fmt.Sprintf("(func %s.get_args (result externref))", prefix)
-	case "get_env":
-		return fmt.Sprintf("(func %s.get_env (param externref) (result externref))", prefix)
-	case "http_get_method":
-		return fmt.Sprintf("(func %s.http_get_method (param externref) (result externref))", prefix)
-	case "http_get_path":
-		return fmt.Sprintf("(func %s.http_get_path (param externref) (result externref))", prefix)
-	case "http_response_text":
-		return fmt.Sprintf("(func %s.http_response_text (param i32 i32) (result externref))", prefix)
-	case "http_response_text_str":
-		return fmt.Sprintf("(func %s.http_response_text_str (param externref) (result externref))", prefix)
-	case "intern_string":
-		return fmt.Sprintf("(func %s.intern_string (param i32 i32) (result externref))", prefix)
-	case "log":
-		return fmt.Sprintf("(func %s.log (param externref))", prefix)
-	case "obj_get":
-		return fmt.Sprintf("(func %s.obj_get (param externref externref) (result externref))", prefix)
-	case "obj_new":
-		return fmt.Sprintf("(func %s.obj_new (param i32) (result externref))", prefix)
-	case "obj_set":
-		return fmt.Sprintf("(func %s.obj_set (param externref externref externref))", prefix)
-	case "register_tables":
-		return fmt.Sprintf("(func %s.register_tables (param i32 i32))", prefix)
-	case "sql_exec":
-		return fmt.Sprintf("(func %s.sql_exec (param i32 i32) (result externref))", prefix)
-	case "sql_execute":
-		return fmt.Sprintf("(func %s.sql_execute (param i32 i32 externref) (result externref))", prefix)
-	case "sql_fetch_one":
-		return fmt.Sprintf("(func %s.sql_fetch_one (param i32 i32 externref) (result externref))", prefix)
-	case "sql_fetch_optional":
-		return fmt.Sprintf("(func %s.sql_fetch_optional (param i32 i32 externref) (result externref))", prefix)
-	case "sql_query":
-		return fmt.Sprintf("(func %s.sql_query (param i32 i32 externref) (result externref))", prefix)
-	case "str_concat":
-		return fmt.Sprintf("(func %s.str_concat (param externref externref) (result externref))", prefix)
-	case "str_eq":
-		return fmt.Sprintf("(func %s.str_eq (param externref externref) (result i32))", prefix)
-	case "str_from_utf8":
-		return fmt.Sprintf("(func %s.str_from_utf8 (param i32 i32) (result externref))", prefix)
-	case "toString":
-		return fmt.Sprintf("(func %s.toString (param externref) (result externref))", prefix)
-	case "val_eq":
-		return fmt.Sprintf("(func %s.val_eq (param externref externref) (result i32))", prefix)
-	case "val_from_bool":
-		return fmt.Sprintf("(func %s.val_from_bool (param i32) (result externref))", prefix)
-	case "val_from_f64":
-		return fmt.Sprintf("(func %s.val_from_f64 (param f64) (result externref))", prefix)
-	case "val_from_i64":
-		return fmt.Sprintf("(func %s.val_from_i64 (param i64) (result externref))", prefix)
-	case "val_kind":
-		return fmt.Sprintf("(func %s.val_kind (param externref) (result i32))", prefix)
-	case "val_null":
-		return fmt.Sprintf("(func %s.val_null (result externref))", prefix)
-	case "val_to_bool":
-		return fmt.Sprintf("(func %s.val_to_bool (param externref) (result i32))", prefix)
-	case "val_to_f64":
-		return fmt.Sprintf("(func %s.val_to_f64 (param externref) (result f64))", prefix)
-	case "val_to_i64":
-		return fmt.Sprintf("(func %s.val_to_i64 (param externref) (result i64))", prefix)
-	case "val_undefined":
-		return fmt.Sprintf("(func %s.val_undefined (result externref))", prefix)
 	case "run_formatter":
 		return fmt.Sprintf("(func %s.run_formatter (param externref) (result externref))", prefix)
 	case "run_sandbox":
@@ -951,6 +864,75 @@ func importSig(module, name string) string {
 	default:
 		return ""
 	}
+}
+
+type preludeImportInfo struct {
+	name string
+	sig  string
+}
+
+var preludeWATFuncPattern = regexp.MustCompile(`\(\s*func\s+\$prelude\.([A-Za-z0-9_]+)`)
+
+func (g *Generator) preludeHostImports() []preludeImportInfo {
+	preludeMod := g.findModule("prelude")
+	if preludeMod == nil {
+		return nil
+	}
+	definedInWAT := preludeDefinedInWAT(g.preludeWAT)
+	var imports []preludeImportInfo
+	for _, decl := range preludeMod.AST.Decls {
+		ext, ok := decl.(*ast.ExternFuncDecl)
+		if !ok {
+			continue
+		}
+		if definedInWAT[ext.Name] {
+			continue
+		}
+		sym := preludeMod.Top[ext.Name]
+		if sym == nil || sym.Type == nil || sym.Type.Kind != types.KindFunc {
+			continue
+		}
+		imports = append(imports, preludeImportInfo{
+			name: ext.Name,
+			sig:  externFuncImportSig("prelude", ext.Name, sym.Type),
+		})
+	}
+	return imports
+}
+
+func preludeDefinedInWAT(src string) map[string]bool {
+	defined := map[string]bool{}
+	for _, match := range preludeWATFuncPattern.FindAllStringSubmatch(src, -1) {
+		if len(match) > 1 {
+			defined[match[1]] = true
+		}
+	}
+	return defined
+}
+
+func externFuncImportSig(module, name string, fnType *types.Type) string {
+	if fnType == nil || fnType.Kind != types.KindFunc {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("(func $%s.%s", module, name))
+	for _, p := range fnType.Params {
+		b.WriteString(fmt.Sprintf(" (param %s)", wasmType(p)))
+	}
+	if fnType.Ret != nil && fnType.Ret.Kind != types.KindVoid {
+		b.WriteString(fmt.Sprintf(" (result %s)", wasmType(fnType.Ret)))
+	}
+	b.WriteString(")")
+	return b.String()
+}
+
+func (g *Generator) findModule(path string) *types.ModuleInfo {
+	for _, mod := range g.modules {
+		if mod.AST.Path == path {
+			return mod
+		}
+	}
+	return nil
 }
 
 func (g *Generator) emitMemory(w *watBuilder) {
@@ -1383,10 +1365,23 @@ func (g *Generator) funcImplName(sym *types.Symbol) string {
 	return fmt.Sprintf("%s_impl", g.funcNames[sym])
 }
 
+func (g *Generator) funcCallName(sym *types.Symbol) string {
+	if _, ok := sym.Decl.(*ast.ExternFuncDecl); ok {
+		moduleName := g.symModulePath[sym]
+		if moduleName == "" {
+			moduleName = "prelude"
+		}
+		return fmt.Sprintf("$%s.%s", moduleName, sym.Name)
+	}
+	return g.funcImplName(sym)
+}
+
 func wasmType(t *types.Type) string {
 	switch t.Kind {
 	case types.KindI64:
 		return "i64"
+	case types.KindI32:
+		return "i32"
 	case types.KindF64:
 		return "f64"
 	case types.KindBool:
@@ -2432,7 +2427,7 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 			f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		}
 	}
-	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(sym)))
+	f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(sym)))
 	if sym.Kind == types.SymFunc && sym.Type != nil && sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
 		f.emitUnboxIfPrimitive(t)
 	}
@@ -2482,7 +2477,7 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 		}
 	}
 
-	f.emit(fmt.Sprintf("(call %s)", f.g.funcImplName(targetSym)))
+	f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(targetSym)))
 	if targetSym.Type.Ret != nil && targetSym.Type.Ret.Kind == types.KindTypeParam {
 		f.emitUnboxIfPrimitive(t)
 	}
@@ -2495,7 +2490,7 @@ func (f *funcEmitter) resolveFunctionExpr(expr ast.Expr) (string, *types.Type) {
 		if sym == nil {
 			return "", nil
 		}
-		return f.g.funcImplName(sym), sym.Type
+		return f.g.funcCallName(sym), sym.Type
 	case *ast.ArrowFunc:
 		return f.g.lambdaName(e), f.g.checker.ExprTypes[e]
 	default:
@@ -3358,6 +3353,8 @@ func valueLocalType(t *types.Type) string {
 	switch t.Kind {
 	case types.KindI64:
 		return "i64"
+	case types.KindI32:
+		return "i32"
 	case types.KindF64:
 		return "f64"
 	case types.KindBool:

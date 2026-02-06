@@ -1,4 +1,7 @@
 export type Error = { type: "Error", message: string }
+type RawValue = integer | number | boolean | string | json | null | undefined
+type SQLRows = Map<string>[]
+type Response = { body: string, contentType: string }
 
 export function Error(message: string): Error {
   return { "type": "Error", "message": message }
@@ -11,3 +14,60 @@ export function fallback<T>(value: T | Error, defaultValue: T): T {
   }
 }
 
+extern function log<T>(value: T): void
+export extern function toString(value: integer | number | boolean | string): string
+export extern function gc(): void
+export extern function stringLength(str: string): integer
+
+extern function str_from_utf8(ptr: short, length: short): string
+extern function intern_string(ptr: short, length: short): string
+extern function str_concat(a: string, b: string): string
+extern function str_eq(a: string, b: string): boolean
+extern function str_len(str: string): integer
+
+extern function val_from_i64(v: integer): RawValue
+extern function val_from_f64(v: number): RawValue
+extern function val_from_bool(v: boolean): RawValue
+extern function val_null(): null
+extern function val_undefined(): undefined
+extern function val_to_i64(value: RawValue): integer
+extern function val_to_f64(value: RawValue): number
+extern function val_to_bool(value: RawValue): boolean
+extern function val_kind(value: RawValue): short
+extern function val_eq(a: RawValue, b: RawValue): boolean
+
+extern function obj_new(count: short): RawValue
+extern function obj_set(obj: RawValue, key: string, value: RawValue): void
+extern function obj_get(obj: RawValue, key: string): RawValue
+
+extern function arr_new(count: short): RawValue
+extern function arr_set(arr: RawValue, index: short, value: RawValue): void
+extern function arr_get(arr: RawValue, index: short): RawValue
+extern function arr_get_result(arr: RawValue, index: short): RawValue
+extern function arr_len(arr: RawValue): short
+extern function arr_join(arr: RawValue): string
+
+extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
+extern function register_tables(schemaPtr: short, schemaLen: short): void
+extern function sql_query(queryPtr: short, queryLen: short, params: RawValue): SQLRows | Error
+extern function sql_fetch_one(queryPtr: short, queryLen: short, params: RawValue): Map<string> | Error
+extern function sql_fetch_optional(queryPtr: short, queryLen: short, params: RawValue): Map<string> | null | Error
+extern function sql_execute(queryPtr: short, queryLen: short, params: RawValue): undefined | Error
+
+extern function http_response_text(textPtr: short, textLen: short): Response
+extern function http_response_text_str(text: string): Response
+extern function http_get_path(req: RawValue): string
+extern function http_get_method(req: RawValue): string
+
+extern function get_args(): string[]
+extern function get_env(name: string): string
+
+export function getArgs(): string[] {
+  return get_args()
+}
+
+export function getEnv(name: string): string {
+  return get_env(name)
+}
+
+extern function escape_html_attr(value: string): string

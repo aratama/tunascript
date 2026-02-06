@@ -20,12 +20,15 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 - `undefined`
 - `boolean`
 - `integer`
+- `short`
 - `number`
 - `string`
 - `json`
 - `void`
 
 `json` は任意のJSON値を表すプリミティブ型です。`json` はUnion型ではないため、`switch` 式の `case v as T` による型の絞り込み（値の取り出し）はできません。
+
+`short` は Wasm の `i32` に対応する32bit整数型です。主に `prelude` の低レベル `extern function` 宣言で使うための型で、通常のアプリケーションコードでは `integer` の使用を推奨します。
 
 `undefined` は「値が存在しない」ことを表すプリミティブ型です。`undefined` はリテラルとして `undefined` と書け、`==` / `!=` で比較できます。
 
@@ -131,6 +134,7 @@ const status: "error" = "error"
 
 - 異なる型の比較・暗黙変換は行いません。
 - `integer` と `number` の比較は **コンパイルエラー** になります。
+- `short` と `integer` / `number` の暗黙変換は行いません。
 - `parse` は `string` をJSONとしてパースし、`json | Error` を返します（組み込みライブラリ参照）。
 - 配列とオブジェクトはすべてイミュータブルであり、生成後に要素を書き換える術は提供しません。
 
@@ -205,9 +209,11 @@ const { name: string, age: integer } = obj
 ## 4. 関数
 
 - 宣言構文: `function add(a: integer, b: integer): integer { return a + b }`
+- 外部実装宣言: `extern function stringLength(str: string): integer`
 - 関数宣言ではパラメータ型・戻り値型の注釈が必須です。関数リテラルは文脈（たとえば `map` / `filter` / `reduce` の期待型）から型を推論できる場合にのみ省略可能です。
 - `export` を付ければ外部公開できます（`export function`）。
 - 関数宣言は `function id<T>(value: T): T { ... }` のように型パラメータを持てます。型引数は呼び出し側で明示できず、引数から推論されます。
+- `extern function` は本体を持たない宣言で、実装は `lib/prelude.wat` に置きます。現時点では `prelude` モジュール内でのみ使用できます。
 
 例:
 

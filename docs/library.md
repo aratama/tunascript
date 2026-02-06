@@ -52,6 +52,8 @@ switch (parsed) {
 }
 ```
 - `toString(value: integer | number | boolean | string): string`
+- `stringLength(str: string): integer`
+  - 文字列の長さ（Unicodeコードポイント数）を返します。
 - `getArgs(): string[]`
   - コマンドライン引数を配列として返します。
 - `getEnv(name: string): string`

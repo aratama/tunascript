@@ -89,6 +89,23 @@ export function main(): void {
 	}
 }
 
+func TestPreludeExternStringLength(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, toString, stringLength } from "prelude"
+export function main(): void {
+  const asciiLen: integer = stringLength("hello")
+  const utfLen: integer = stringLength("こんにちは")
+  log(toString(asciiLen))
+  log(toString(utfLen))
+}
+`,
+	}, "main.ts")
+	want := "5\n5\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
 func TestObjectSpreadAndStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log } from "prelude"

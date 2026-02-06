@@ -17,7 +17,8 @@ type Result struct {
 }
 
 type Compiler struct {
-	Modules map[string]*ast.Module
+	Modules    map[string]*ast.Module
+	preludeWAT string
 }
 
 func New() *Compiler {
@@ -43,6 +44,7 @@ func (c *Compiler) Compile(entry string) (*Result, error) {
 		return nil, checker.Errors[0]
 	}
 	gen := NewGenerator(checker)
+	gen.SetPreludeWAT(c.preludeWAT)
 	wat, err := gen.Generate(abs)
 	if err != nil {
 		return nil, err
@@ -65,6 +67,16 @@ func (c *Compiler) loadPrelude(entryAbs string) error {
 	src, err := os.ReadFile(preludePath)
 	if err != nil {
 		return err
+	}
+	watPath := filepath.Join(filepath.Dir(preludePath), "prelude.wat")
+	watSrc, watErr := os.ReadFile(watPath)
+	if watErr != nil {
+		if !os.IsNotExist(watErr) {
+			return watErr
+		}
+		c.preludeWAT = ""
+	} else {
+		c.preludeWAT = string(watSrc)
 	}
 	p := parser.New(preludePath, string(src))
 	mod, err := p.ParseModule()

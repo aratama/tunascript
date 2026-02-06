@@ -1,4 +1,4 @@
-*.wat
-*.wasm
+example/**/*.wat
+example/**/*.wasm
 *.sqlite3
 output/
