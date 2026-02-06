@@ -3,28 +3,28 @@
 // expect: error
 // expect: oops
 
-import { log, Error, type Error } from "prelude"
+import { log } from "prelude"
 
 export function main(): void {
-  const a: string | Error = "ready"
+  const a: string | error = "ready"
   switch (a) {
     case a as string: {
       log("ok")
       log(a)
     }
-    case a as Error: {
+    case a as error: {
       log("error")
       log(a.message)
     }
   }
 
-  const b: string | Error = Error("oops")
+  const b: string | error = { "type": "Error", "message": "oops" }
   switch (b) {
     case b as string: {
       log("ok")
       log(b)
     }
-    case b as Error: {
+    case b as error: {
       log("error")
       log(b.message)
     }

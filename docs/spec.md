@@ -24,9 +24,12 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 - `number`
 - `string`
 - `json`
+- `error`
 - `void`
 
 `json` は任意のJSON値を表すプリミティブ型です。`json` はUnion型ではないため、`switch` 式の `case v as T` による型の絞り込み（値の取り出し）はできません。
+
+`error` は言語組み込みのエラー型です。実データ構造は `{ type: "Error", message: string }` で、`?` 演算子や `T | error` の失敗側として使います。
 
 `short` は Wasm の `i32` に対応する32bit整数型です。主に `prelude` の低レベル `extern function` 宣言で使うための型で、通常のアプリケーションコードでは `integer` の使用を推奨します。
 
@@ -77,11 +80,10 @@ export type Response = { body: string, contentType: string }
 - 型エイリアスには型パラメータを `<T>` 形式で付けられ、型式の中でそのパラメータを参照することで汎用的な別名を定義できます。たとえば `ApiResult<T>` は次のように書けます:
 
 ```typescript
-type Error = { type: "Error", message: string }
-type ApiResult<T> = T | Error
+type ApiResult<T> = T | error
 ```
 
-このようなユニオンを型エイリアスにまとめておくと、`ApiResult<string>` のように使い回せます。`prelude` には `Error` を用意しており、`import { type Error } from "prelude"` のように取り込みできます。
+このようなユニオンを型エイリアスにまとめておくと、`ApiResult<string>` のように使い回せます。`error` は組み込み型なので import は不要です。
 
 #### preludeの型エイリアス
 
@@ -90,7 +92,6 @@ preludeには以下の型エイリアスが定義されている:
 | 型名    | 定義                                 |
 | ------- | ------------------------------------ |
 | `JSX`   | `string`                             |
-| `Error` | `{ type: "Error", message: string }` |
 
 そのほか、`Map<T>` は **文字列キー → 値 `T`** の動的オブジェクトを表し、`req.query.foo` や `req.form.bar` のように自由にアクセスできます。`Map<T>` を使うことで汎用的なオブジェクトやプロパティ型を記述できます。
 
@@ -105,15 +106,15 @@ function handleRoot(): JSX {
 }
 ```
 
-`T | Error` のようなユニオンは、`switch` の `case ... as T` で分岐できます（`T` は型名でも型式でも構いません）。
+`T | error` のようなユニオンは、`switch` の `case ... as T` で分岐できます（`T` は型名でも型式でも構いません）。
 
 ```typescript
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 
-const response: string | Error = "ready"
+const response: string | error = "ready"
 const message = switch (response) {
   case value as string: value
-  case { message } as Error: message
+  case { message } as error: message
 }
 log(message)
 ```
@@ -135,7 +136,7 @@ const status: "error" = "error"
 - 異なる型の比較・暗黙変換は行いません。
 - `integer` と `number` の比較は **コンパイルエラー** になります。
 - `short` と `integer` / `number` の暗黙変換は行いません。
-- `parse` は `string` をJSONとしてパースし、`json | Error` を返します（組み込みライブラリ参照）。
+- `parse` は `string` をJSONとしてパースし、`json | error` を返します（組み込みライブラリ参照）。
 - 配列とオブジェクトはすべてイミュータブルであり、生成後に要素を書き換える術は提供しません。
 
 ## 3. 変数
@@ -332,18 +333,16 @@ const c: integer = if (v) {
 
 ### 5.6 Error伝播演算子 `?`
 
-`expr?` は `expr` が `T | Error` のときに使える省略記法です。
+`expr?` は `expr` が `T | error` のときに使える省略記法です。
 
 - `expr` が成功値（`T`）なら、その値を返します。
-- `expr` が `Error` なら、現在の関数から即座にその `Error` を返します。
-- そのため `?` を使う関数の戻り値型は `Error` を含む必要があります（例: `T | Error`）。
+- `expr` が `error` なら、現在の関数から即座にその `error` を返します。
+- そのため `?` を使う関数の戻り値型は `error` を含む必要があります（例: `T | error`）。
 
 例:
 
 ```typescript
-import { type Error } from "prelude"
-
-function first(xs: integer[]): integer | Error {
+function first(xs: integer[]): integer | error {
   const value: integer = xs[0]?
   return value
 }
@@ -370,7 +369,7 @@ switch (expr) {
 - `default` は省略可能です（値を返すswitch式では推奨します）。
 - Union型の分岐は `case pattern as T:` を使います。
   - `pattern` は束縛パターンです（例: `name`, `{ prop }`, `[a, b]`）
-  - `T` は型名（型エイリアス）でも型式でも構いません（例: `Error`, `string`, `{ type: "Error", message: string }`）
+  - `T` は型名（型エイリアス）でも型式でも構いません（例: `error`, `string`, `{ type: "Error", message: string }`）
   - `case name as T` の中では `name` は `T` として扱われます（`name` は任意の識別子で構いません）
   - `switch (x)` の `case x as T` は `x` の型だけを絞り込む構文で、新しい変数宣言（シャドーイング）ではありません
   - `case y as T` のように別名 `y` を束縛する場合、外側スコープに同名 `y` があるとシャドーイングエラーになります
@@ -384,8 +383,8 @@ switch (expr) {
 例:
 
 ```typescript
-const opened = dbOpen("app.sqlite3") // undefined | Error
-if (opened as Error) {
+const opened = dbOpen("app.sqlite3") // undefined | error
+if (opened as error) {
   log("db open error: " + opened.message)
   return
 }
@@ -426,7 +425,7 @@ const message = switch (v) {
 
 // returnで関数から戻る
 const code = switch (formatted) {
-  case e as Error: return responseHtml("format error: " + e.message)
+  case e as error: return responseHtml("format error: " + e.message)
   case formatted as string: formatted
 }
 ```
@@ -461,8 +460,8 @@ line2`
 - 配列リテラルでは `...expr` で別の配列を展開できます。スプレッド先は配列でなければならず、要素型は揃っている必要があります。
 - タプル型: `[integer, string]` です。
 - 配列リテラルは要素型が揃わない場合、タプル型として推論されます。
-- インデックス: `arr[i]`（`i` は `integer`）です。戻り値は `T | Error`（要素型 `T` と `Error` のUnion）になります。
-- `arr[i]?` を使うと成功時は `T`、失敗時はその `Error` を関数から返せます。
+- インデックス: `arr[i]`（`i` は `integer`）です。戻り値は `T | error`（要素型 `T` と `error` のUnion）になります。
+- `arr[i]?` を使うと成功時は `T`、失敗時はその `error` を関数から返せます。
 - `for (const x: T of arr)` で反復（配列のみ）します。
 - タプル型はインデックスアクセスで利用します。
 
@@ -506,10 +505,10 @@ line2`
 
 | キーワード            | 用途                                           | 戻り値の型                           |
 | --------------------- | ---------------------------------------------- | ------------------------------------ |
-| `execute`             | 結果を返さないクエリ（INSERT, UPDATE, DELETE） | `undefined \| Error`                     |
-| `fetch_one`           | 必ず1行を返すクエリ                            | `{ [column]: string } \| Error`          |
-| `fetch_optional`      | 0または1行を返すクエリ                         | `{ [column]: string } \| null \| Error`  |
-| `fetch` / `fetch_all` | 全行を返すクエリ                               | `{ [column]: string }[] \| Error`        |
+| `execute`             | 結果を返さないクエリ（INSERT, UPDATE, DELETE） | `undefined \| error`                     |
+| `fetch_one`           | 必ず1行を返すクエリ                            | `{ [column]: string } \| error`          |
+| `fetch_optional`      | 0または1行を返すクエリ                         | `{ [column]: string } \| null \| error`  |
+| `fetch` / `fetch_all` | 全行を返すクエリ                               | `{ [column]: string }[] \| error`        |
 
 ### 11.2 構文
 
@@ -519,17 +518,17 @@ execute {
   INSERT INTO users (name) VALUES ({name})
 }
 
-// 必ず1行を返すクエリ（T | Error）
+// 必ず1行を返すクエリ（T | error）
 const rowResult = fetch_one {
   SELECT id, name FROM users WHERE id = 1
 }
 
-// 0または1行を返すクエリ（T | null | Error）
+// 0または1行を返すクエリ（T | null | error）
 const maybeRowResult = fetch_optional {
   SELECT id, name FROM users WHERE id = {id}
 }
 
-// 全行を返すクエリ（T[] | Error）
+// 全行を返すクエリ（T[] | error）
 const rowsResult = fetch_all {
   SELECT id, name FROM users ORDER BY id
 }
@@ -539,7 +538,7 @@ const rowsResult = fetch_all {
 
 ```typescript
 // INSERTとlast_insert_rowid()の取得
-function createUser(name: string): string | Error {
+function createUser(name: string): string | error {
   execute {
     INSERT INTO users (name) VALUES ({name})
   }?
@@ -549,8 +548,8 @@ function createUser(name: string): string | Error {
   return row.id
 }
 
-// 全レコードの取得（? でErrorを早期return）
-function listUsers(): undefined | Error {
+// 全レコードの取得（? でerrorを早期return）
+function listUsers(): undefined | error {
   const rows = fetch_all {
     SELECT id, name FROM users ORDER BY id
   }?
@@ -566,11 +565,11 @@ function listUsers(): undefined | Error {
 
 #### execute
 
-`execute` は成功時に `undefined`、失敗時に `Error` を返します（`undefined | Error`）。INSERT, UPDATE, DELETE などの変更クエリに使用します。
+`execute` は成功時に `undefined`、失敗時に `error` を返します（`undefined | error`）。INSERT, UPDATE, DELETE などの変更クエリに使用します。
 
 #### fetch_one
 
-`fetch_one` は成功時に1行 (`{ [column]: string }`) を返し、失敗時は `Error` を返します。
+`fetch_one` は成功時に1行 (`{ [column]: string }`) を返し、失敗時は `error` を返します。
 
 ```typescript
 const row = fetch_one { SELECT id, name FROM users WHERE id = 1 }
@@ -578,18 +577,18 @@ const row = fetch_one { SELECT id, name FROM users WHERE id = 1 }
 
 #### fetch_optional
 
-`fetch_optional` は成功時に0または1行を返し（行が存在しない場合は `null`）、失敗時は `Error` を返します。
+`fetch_optional` は成功時に0または1行を返し（行が存在しない場合は `null`）、失敗時は `error` を返します。
 
 ```typescript
 const row = fetch_optional { SELECT id, name FROM users WHERE id = {id} }?
 // row が null かどうかをチェックして使用
 ```
 
-型システム上では戻り値が `{ [column]: string } | null | Error` になります。`?` で `Error` を処理した後、`null` を明示的にチェックしてください。
+型システム上では戻り値が `{ [column]: string } | null | error` になります。`?` で `error` を処理した後、`null` を明示的にチェックしてください。
 
 #### fetch / fetch_all
 
-`fetch` と `fetch_all` は同じ動作で、成功時は各行のデータ（カラム名をキーとしたオブジェクト）の配列を返し、失敗時は `Error` を返します。
+`fetch` と `fetch_all` は同じ動作で、成功時は各行のデータ（カラム名をキーとしたオブジェクト）の配列を返し、失敗時は `error` を返します。
 
 各行のオブジェクトはSELECT文で指定したカラム名をキーとして持ち、値はすべて文字列として返されます。
 
@@ -658,7 +657,7 @@ function renderTodos(): JSX {
   const fetched = fetch_all { SELECT id, title, completed FROM todos }
   return switch (fetched) {
     case rows as todos[]: <ul>{rows.map(renderTodoRow)}</ul>
-    case err as Error: <p>{err.message}</p>
+    case err as error: <p>{err.message}</p>
   }
 }
 ```
@@ -748,9 +747,8 @@ JSXは `responseHtml` 関数と組み合わせてHTMLレスポンスを返すの
 ```typescript
 import { responseHtml } from "http"
 import { createServer, addRoute, listen, type Request, type Response } from "http"
-import { type Error } from "prelude"
 
-function handleRoot(req: Request): Response | Error {
+function handleRoot(req: Request): Response | error {
   const title = "Hello from TunaScript"
   return responseHtml(
     <html>
@@ -810,8 +808,8 @@ function Page(): JSX {
 
 - コンパイラは WAT を生成し、wasmtime-go の `Wat2Wasm` で WASM を生成します。
 - 実行は同梱 CLI の `run` で行います。
-- エントリポイントは `export function main(): void` または `export function main(): void | Error` です。
-- `main` が `void | Error` を返し、戻り値が `Error` の場合は、そのメッセージをエラーとして扱って終了します。
+- エントリポイントは `export function main(): void` または `export function main(): void | error` です。
+- `main` が `void | error` を返し、戻り値が `error` の場合は、その `message` をエラーとして扱って終了します。
 - `run --sandbox` では通常の標準出力ではなく、`{ stdout: string, html: string, exitCode: integer, error: string }` 形式のJSON文字列1件を標準出力に返します。
 - **CGO と C コンパイラが必要**です（wasmtime-go が C 依存）。
 

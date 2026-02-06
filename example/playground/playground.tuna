@@ -1,4 +1,4 @@
-import { log, toString, getArgs, getEnv, type Error, fallback } from "prelude"
+import { log, toString, getArgs, getEnv, fallback } from "prelude"
 import { parse, decode } from "json"
 import { length } from "array"
 import { runSandbox, runFormatter } from "runtime"
@@ -78,7 +78,7 @@ function validateSourceSize(source: string): string {
     SELECT length(hex({source})) / 2 > {MAX_SOURCE_SIZE_BYTES} AS too_large
   }
   return switch (checked) {
-    case e as Error: "db error: " + e.message
+    case e as error: "db error: " + e.message
     case row as { too_large: string }: if (row.too_large == "1") { "source is too large (max 10KB)" } else { "" }
   }
 }
@@ -105,7 +105,7 @@ function handleSnippet(req: Request): Response {
     WHERE id = {id}
   }
   return switch (fetched) {
-    case e as Error: responseHtml(Layout(DEFAULT_SOURCE, "", "", "db error: " + e.message, "1", "/run", pagePath))
+    case e as error: responseHtml(Layout(DEFAULT_SOURCE, "", "", "db error: " + e.message, "1", "/run", pagePath))
     case row as { source: string }: runSource(row.source, runPath, pagePath)
     case none as null: responseHtml(Layout(DEFAULT_SOURCE, "", "", "snippet not found: " + id, "1", "/run", pagePath))
   }
@@ -119,14 +119,14 @@ function handleRunRoot(req: Request): Response {
   }
   const formatted = runFormatter(source)
   const code = switch (formatted) {
-    case e as Error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
+    case e as error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
     case formatted as string: formatted
   }
   const generated = fetch_one {
     SELECT lower(hex(randomblob(8))) AS id
   }
   const { id } = switch (generated) {
-    case e as Error: return responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case e as error: return responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
     case generated as { id: string }: generated
   }
 
@@ -135,7 +135,7 @@ function handleRunRoot(req: Request): Response {
     VALUES ({id}, {code}, datetime('now'))
   }
   return switch (inserted) {
-    case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case e as error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
     case ok as undefined: responseRedirect("/" + id)
   }
 }
@@ -156,7 +156,7 @@ function handleRunByID(req: Request): Response {
 
   const formatted = runFormatter(source)
   const code = switch (formatted) {
-    case e as Error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
+    case e as error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
     case formatted as string: formatted
   }
     
@@ -165,7 +165,7 @@ function handleRunByID(req: Request): Response {
     VALUES ({id}, {code}, datetime('now'))
   }
   return switch (updated) {
-    case e as Error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
+    case e as error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
     case ok as undefined: responseRedirect(pagePath)
   }
 }
@@ -173,14 +173,14 @@ function handleRunByID(req: Request): Response {
 function runSource(source: string, runPath: string, pagePath: string): Response {
   const parsed = parse(runSandbox(source))
   const raw = switch (parsed) {
-    case e as Error: return responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
+    case e as error: return responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
     case raw as json: raw
   }
 
-  const decoded: RunResult | Error = decode<RunResult>(raw)
+  const decoded: RunResult | error = decode<RunResult>(raw)
   return switch (decoded) {
     case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode), runPath, pagePath))
-    case e as Error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
+    case e as error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
   }  
 }
 
@@ -189,11 +189,11 @@ export function main(): void {
   const dbPath = if (args.length() > 0) {
     switch (args[0]) {
       case path as string: path
-      case e as Error: "playground.sqlite3"
+      case e as error: "playground.sqlite3"
     }
   } else { "playground.sqlite3" }
   const opened = dbOpen(dbPath)
-  if (opened as Error) {
+  if (opened as error) {
     log("db open error: " + opened.message)
     return
   }

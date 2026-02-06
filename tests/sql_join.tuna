@@ -1,7 +1,7 @@
 // expect: 1:Welcome back:Alice
 // expect: 2:Farewell tour:Bob
 
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 
 create_table authors {
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -14,7 +14,7 @@ create_table posts {
   author_id INTEGER NOT NULL
 }
 
-export function main(): void | Error {
+export function main(): void | error {
   execute {
     INSERT INTO authors (name) VALUES ('Alice'), ('Bob')
   }?

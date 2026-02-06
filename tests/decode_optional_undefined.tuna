@@ -2,7 +2,7 @@
 // expect: undefined
 // expect: {}
 
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 import { stringify, parse, decode } from "json"
 
 type Person = { name: string | undefined }
@@ -10,14 +10,14 @@ type Person = { name: string | undefined }
 export function main(): void {
   const parsed = parse("{}")
   switch (parsed) {
-    case err as Error: {
+    case err as error: {
       log("error")
       log(err.message)
     }
     case j as json: {
       const decoded = decode<Person>(j)
       switch (decoded) {
-        case decoded as Error: {
+        case decoded as error: {
           log("error")
           log(decoded.message)
         }

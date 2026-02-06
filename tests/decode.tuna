@@ -2,12 +2,12 @@
 // expect: Alice
 // expect: 30
 
-import { log, toString, type Error } from "prelude"
+import { log, toString } from "prelude"
 import { parse, decode } from "json"
 
 type Person = { name: string, age: number }
 
-export function main(): void | Error {
+export function main(): void | error {
   const parsed = parse(`{"name":"Alice","age":30}`)?
   const decoded = decode<Person>(parsed)?
   log("ok")

@@ -226,16 +226,15 @@ export function main(): void {
 func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, toString } from "prelude"
-import { type Error } from "prelude"
 export function main(): void {
   const t: [integer, string] = [1, "a"]
   const v0 = switch (t[0]) {
     case n as integer: toString(n)
-    case e as Error: e.message
+    case e as error: e.message
   }
   const v1 = switch (t[1]) {
     case s as string: s
-    case e as Error: e.message
+    case e as error: e.message
   }
   log(v0)
   log(v1)
@@ -250,12 +249,12 @@ export function main(): void {
 
 func TestParseStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, type Error } from "prelude"
+		"main.ts": `import { log } from "prelude"
 import { parse, stringify } from "json"
 export function main(): void {
   const parsed = parse("{\"a\":1,\"b\":\"x\"}")
   switch (parsed) {
-    case err as Error:
+    case err as error:
       log(err.message)
     case v as json:
       log(stringify(v))
@@ -391,7 +390,7 @@ import { parse } from "json"
 	export function main(): void {
 	  const v: json = parse("{\"a\":1}")
 	  switch (v) {
-	    case v as integer: { }
+	    case v as integer: {} 
 	  }
 	  log("x")
 	}
@@ -400,7 +399,7 @@ import { parse } from "json"
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
   const t: [integer, integer] = [1, 2]
-  for (const x: integer of t) { }
+  for (const x: integer of t) {} 
   log("x")
 }
 `)
@@ -424,7 +423,7 @@ export function main(): void {
 
 func TestSQLCreateAndSelect(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, type Error } from "prelude"
+		"main.ts": `import { log } from "prelude"
 import { stringify } from "json"
 export function main(): void {
   execute {
@@ -440,7 +439,7 @@ export function main(): void {
     SELECT id, name FROM users ORDER BY id
   }
   switch (fetched) {
-    case err as Error:
+    case err as error:
       log(err.message)
     case rows as { id: string, name: string }[]:
       log(stringify(rows))
@@ -456,7 +455,7 @@ export function main(): void {
 
 func TestSQLWithUpdate(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, type Error } from "prelude"
+		"main.ts": `import { log } from "prelude"
 import { stringify } from "json"
 export function main(): void {
   execute {
@@ -472,7 +471,7 @@ export function main(): void {
     SELECT value FROM items WHERE id = 1
   }
   switch (fetched) {
-    case err as Error:
+    case err as error:
       log(err.message)
     case rows as { value: string }[]:
       log(stringify(rows))

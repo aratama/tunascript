@@ -115,13 +115,11 @@ const evens2: integer[] = filter(nums, isEven)
 
 func TestGenericFallbackMethodInference(t *testing.T) {
 	const src = `
-type Error = { type: "Error", message: string }
-
-function fallback<T>(value: T | Error, defaultValue: T): T {
+function fallback<T>(value: T | error, defaultValue: T): T {
   return defaultValue
 }
 
-const maybeOk: string | Error = { "type": "Error", "message": "bad" }
+const maybeOk: string | error = { "type": "Error", "message": "bad" }
 const resolved: string = maybeOk.fallback("")
 const fromValue: string = fallback("hello", "")
 const fromError: string = fallback({ "type": "Error", "message": "boom" }, "")

@@ -289,7 +289,7 @@ func (*ArrayPatternExpr) exprNode()       {}
 func (e *ArrayPatternExpr) GetSpan() Span { return e.Span }
 
 // ObjectPatternExpr represents a destructuring binding pattern used in switch-as patterns:
-// case { message } as Error: ...
+// case { message } as error: ...
 type ObjectPatternExpr struct {
 	Keys  []string
 	Types []TypeExpr
@@ -371,8 +371,8 @@ type IndexExpr struct {
 func (*IndexExpr) exprNode()       {}
 func (e *IndexExpr) GetSpan() Span { return e.Span }
 
-// TryExpr represents short-hand operator for (T | Error): expr?
-// If expr is Error at runtime, it returns from the current function.
+// TryExpr represents short-hand operator for (T | error): expr?
+// If expr is error at runtime, it returns from the current function.
 type TryExpr struct {
 	Expr Expr
 	Span Span

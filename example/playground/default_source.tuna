@@ -1,4 +1,4 @@
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 import { map } from "array"
 import { createServer, addRoute, listen, responseHtml, type Request, type Response, type JSX } from "http"
 
@@ -37,7 +37,7 @@ function root(req: Request): Response {
   return switch (fetched) {
 
     // エラーが発生した場合
-    case e as Error: responseHtml(<p>DB error: {e.message}</p>)
+    case e as error: responseHtml(<p>DB error: {e.message}</p>)
 
     // 正常に取得できた場合
     case rows as todo[]: {
@@ -75,7 +75,7 @@ function root(req: Request): Response {
   }
 }
 
-export function main(): void | Error {
+export function main(): void | error {
 
   // サンプルデータをデータベースに追加しておきます
   execute {

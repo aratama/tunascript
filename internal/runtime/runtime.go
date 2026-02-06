@@ -631,7 +631,7 @@ func (r *Runtime) resultError(err error) *Value {
 	if err != nil {
 		return r.decodeError(err.Error())
 	}
-	// undefined を (undefined | Error) の成功値として返す
+	// undefined を (undefined | error) の成功値として返す
 	return undefinedValue
 }
 
@@ -1383,7 +1383,7 @@ func (r *Runtime) decodeError(message string) *Value {
 	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}})
 }
 
-// resultErrorMessage returns (message, true, nil) when handle is an Error object.
+// resultErrorMessage returns (message, true, nil) when handle is an error object.
 func (r *Runtime) resultErrorMessage(handle *Value) (string, bool, error) {
 	v, err := r.getValue(handle)
 	if err != nil {

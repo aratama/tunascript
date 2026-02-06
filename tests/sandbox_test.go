@@ -196,7 +196,7 @@ func TestRunSandboxBuiltin(t *testing.T) {
 
 	src := `
 import { runSandbox } from "runtime"
-import { toString, log, Error, type Error } from "prelude"
+import { toString, log } from "prelude"
 import { parse, decode } from "json"
 
 type RunResult = {
@@ -210,9 +210,9 @@ export function main(): void {
   const child = "import { log } from \"prelude\"\nexport function main(): void { log(\"child-ok\") }\n"
   const raw = runSandbox(child)
   const parsed = parse(raw)
-  const decoded: RunResult | Error = switch (parsed) {
+  const decoded: RunResult | error = switch (parsed) {
     case value as json: decode<RunResult>(value)
-    case err as { type: "Error", message: string }: Error("parse error: " + err.message)
+    case err as error: err
   }
   switch (decoded) {
     case ok as RunResult: {
@@ -242,10 +242,10 @@ func TestRunFormatterBuiltin(t *testing.T) {
 
 	src := `
 import { runFormatter } from "runtime"
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 
 export function main(): void {
-  const ok: string | Error = runFormatter("export function main(): void { const obj = { foo: 1, \"bar\": 2 } }")
+  const ok: string | error = runFormatter("export function main(): void { const obj = { foo: 1, \"bar\": 2 } }")
   switch (ok) {
     case formatted as string: {
       log(formatted)
@@ -255,7 +255,7 @@ export function main(): void {
     }
   }
 
-  const ng: string | Error = runFormatter("export function main(: void {}")
+  const ng: string | error = runFormatter("export function main(: void {}")
   switch (ng) {
     case formatted as string: {
       log("unexpected formatter success: " + formatted)
@@ -286,16 +286,16 @@ func TestRunFormatterOutputCompiles(t *testing.T) {
 
 	src := `
 import { runFormatter } from "runtime"
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 import { stringify } from "json"
 
 export function main(): void {
   const input = "import { log } from \"prelude\"\nexport function main(): void {\n  log(\"ok\")\n}\n"
-  const result: string | Error = runFormatter(input)
+  const result: string | error = runFormatter(input)
   switch (result) {
     case formatted as string:
       log(stringify(formatted))
-    case err as Error:
+    case err as error:
       log("formatter-error: " + err.message)
   }
 }

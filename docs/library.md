@@ -12,9 +12,11 @@ TunaScriptには以下の組み込みライブラリがあります。
 
 ## prelude
 
-### 12.0 型エイリアス
+### 12.0 組み込み型
 
-- `type Error = { type: "Error", message: string }`
+- `error`
+  - 言語組み込み型です（`prelude` からの import は不要）。
+  - 実データ構造は `{ type: "Error", message: string }` です。
 
 ### 12.1 関数
 
@@ -22,32 +24,30 @@ TunaScriptには以下の組み込みライブラリがあります。
   - 文字列はそのまま出力します。
   - それ以外は `stringify` 相当で出力します。
   - `tuna run --sandbox` では標準出力へ直接は出さず、内部バッファに蓄積されて最終JSONの `stdout` フィールドに入ります。
-- `Error(message: string): Error`
-  - `T | Error` の失敗値を作成します（`{ "type": "Error", "message": message }` 相当）。
-- `fallback<T>(result: T | Error, defaultValue: T): T`
-  - `result` が `Error` の場合は `defaultValue` を返し、それ以外は `result` を返します。
+- `fallback<T>(result: T | error, defaultValue: T): T`
+  - `result` が `error` の場合は `defaultValue` を返し、それ以外は `result` を返します。
 
 例:
 
 ```typescript
-import { log, type Error } from "prelude";
+import { log } from "prelude";
 import { parse, decode } from "json";
 
 type Person = { name: string; age: number };
 
-const parsed: json | Error = parse("{\"name\": \"Alice\", \"age\": 30}");
+const parsed: json | error = parse("{\"name\": \"Alice\", \"age\": 30}");
 
 switch (parsed) {
   case json as json: {
-    const decoded: Person | Error = decode<Person>(json);
+    const decoded: Person | error = decode<Person>(json);
     switch (decoded) {
       case decoded as Person:
         log(decoded.name);
-      case decoded as Error:
+      case decoded as error:
         log(decoded.message);
     }
   }
-  case parsedError as Error:
+  case parsedError as error:
     log(parsedError.message);
 }
 ```
@@ -70,12 +70,12 @@ switch (parsed) {
 - `stringify(value: T): string`
   - JSON文字列に変換します。
   - オブジェクトのプロパティ値が `undefined` の場合、そのプロパティは出力されません。
-- `parse(s: string): json | Error`
+- `parse(s: string): json | error`
   - `s` をJavaScriptの `JSON.parse` と同様にJSONとしてパースします。
-  - 成功時は `json`、失敗時は `Error` を返します。
+  - 成功時は `json`、失敗時は `error` を返します。
   - JSON 数値は `1` なら `integer`、`1.0` や `1e3` は `number` になります。
-- `decode<T>(json: json): T | Error`
-  - `json` を型 `T` としてデコードし、成功時は `T`、失敗時は `Error` を返します。
+- `decode<T>(json: json): T | error`
+  - `json` を型 `T` としてデコードし、成功時は `T`、失敗時は `error` を返します。
   - `T` はJSONとして表現可能な型（`integer` / `number` / `boolean` / `string` / `null` / `json` / 配列 / タプル / オブジェクト / Union など）である必要があります。
   - `T` のオブジェクト型で `undefined` を含むプロパティは optional として扱われ、JSON側にキーが無い場合は `undefined` になります。
   - 型引数は省略できません（例: `decode<Person>(json)`）。
@@ -103,15 +103,15 @@ switch (parsed) {
 - `runSandbox(source: string): string`
   - `source`（TunaScriptコード文字列）をサンドボックス実行し、`{ stdout, html, exitCode, error }` 形式のJSON文字列を返します。
   - この関数はサンドボックスモード内（`tuna run --sandbox`）では使用できません。
-- `runFormatter(source: string): string | Error`
+- `runFormatter(source: string): string | error`
   - `source`（TunaScriptコード文字列）をフォーマットします。
-  - フォーマット成功時は整形済みコード文字列、失敗時は `Error` を返します。
+  - フォーマット成功時は整形済みコード文字列、失敗時は `error` を返します。
 
 ### 12.1.4 sqliteモジュール
 
 `sqlite` モジュールは `dbOpen` を含む SQLite 固有の関数を提供します。
 
-- `dbOpen(filename: string): undefined | Error`
+- `dbOpen(filename: string): undefined | error`
   - 指定したSQLiteファイルを直接開きます。ファイルが存在しない場合は新規作成され、書き込みはそのままファイルに反映されます。`create_table` 定義がある場合、テーブルの自動作成と検証が行われます。
   - この関数は `import { dbOpen } from "sqlite";` でインポートしてください。
   - `tuna run --sandbox` では no-op になり、常にインメモリDB (`:memory:`) が使われます。
@@ -120,20 +120,20 @@ switch (parsed) {
 
 `file` モジュールはテキストファイルとディレクトリの入出力を提供します。バイナリファイルは未対応です。
 
-- `readText(path: string): string | Error`
+- `readText(path: string): string | error`
   - `path` のテキストファイルをUTF-8として読み込みます。BOMがある場合は取り除きます。
-  - UTF-8として不正なバイト列の場合は `Error` を返します。
-  - `tuna run --sandbox` では `Error` を返します。
-- `writeText(path: string, content: string): undefined | Error`
+  - UTF-8として不正なバイト列の場合は `error` を返します。
+  - `tuna run --sandbox` では `error` を返します。
+- `writeText(path: string, content: string): undefined | error`
   - `path` にUTF-8テキストを書き込みます（既存ファイルは上書き）。
-  - `tuna run --sandbox` では `Error` を返します。
-- `appendText(path: string, content: string): undefined | Error`
+  - `tuna run --sandbox` では `error` を返します。
+- `appendText(path: string, content: string): undefined | error`
   - `path` の末尾にUTF-8テキストを追記します。ファイルが無ければ作成します。
-  - `tuna run --sandbox` では `Error` を返します。
-- `readDir(path: string): string[] | Error`
+  - `tuna run --sandbox` では `error` を返します。
+- `readDir(path: string): string[] | error`
   - `path` 直下のエントリ名を配列で返します（ファイル・ディレクトリ混在）。
   - 返却順序は名前順にソートされます。
-  - `tuna run --sandbox` では `Error` を返します。
+  - `tuna run --sandbox` では `error` を返します。
 - `exists(path: string): boolean`
   - `path` が存在すれば `true`、存在しないかアクセスできなければ `false` を返します。
   - `tuna run --sandbox` では常に `false` を返します。
@@ -148,9 +148,9 @@ switch (parsed) {
 
 - `createServer(): Server`
   - 新しいHTTPサーバーインスタンスを作成します。
-- `addRoute(server: Server, path: string, handler: (req: Request) => Response | Error): void`
-- `addRoute(server: Server, method: string, path: string, handler: (req: Request) => Response | Error): void`
-  - サーバーに指定したパスのルートを追加します。ハンドラーはリクエストを受け取り、成功時は `Response`、失敗時は `Error` を返す関数です。
+- `addRoute(server: Server, path: string, handler: (req: Request) => Response | error): void`
+- `addRoute(server: Server, method: string, path: string, handler: (req: Request) => Response | error): void`
+  - サーバーに指定したパスのルートを追加します。ハンドラーはリクエストを受け取り、成功時は `Response`、失敗時は `error` を返す関数です。
   - `method` 付きの形式では、`"get"` または `"post"` を指定できます。指定したメソッドのときだけハンドラーが実行されます。
   - 3引数形式（`method` 省略）はすべてのメソッドにマッチします。
   - `path` は `/:id` や `/run/:id` のようなパスパラメータにも対応しています。マッチした値は `req.query.id` のように `query` に展開されます。

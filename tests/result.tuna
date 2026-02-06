@@ -1,11 +1,11 @@
 // expect: ready
 
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 
-function describe(response: string | Error): string {
+function describe(response: string | error): string {
   return switch (response) {
     case value as string: value
-    case { message } as Error: message
+    case { message } as error: message
   }
 }
 

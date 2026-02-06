@@ -1,4 +1,4 @@
-import { log, getArgs, type Error } from "prelude";
+import { log, getArgs } from "prelude";
 import { stringify } from "json";
 import { length } from "array";
 import { dbOpen } from "sqlite";
@@ -24,7 +24,7 @@ function listTodos(): void {
     SELECT id, title, created_at FROM todos WHERE completed = 0 ORDER BY id
   };
   switch (fetched) {
-    case e as Error: {
+    case e as error: {
       log("エラー: " + e.message);
       return;
     }
@@ -45,7 +45,7 @@ function listAllTodos(): void {
     SELECT id, title, completed, created_at FROM todos ORDER BY id
   };
   switch (fetched) {
-    case e as Error: {
+    case e as error: {
       log("エラー: " + e.message);
       return;
     }
@@ -67,7 +67,7 @@ function openTodo(title: string): void {
     INSERT INTO todos (title) VALUES ({title})
   };
   const insertError = switch (inserted) {
-    case e as Error: e.message
+    case e as error: e.message
     case ok as undefined: ""
   };
   if (insertError != "") {
@@ -78,7 +78,7 @@ function openTodo(title: string): void {
     SELECT last_insert_rowid() AS id
   };
   switch (fetched) {
-    case e as Error: {
+    case e as error: {
       log("エラー: " + e.message);
       return;
     }
@@ -94,7 +94,7 @@ function closeTodo(id: string): void {
     UPDATE todos SET completed = 1 WHERE id = {id}
   };
   const updateError = switch (updated) {
-    case e as Error: e.message
+    case e as error: e.message
     case ok as undefined: ""
   };
   if (updateError != "") {
@@ -127,7 +127,7 @@ export function main(): void {
   // データベースを開く（テーブル定義に基づいて自動作成・検証）
   const opened = dbOpen("todo.sqlite3");
   const openError = switch (opened) {
-    case e as Error: e.message
+    case e as error: e.message
     case ok as undefined: ""
   };
   if (openError != "") {
@@ -142,7 +142,7 @@ export function main(): void {
 
   const cmd = switch (args[0]) {
     case c as string: c
-    case e as Error: {
+    case e as error: {
       log("エラー: " + e.message);
       ""
     }
@@ -154,7 +154,7 @@ export function main(): void {
       if (argc >= 2) {
         const opt = switch (args[1]) {
           case o as string: o
-          case e as Error: {
+          case e as error: {
             log("エラー: " + e.message);
             ""
           }
@@ -173,7 +173,7 @@ export function main(): void {
       if (argc >= 2) {
         const title = switch (args[1]) {
           case t as string: t
-          case e as Error: {
+          case e as error: {
             log("エラー: " + e.message);
             ""
           }
@@ -188,7 +188,7 @@ export function main(): void {
       if (argc >= 2) {
         const id = switch (args[1]) {
           case i as string: i
-          case e as Error: {
+          case e as error: {
             log("エラー: " + e.message);
             ""
           }

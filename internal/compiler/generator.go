@@ -107,7 +107,7 @@ func (g *Generator) collectStrings() {
 		}
 	}
 	g.internString("")
-	// Built-in Error handling relies on these strings even if user code doesn't reference them directly.
+	// Built-in error handling relies on these strings even if user code doesn't reference them directly.
 	g.internString("type")
 	g.internString("Error")
 	// addRoute のメソッド省略時に使うワイルドカード。
@@ -426,11 +426,6 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 			if targetType != nil {
 				g.internString(decodeSchemaString(targetType))
 			}
-		}
-		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "Error" {
-			g.internString("message")
-			g.internString("type")
-			g.internString("Error")
 		}
 	case *ast.MemberExpr:
 		g.collectStringsExpr(e.Object)
@@ -954,7 +949,7 @@ func (g *Generator) emitMemory(w *watBuilder) {
 func (g *Generator) emitGlobals(w *watBuilder) {
 	w.line("(global $__inited (mut i32) (i32.const 0))")
 	// Entry main() result storage.
-	// void main の場合は null(ref.null extern) のまま。main が (void | Error) を返す場合に実行結果が格納される。
+	// void main の場合は null(ref.null extern) のまま。main が (void | error) を返す場合に実行結果が格納される。
 	w.line("(global $__main_result (mut externref) (ref.null extern))")
 	for _, d := range g.stringData {
 		w.line(fmt.Sprintf("(global %s (mut externref) (ref.null extern))", d.name))
@@ -1089,7 +1084,7 @@ func (g *Generator) emitStart(w *watBuilder, entryAbs string) {
 	w.line(")")
 	w.line("(export \"_start\" (func $_start))")
 
-	// Runner が main の (void | Error) を検査するためのアクセサ。
+	// Runner が main の (void | error) を検査するためのアクセサ。
 	w.line("(func $__get_main_result (result externref)")
 	w.indent++
 	w.line("(global.get $__main_result)")

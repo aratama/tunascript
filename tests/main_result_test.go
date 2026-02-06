@@ -35,9 +35,9 @@ func TestMainCanReturnResultVoid(t *testing.T) {
 	}
 
 	src := `
-import { log, type Error } from "prelude"
+import { log } from "prelude"
 
-export function main(): void | Error {
+export function main(): void | error {
   log("ok")
   return undefined
 }
@@ -58,10 +58,8 @@ func TestMainResultErrorFailsProcess(t *testing.T) {
 	}
 
 	src := `
-import { Error, type Error } from "prelude"
-
-export function main(): void | Error {
-  return Error("boom-from-main")
+export function main(): void | error {
+  return { "type": "Error", "message": "boom-from-main" }
 }
 `
 
@@ -83,10 +81,8 @@ func TestMainResultErrorFailsSandbox(t *testing.T) {
 	}
 
 	src := `
-import { Error, type Error } from "prelude"
-
-export function main(): void | Error {
-  return Error("sandbox-main-error")
+export function main(): void | error {
+  return { "type": "Error", "message": "sandbox-main-error" }
 }
 `
 

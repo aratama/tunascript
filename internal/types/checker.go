@@ -1597,11 +1597,11 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 		successType, errType := splitResultType(resultType)
 		if successType == nil || errType == nil {
-			c.errorf(e.Span, "? expects (T | Error) expression")
+			c.errorf(e.Span, "? expects (T | error) expression")
 			return nil
 		}
 		if env.retType == nil || !errType.AssignableTo(env.retType) {
-			c.errorf(e.Span, "? requires function return type to include Error")
+			c.errorf(e.Span, "? requires function return type to include error")
 			return nil
 		}
 		if expected != nil && !successType.AssignableTo(expected) {
@@ -1668,7 +1668,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		rowType := c.inferSQLRowType(e)
 
 		// Return type depends on the query kind.
-		// SQL 実行時エラーは Error 値として返すため、常に (... | Error) になる。
+		// SQL 実行時エラーは error 値として返すため、常に (... | error) になる。
 		var successType *Type
 		switch e.Kind {
 		case ast.SQLQueryExecute:
@@ -2360,11 +2360,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.errorf(call.Span, "decode target type not supported")
 			return nil
 		}
-		errorObj := NewObject([]Prop{
-			{Name: "message", Type: String()},
-			{Name: "type", Type: LiteralString("Error")},
-		})
-		ret := NewUnion([]*Type{target, errorObj})
+		ret := NewUnion([]*Type{target, resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
 	case "toString":
@@ -2723,7 +2719,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			return nil
 		}
 		// Third arg: handler function
-		// Handler must be (req: Request) => (Response | Error)
+		// Handler must be (req: Request) => (Response | error)
 		requestAlias := getHTTPTypeAlias("Request")
 		responseAlias := getHTTPTypeAlias("Response")
 		if requestAlias == nil || responseAlias == nil {
@@ -2736,7 +2732,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		)
 		handlerType := c.checkExpr(env, call.Args[handlerArgIdx], expectedHandler)
 		if handlerType == nil || handlerType.Kind != KindFunc || !handlerType.AssignableTo(expectedHandler) {
-			c.errorf(call.Span, "addRoute expects handler of type (req: Request) => (Response | Error)")
+			c.errorf(call.Span, "addRoute expects handler of type (req: Request) => (Response | error)")
 			return nil
 		}
 		c.ExprTypes[call] = Void()
@@ -3121,6 +3117,8 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			return c.recordType(expr, I64())
 		case "short":
 			return c.recordType(expr, I32())
+		case "error":
+			return c.recordType(expr, resultErrorType())
 		case "boolean":
 			return c.recordType(expr, Bool())
 		case "string":
@@ -3345,6 +3343,9 @@ func funcTypeParamMap(t *Type) map[string]*Type {
 func typeNameForError(t *Type) string {
 	if t == nil {
 		return "unknown"
+	}
+	if isResultErrorType(t) {
+		return "error"
 	}
 	if t.Literal {
 		switch t.Kind {
@@ -3863,16 +3864,7 @@ func isSQLiteName(name string) bool {
 
 // getPreludeTypeAlias returns the prelude type alias definition, if any.
 func getPreludeTypeAlias(name string) *TypeAlias {
-	switch name {
-	case "Error":
-		errorObj := NewObject([]Prop{
-			{Name: "message", Type: String()},
-			{Name: "type", Type: LiteralString("Error")},
-		})
-		return newTypeAlias(nil, errorObj, nil)
-	default:
-		return nil
-	}
+	return nil
 }
 
 // getHTTPTypeAlias returns the HTTP module type alias definition, if any.

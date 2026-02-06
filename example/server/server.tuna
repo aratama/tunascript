@@ -1,4 +1,4 @@
-import { log, getArgs, getEnv, type Error } from "prelude"
+import { log, getArgs, getEnv } from "prelude"
 import { length, map } from "array"
 import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type JSX, type Request, type Response } from "http"
 import { dbOpen } from "sqlite"
@@ -16,7 +16,7 @@ function TodoList(): JSX {
     SELECT id, title, completed, created_at FROM todos ORDER BY id DESC
   }
   return switch (fetched) {
-    case err as Error: <p class="empty-message">DB error: {err.message}</p>
+    case err as error: <p class="empty-message">DB error: {err.message}</p>
     case rows as { id: string, title: string, completed: string, created_at: string }[]:
       if (rows.length() == 0) {
         <p class="empty-message">タスクがありません</p>
@@ -66,7 +66,7 @@ function handleAdd(req: Request): Response {
       INSERT INTO todos (title) VALUES ({title})
     }
     const insertError = switch (inserted) {
-      case err as Error: err.message
+      case err as error: err.message
       case ok as undefined: ""
     }
     if (insertError != "") {
@@ -82,7 +82,7 @@ function handleToggle(req: Request): Response {
 	    SELECT completed FROM todos WHERE id = {id}
 	  }
 	  return switch (fetched) {
-	    case err as Error: responseHtml(<p>DB error: {err.message}</p>)
+	    case err as error: responseHtml(<p>DB error: {err.message}</p>)
 	    case row as { completed: string }: {
 	      const completed = row.completed
 	      const newCompleted = if (completed == "1") { 0 } else { 1 }
@@ -90,7 +90,7 @@ function handleToggle(req: Request): Response {
 	        UPDATE todos SET completed = {newCompleted} WHERE id = {id}
 	      }
 	      switch (updated) {
-	        case err as Error: responseHtml(<p>DB error: {err.message}</p>)
+	        case err as error: responseHtml(<p>DB error: {err.message}</p>)
 	        case ok as undefined: responseRedirect("/")
 	      }
 	    }
@@ -103,12 +103,12 @@ export function main(): void {
 	  const dbPath = if (args.length() > 0) {
     switch (args[0]) {
       case path as string: path
-      case e as Error: ":memory:"
+      case e as error: ":memory:"
     }
   } else { ":memory:" }
 	  const opened = dbOpen(dbPath)
 	  const openError = switch (opened) {
-	    case err as Error: err.message
+	    case err as error: err.message
 	    case ok as undefined: ""
 	  }
 	  if (openError != "") {
