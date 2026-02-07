@@ -2,6 +2,13 @@ type RawValue = integer | number | boolean | string | json | null | undefined
 type SQLRows = Map<string>[]
 type Response = { body: string, contentType: string }
 
+// -----------------------------------------------------------------------------
+// セクションA: GCバックエンドで完結して実行できるAPI
+// - A1: 純粋TunaScript実装
+// - A2: GCバックエンドでは `lib/prelude.wat` により純粋Wasm実装されるextern境界
+// -----------------------------------------------------------------------------
+
+// A1: 純粋TunaScript実装（Wasmランタイム機能に依存しない）
 export function fallback<T>(value: T | error, defaultValue: T): T {
   return switch (value) {
     case e as error: defaultValue
@@ -20,9 +27,11 @@ export function error(message: string): error {
   return { "type": "error", message }
 }
 
+// A2: GCバックエンドでは純粋Wasm実装されるextern境界
+// （hostrefバックエンドでは互換実装としてGo側が提供）
+
 extern function log<T>(value: T): void
 export extern function toString(value: integer | number | boolean | string): string
-export extern function gc(): void
 export extern function stringLength(str: string): integer
 
 extern function str_from_utf8(ptr: short, length: short): string
@@ -53,7 +62,15 @@ extern function arr_get_result(arr: RawValue, index: short): RawValue
 extern function arr_len(arr: RawValue): short
 extern function arr_join(arr: RawValue): string
 extern function call_fn(fn: string, args: RawValue): RawValue
+extern function escape_html_attr(value: string): string
 
+// -----------------------------------------------------------------------------
+// セクションB: 現状Goホスト依存のextern境界
+// - これらはファイルI/O、DB、HTTP、環境変数などホスト機能に依存します。
+// - 将来的に純粋Wasmtime/ブラウザ実行を目指す場合は別実装が必要です。
+// -----------------------------------------------------------------------------
+
+export extern function gc(): void
 extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
 extern function register_tables(schemaPtr: short, schemaLen: short): void
 extern function sql_query(queryPtr: short, queryLen: short, params: RawValue): SQLRows | error
@@ -69,6 +86,7 @@ extern function http_get_method(req: RawValue): string
 extern function get_args(): string[]
 extern function get_env(name: string): string
 
+// ラッパー自体は純粋TunaScriptですが、内部でGo依存のexternを呼びます。
 export function getArgs(): string[] {
   return get_args()
 }
@@ -76,5 +94,3 @@ export function getArgs(): string[] {
 export function getEnv(name: string): string {
   return get_env(name)
 }
-
-extern function escape_html_attr(value: string): string

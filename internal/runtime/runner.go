@@ -6,6 +6,8 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
@@ -104,6 +106,14 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 
 	store := wasmtime.NewStore(r.engine)
 	linker := wasmtime.NewLinker(r.engine)
+	stdoutPath, cleanup, err := prepareWASIStdoutCapture()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+	if err := configureWASI(store, linker, stdoutPath, args); err != nil {
+		return nil, err
+	}
 	rt = NewRuntime()
 	if sandbox {
 		rt.ConfigureSandbox(sandboxMaxOutputBytes)
@@ -151,6 +161,9 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 	}
 	// _start終了時は1回強制GCして短命なexternrefを回収する。
 	rt.maybeStoreGC(true)
+	if err := flushWASIStdout(rt, stdoutPath); err != nil {
+		return rt, err
+	}
 	if sandbox {
 		return rt, nil
 	}
@@ -166,4 +179,39 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 		return rt, err
 	}
 	return rt, nil
+}
+
+func prepareWASIStdoutCapture() (string, func(), error) {
+	dir, err := os.MkdirTemp("", "tuna-wasi-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
+	}
+	return filepath.Join(dir, "stdout"), cleanup, nil
+}
+
+func configureWASI(store *wasmtime.Store, linker *wasmtime.Linker, stdoutPath string, args []string) error {
+	wasiConfig := wasmtime.NewWasiConfig()
+	argv := make([]string, 0, len(args)+1)
+	argv = append(argv, "tuna")
+	argv = append(argv, args...)
+	wasiConfig.SetArgv(argv)
+	if err := wasiConfig.SetStdoutFile(stdoutPath); err != nil {
+		return err
+	}
+	store.SetWasi(wasiConfig)
+	return linker.DefineWasi()
+}
+
+func flushWASIStdout(rt *Runtime, stdoutPath string) error {
+	data, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return rt.appendOutputChunk(string(data))
 }

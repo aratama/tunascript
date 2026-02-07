@@ -22,6 +22,11 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 
 func compileAndRun(t *testing.T, files map[string]string, entry string) string {
 	t.Helper()
+	return compileAndRunWithBackend(t, files, entry, compiler.BackendHostref)
+}
+
+func compileAndRunWithBackend(t *testing.T, files map[string]string, entry string, backend compiler.Backend) string {
+	t.Helper()
 	if !runtimeAvailable {
 		t.Skip("CGO が無効なためテストをスキップします")
 	}
@@ -29,6 +34,9 @@ func compileAndRun(t *testing.T, files map[string]string, entry string) string {
 	writeFiles(t, dir, files)
 	entryPath := filepath.Join(dir, entry)
 	comp := compiler.New()
+	if err := comp.SetBackend(backend); err != nil {
+		t.Fatal(err)
+	}
 	res, err := comp.Compile(entryPath)
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +47,172 @@ func compileAndRun(t *testing.T, files map[string]string, entry string) string {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func TestBackendGCBasic(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+export function main(): void {
+  log(toString(42))
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	if out != "42\n" {
+		t.Fatalf("output mismatch: got %q, want %q", out, "42\n")
+	}
+}
+
+func TestBackendGCArrayAndObject(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+export function main(): void {
+  const base: { x: integer } = { "x": 41 }
+  const obj: { x: integer, y: string } = { ...base, "y": "ok" }
+  const xs: integer[] = [1, 2, 3]
+  log(toString(obj.x + 1))
+  log(obj.y)
+  for (const x: integer of xs) {
+    log(toString(x))
+  }
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "42\nok\n1\n2\n3\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCStringOps(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString, stringLength } from "prelude"
+export function main(): void {
+  const s: string = "こん" + "にちは"
+  log(toString(stringLength(s)))
+  if (s == "こんにちは") {
+    log("eq")
+  } else {
+    log("neq")
+  }
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "5\neq\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCHigherOrderCall(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+
+function apply(v: integer, fn: (integer) => integer): integer {
+  return fn(v)
+}
+
+function add2(v: integer): integer {
+  return v + 2
+}
+
+export function main(): void {
+  log(toString(apply(40, add2)))
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "42\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCArrayIndexError(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log } from "prelude"
+
+export function main(): void {
+  const xs: integer[] = [1, 2]
+  const v: integer | error = xs[9]
+  switch (v) {
+    case n as integer: log("ok")
+    case e as error: log(e.message)
+  }
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "index out of range\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCEscapeHTMLAttr(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log } from "prelude"
+
+export function main(): void {
+  log(<div title={"A&B<\"'"}></div>)
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "<div title=\"A&amp;B&lt;&quot;&#39;\"></div>\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCMapReduceLength(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+import { map, reduce, length } from "array"
+
+function double(n: integer): integer {
+  return n * 2
+}
+
+function sumValues(acc: integer, v: integer): integer {
+  return acc + v
+}
+
+export function main(): void {
+  const xs: integer[] = [1, 2, 3]
+  const doubled: integer[] = map(xs, double)
+  const total: integer = reduce(doubled, sumValues, 0)
+  const size: integer = length(doubled)
+  log(toString(total))
+  log(toString(size))
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "12\n3\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
+}
+
+func TestBackendGCTupleIndex(t *testing.T) {
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.ts": `import { log, toString } from "prelude"
+
+export function main(): void {
+  const t: [integer, string] = [1, "a"]
+  const v0 = switch (t[0]) {
+    case n as integer: toString(n)
+    case e as error: e.message
+  }
+  const v1 = switch (t[1]) {
+    case s as string: s
+    case e as error: e.message
+  }
+  log(v0)
+  log(v1)
+}
+`,
+	}, "main.ts", compiler.BackendGC)
+	want := "1\na\n"
+	if out != want {
+		t.Fatalf("output mismatch: got %q, want %q", out, want)
+	}
 }
 
 func compileExpectError(t *testing.T, src string) {

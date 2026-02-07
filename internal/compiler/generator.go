@@ -29,6 +29,7 @@ type Generator struct {
 	globalExports map[*types.Symbol]bool
 	symModulePath map[*types.Symbol]string
 	preludeWAT    string
+	backend       Backend
 
 	lambdaFuncs map[*ast.ArrowFunc]*lambdaInfo
 	lambdaOrder []*lambdaInfo
@@ -39,6 +40,8 @@ type Generator struct {
 	httpHandlerFuncs   map[*types.Symbol]bool
 	httpHandlerLambdas map[*ast.ArrowFunc]bool
 }
+
+var activeCodegenBackend = BackendHostref
 
 type stringDatum struct {
 	value  string
@@ -56,6 +59,7 @@ type lambdaInfo struct {
 func NewGenerator(checker *types.Checker) *Generator {
 	return &Generator{
 		checker:            checker,
+		backend:            BackendHostref,
 		lambdaFuncs:        map[*ast.ArrowFunc]*lambdaInfo{},
 		httpHandlerFuncs:   map[*types.Symbol]bool{},
 		httpHandlerLambdas: map[*ast.ArrowFunc]bool{},
@@ -66,7 +70,17 @@ func (g *Generator) SetPreludeWAT(src string) {
 	g.preludeWAT = src
 }
 
+func (g *Generator) SetBackend(backend Backend) {
+	g.backend = backend
+}
+
 func (g *Generator) Generate(entry string) (string, error) {
+	prevBackend := activeCodegenBackend
+	activeCodegenBackend = g.backend
+	defer func() {
+		activeCodegenBackend = prevBackend
+	}()
+
 	g.initModules()
 	g.assignSymbols(entry)
 	g.collectStrings()
@@ -106,6 +120,7 @@ func (g *Generator) collectStrings() {
 			g.collectStringsDecl(decl)
 		}
 	}
+	g.internAllFunctionValueNames()
 	g.internString("")
 	// Built-in error handling relies on these strings even if user code doesn't reference them directly.
 	g.internString("type")
@@ -116,6 +131,32 @@ func (g *Generator) collectStrings() {
 	if len(g.tableDefs) > 0 {
 		jsonStr := g.generateTableDefsJSON()
 		g.internString(jsonStr)
+	}
+}
+
+func (g *Generator) internAllFunctionValueNames() {
+	emitted := map[*types.Symbol]bool{}
+	for _, mod := range g.modules {
+		for _, sym := range mod.Top {
+			target := resolveSymbolAlias(sym)
+			if target == nil || emitted[target] {
+				continue
+			}
+			if target.Kind != types.SymFunc || target.Type == nil || target.Type.Kind != types.KindFunc {
+				continue
+			}
+			if _, ok := g.funcNames[target]; !ok {
+				continue
+			}
+			emitted[target] = true
+			g.internString(g.funcValueExportName(target))
+		}
+	}
+	for _, info := range g.lambdaOrder {
+		if info.typ == nil || info.typ.Kind != types.KindFunc {
+			continue
+		}
+		g.internString(g.lambdaValueExportName(info.fn))
 	}
 }
 
@@ -775,6 +816,13 @@ func (g *Generator) assignSymbols(entry string) {
 }
 
 func (g *Generator) emitImports(w *watBuilder) {
+	if g.backend == BackendGC {
+		for _, imp := range g.preludeHostImports() {
+			w.line(fmt.Sprintf("(import \"prelude\" \"%s\" %s)", imp.name, imp.sig))
+		}
+		return
+	}
+
 	imports := []struct {
 		module string
 		name   string
@@ -954,11 +1002,13 @@ func (g *Generator) emitMemory(w *watBuilder) {
 
 func (g *Generator) emitGlobals(w *watBuilder) {
 	w.line("(global $__inited (mut i32) (i32.const 0))")
+	refTy := g.refType()
+	nullRef := g.nullRef()
 	// Entry main() result storage.
 	// void main の場合は null(ref.null extern) のまま。main が (void | error) を返す場合に実行結果が格納される。
-	w.line("(global $__main_result (mut externref) (ref.null extern))")
+	w.line(fmt.Sprintf("(global $__main_result (mut %s) %s)", refTy, nullRef))
 	for _, d := range g.stringData {
-		w.line(fmt.Sprintf("(global %s (mut externref) (ref.null extern))", d.name))
+		w.line(fmt.Sprintf("(global %s (mut %s) %s)", d.name, refTy, nullRef))
 	}
 	for _, mod := range g.modules {
 		for _, sym := range mod.Top {
@@ -967,8 +1017,8 @@ func (g *Generator) emitGlobals(w *watBuilder) {
 			}
 			wasmName := g.globalNames[sym]
 			wt := wasmType(sym.Type)
-			if wt == "externref" {
-				w.line(fmt.Sprintf("(global %s (mut externref) (ref.null extern))", wasmName))
+			if isRefWasmType(wt) {
+				w.line(fmt.Sprintf("(global %s (mut %s) %s)", wasmName, wt, g.nullRefForType(wt)))
 			} else {
 				w.line(fmt.Sprintf("(global %s (mut %s) (%s.const 0))", wasmName, wt, wt))
 			}
@@ -1000,6 +1050,7 @@ func (g *Generator) emitFunctions(w *watBuilder, entry string) {
 
 	g.emitLambdaFuncs(w)
 	g.emitFunctionValueWrappers(w)
+	g.emitFunctionValueDispatcher(w)
 	g.emitStart(w, entryAbs)
 }
 
@@ -1090,6 +1141,10 @@ func (g *Generator) emitStart(w *watBuilder, entryAbs string) {
 	w.indent--
 	w.line(")")
 	w.line("(export \"_start\" (func $_start))")
+
+	if g.backend == BackendGC {
+		return
+	}
 
 	// Runner が main の (void | error) を検査するためのアクセサ。
 	w.line("(func $__get_main_result (result externref)")
@@ -1352,11 +1407,92 @@ func (g *Generator) emitFunctionValueWrappers(w *watBuilder) {
 	}
 }
 
+type functionDispatchEntry struct {
+	exportName  string
+	wrapperName string
+}
+
+func (g *Generator) functionValueDispatchEntries() []functionDispatchEntry {
+	var entries []functionDispatchEntry
+	emitted := map[string]bool{}
+	fnEmitted := map[*types.Symbol]bool{}
+	for _, mod := range g.modules {
+		for _, sym := range mod.Top {
+			target := resolveSymbolAlias(sym)
+			if target == nil || fnEmitted[target] {
+				continue
+			}
+			if target.Kind != types.SymFunc || target.Type == nil || target.Type.Kind != types.KindFunc {
+				continue
+			}
+			if _, ok := g.funcNames[target]; !ok {
+				continue
+			}
+			fnEmitted[target] = true
+			exportName := g.funcValueExportName(target)
+			if emitted[exportName] {
+				continue
+			}
+			entries = append(entries, functionDispatchEntry{
+				exportName:  exportName,
+				wrapperName: g.funcValueWrapperName(target),
+			})
+			emitted[exportName] = true
+		}
+	}
+	for _, info := range g.lambdaOrder {
+		if info.typ == nil || info.typ.Kind != types.KindFunc {
+			continue
+		}
+		exportName := g.lambdaValueExportName(info.fn)
+		if emitted[exportName] {
+			continue
+		}
+		entries = append(entries, functionDispatchEntry{
+			exportName:  exportName,
+			wrapperName: g.lambdaValueWrapperName(info.fn),
+		})
+		emitted[exportName] = true
+	}
+	return entries
+}
+
+func (g *Generator) emitFunctionValueDispatcher(w *watBuilder) {
+	if g.backend != BackendGC {
+		return
+	}
+
+	refTy := g.refType()
+	entries := g.functionValueDispatchEntries()
+	w.line(fmt.Sprintf("(func $__call_fn_dispatch (param $fn %s) (param $args %s) (result %s)", refTy, refTy, refTy))
+	w.indent++
+	for _, entry := range entries {
+		w.line("(local.get $fn)")
+		w.line(fmt.Sprintf("(global.get %s)", g.stringGlobal(entry.exportName)))
+		w.line("(call $prelude.str_eq)")
+		w.line("(if")
+		w.indent++
+		w.line("(then")
+		w.indent++
+		w.line("(local.get $args)")
+		w.line(fmt.Sprintf("(call %s)", entry.wrapperName))
+		w.line("return")
+		w.indent--
+		w.line(")")
+		w.indent--
+		w.line(")")
+	}
+	w.line("(call $prelude.val_undefined)")
+	w.indent--
+	w.line(")")
+}
+
 func (g *Generator) emitFunctionValueWrapper(w *watBuilder, wrapperName, exportName, targetName string, fnType *types.Type) {
 	if fnType == nil || fnType.Kind != types.KindFunc {
 		return
 	}
-	w.line(fmt.Sprintf("(func %s (param $args externref) (result externref)", wrapperName))
+	refTy := g.refType()
+	w.line(fmt.Sprintf("(func %s (param $args %s) (result %s)", wrapperName, refTy, refTy))
 	w.indent++
 	for i, p := range fnType.Params {
 		w.line("(local.get $args)")
@@ -1466,8 +1602,14 @@ func wasmType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	case types.KindString, types.KindJSON, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion, types.KindNull, types.KindUndefined:
+		if activeCodegenBackend == BackendGC {
+			return "anyref"
+		}
 		return "externref"
 	default:
+		if activeCodegenBackend == BackendGC {
+			return "anyref"
+		}
 		return "externref"
 	}
 }
@@ -1646,7 +1788,7 @@ func (f *funcEmitter) emitDestructure(s *ast.DestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
 
 	// Store the array/tuple in a temporary local
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
 
@@ -1686,7 +1828,7 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 	initType := f.g.checker.ExprTypes[s.Init]
 
 	// Store the object in a temporary local
-	objLocal := f.addLocalRaw("externref")
+	objLocal := f.addLocalRaw(f.g.refType())
 	f.emitExpr(s.Init, initType)
 	f.emit(fmt.Sprintf("(local.set %s)", objLocal))
 
@@ -1720,10 +1862,10 @@ func (f *funcEmitter) emitObjectDestructure(s *ast.ObjectDestructureStmt) {
 func (f *funcEmitter) emitForOf(s *ast.ForOfStmt) {
 	iterType := f.g.checker.ExprTypes[s.Iter]
 	elem := elemType(iterType)
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
-	valLocal := f.addLocalRaw("externref")
+	valLocal := f.addLocalRaw(f.g.refType())
 
 	f.emitExpr(s.Iter, iterType)
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -2111,7 +2253,7 @@ func (f *funcEmitter) emitTryExpr(e *ast.TryExpr, t *types.Type) {
 		f.emit("(i64.const 0)")
 	} else if wasmType(successType) == "f64" {
 		f.emit("(f64.const 0)")
-	} else if wasmType(successType) == "externref" {
+	} else if isRefWasmType(wasmType(successType)) {
 		f.emit("(call $prelude.val_null)")
 	} else {
 		f.emit("(i32.const 0)")
@@ -2157,7 +2299,7 @@ func (f *funcEmitter) emitBlockExpr(e *ast.BlockExpr, t *types.Type) {
 			f.emit("(i64.const 0)")
 		case "f64":
 			f.emit("(f64.const 0)")
-		case "externref":
+		case "externref", "anyref":
 			f.emit("(call $prelude.val_undefined)")
 		default:
 			f.emit("(i32.const 0)")
@@ -2203,7 +2345,7 @@ func (f *funcEmitter) emitSwitchCases(cases []ast.SwitchCase, defaultExpr ast.Ex
 				f.emit("(i64.const 0)")
 			case "f64":
 				f.emit("(f64.const 0)")
-			case "externref":
+			case "externref", "anyref":
 				f.emit("(call $prelude.val_undefined)")
 			}
 		}
@@ -2522,8 +2664,8 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 }
 
 func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.Type, args []ast.Expr, t *types.Type) {
-	fnLocal := f.addLocalRaw("externref")
-	argsLocal := f.addLocalRaw("externref")
+	fnLocal := f.addLocalRaw(f.g.refType())
+	argsLocal := f.addLocalRaw(f.g.refType())
 
 	f.emitExpr(callee, fnType)
 	f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
@@ -2558,7 +2700,7 @@ func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.T
 }
 
 func (f *funcEmitter) emitFunctionValueCallFromBoxedLocals(fnLocal string, argLocals []string) {
-	argsLocal := f.addLocalRaw("externref")
+	argsLocal := f.addLocalRaw(f.g.refType())
 	f.emit(fmt.Sprintf("(i32.const %d)", len(argLocals)))
 	f.emit("(call $prelude.arr_new)")
 	f.emit(fmt.Sprintf("(local.set %s)", argsLocal))
@@ -3005,13 +3147,13 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	}
 	useIndirect := fnName == ""
 	fnLocal := ""
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
-	resultLocal := f.addLocalRaw("externref")
-	valueLocal := f.addLocalRaw("externref")
+	resultLocal := f.addLocalRaw(f.g.refType())
+	valueLocal := f.addLocalRaw(f.g.refType())
 	if useIndirect {
-		fnLocal = f.addLocalRaw("externref")
+		fnLocal = f.addLocalRaw(f.g.refType())
 		f.emitExpr(fnExpr, fnExprType)
 		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
 	}
@@ -3077,15 +3219,15 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	}
 	useIndirect := fnName == ""
 	fnLocal := ""
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	countLocal := f.addLocalRaw("i32")
-	resultLocal := f.addLocalRaw("externref")
+	resultLocal := f.addLocalRaw(f.g.refType())
 	outIdxLocal := f.addLocalRaw("i32")
-	valueLocal := f.addLocalRaw("externref")
+	valueLocal := f.addLocalRaw(f.g.refType())
 	if useIndirect {
-		fnLocal = f.addLocalRaw("externref")
+		fnLocal = f.addLocalRaw(f.g.refType())
 		f.emitExpr(fnExpr, fnExprType)
 		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
 	}
@@ -3216,16 +3358,16 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 	useIndirect := fnName == ""
 	fnLocal := ""
 	accType := fnType.Ret
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	lenLocal := f.addLocalRaw("i32")
 	idxLocal := f.addLocalRaw("i32")
 	accLocal := f.addLocalRaw(valueLocalType(accType))
 	accHandleLocal := ""
 	valueHandleLocal := ""
 	if useIndirect {
-		fnLocal = f.addLocalRaw("externref")
-		accHandleLocal = f.addLocalRaw("externref")
-		valueHandleLocal = f.addLocalRaw("externref")
+		fnLocal = f.addLocalRaw(f.g.refType())
+		accHandleLocal = f.addLocalRaw(f.g.refType())
+		valueHandleLocal = f.addLocalRaw(f.g.refType())
 		f.emitExpr(fnExpr, fnExprType)
 		f.emit(fmt.Sprintf("(local.set %s)", fnLocal))
 	}
@@ -3316,7 +3458,7 @@ func (f *funcEmitter) emitDynamicArrayLit(lit *ast.ArrayLit, t *types.Type) {
 	f.emit("(i32.const 0)")
 	f.emit(fmt.Sprintf("(local.set %s)", totalLocal))
 	for _, entry := range lit.Entries {
-		info := entryInfo{entry: entry, handleLocal: f.addLocalRaw("externref")}
+		info := entryInfo{entry: entry, handleLocal: f.addLocalRaw(f.g.refType())}
 		if entry.Kind == ast.ArrayValue {
 			f.emitExpr(entry.Value, f.g.checker.ExprTypes[entry.Value])
 			f.emitBoxIfPrimitive(f.g.checker.ExprTypes[entry.Value])
@@ -3339,9 +3481,9 @@ func (f *funcEmitter) emitDynamicArrayLit(lit *ast.ArrayLit, t *types.Type) {
 		}
 		infos = append(infos, info)
 	}
-	arrLocal := f.addLocalRaw("externref")
+	arrLocal := f.addLocalRaw(f.g.refType())
 	idxLocal := f.addLocalRaw("i32")
-	valueLocal := f.addLocalRaw("externref")
+	valueLocal := f.addLocalRaw(f.g.refType())
 	f.emit(fmt.Sprintf("(local.get %s)", totalLocal))
 	f.emit("(call $prelude.arr_new)")
 	f.emit(fmt.Sprintf("(local.set %s)", arrLocal))
@@ -3453,7 +3595,7 @@ func (f *funcEmitter) emitSQLExpr(e *ast.SQLExpr, t *types.Type) {
 	}
 
 	// Build params array if needed
-	paramsLocal := f.addLocalRaw("externref")
+	paramsLocal := f.addLocalRaw(f.g.refType())
 	if len(e.Params) == 0 {
 		// Empty params array
 		f.emit("(i32.const 0)")
@@ -3608,6 +3750,9 @@ func valueLocalType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	default:
+		if activeCodegenBackend == BackendGC {
+			return "anyref"
+		}
 		return "externref"
 	}
 }
@@ -3639,10 +3784,32 @@ func eqOp(t *types.Type) string {
 	if t.Kind == types.KindF64 {
 		return "f64.eq"
 	}
-	if wasmType(t) == "externref" {
+	if isRefWasmType(wasmType(t)) {
 		return "ref.eq"
 	}
 	return "i32.eq"
+}
+
+func isRefWasmType(wt string) bool {
+	return wt == "externref" || wt == "anyref"
+}
+
+func (g *Generator) refType() string {
+	if g.backend == BackendGC {
+		return "anyref"
+	}
+	return "externref"
+}
+
+func (g *Generator) nullRef() string {
+	return g.nullRefForType(g.refType())
+}
+
+func (g *Generator) nullRefForType(refTy string) string {
+	if refTy == "anyref" {
+		return "(ref.null any)"
+	}
+	return "(ref.null extern)"
 }
 
 func cmpOp(t *types.Type, op string) string {
@@ -3754,10 +3921,10 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 			//
 			// Approach: Use a local to store the current string, evaluate condition,
 			// then conditionally concat
-			tempLocal := f.addLocalRaw("externref")
+			tempLocal := f.addLocalRaw(f.g.refType())
 			f.emit(fmt.Sprintf("(local.set %s)", tempLocal)) // save str
 			f.emitExpr(attr.Value, attrType)
-			f.emit("(if (result externref)")
+			f.emit(fmt.Sprintf("(if (result %s)", f.g.refType()))
 			f.emit("(then")
 			f.emit(fmt.Sprintf("(local.get %s)", tempLocal))
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(" "+attr.Name)))

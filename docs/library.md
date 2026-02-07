@@ -65,7 +65,8 @@ switch (parsed) {
   - 指定した名前の環境変数の値を返します。存在しない場合は空文字列になります。
   - `tuna run --sandbox` では常に空文字列を返します。
 - `gc(): void`
-  - Wasmtimeの `externref` GC を明示的に実行します。
+  - WasmtimeのGCを明示的に実行します。
+  - `hostref` バックエンドでは主に `externref` の回収を促進し、`gc` バックエンドでは Wasm GC ヒープ（`struct` / `array` / `anyref`）の回収を促進します。
   - 大量のオブジェクトを段階的に確保する処理で、不要になった値の回収を早めたいときに使えます。
 
 ### 12.1.1 jsonモジュール
@@ -94,6 +95,8 @@ switch (parsed) {
   - `end < start` などで範囲が不正な場合は空配列 `[]` を返します。
 - `length(array: T[]): integer`
   - 配列の長さを返します。
+- 添字アクセス `xs[i]` は `T | error` を返します。
+  - 範囲外アクセス時は `{ type: "error", message: "index out of range" }` を返します。
 - `map<T, S>(fn: (value: T) => S, xs: Array<T>): Array<S>`
   - 型変数 `T` / `S` を使って `xs` の各要素を `fn` で変換します。
 - `filter<T>(fn: (value: T) => boolean, xs: Array<T>): Array<T>`

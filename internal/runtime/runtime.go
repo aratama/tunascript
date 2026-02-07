@@ -261,6 +261,21 @@ func (r *Runtime) Output() string {
 	return r.output.String()
 }
 
+func (r *Runtime) appendOutputChunk(chunk string) error {
+	if chunk == "" {
+		return nil
+	}
+	if r.sandbox {
+		if err := r.checkSandboxOutputSize(len(chunk)); err != nil {
+			return err
+		}
+		r.sandboxStdout.WriteString(chunk)
+		return nil
+	}
+	r.output.WriteString(chunk)
+	return nil
+}
+
 func (r *Runtime) ConfigureSandbox(maxOutputBytes int) {
 	r.sandbox = true
 	r.maxOutputBytes = maxOutputBytes
@@ -317,6 +332,11 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 		return err
 	}
 	if err := define("str_len", func(handle *Value) int64 {
+		return must(r.strLen(handle))
+	}); err != nil {
+		return err
+	}
+	if err := define("stringLength", func(handle *Value) int64 {
 		return must(r.strLen(handle))
 	}); err != nil {
 		return err
@@ -1287,16 +1307,7 @@ func (r *Runtime) log(handle *Value) error {
 		return err
 	}
 	appendLine := func(s string) error {
-		line := s + "\n"
-		if r.sandbox {
-			if err := r.checkSandboxOutputSize(len(line)); err != nil {
-				return err
-			}
-			r.sandboxStdout.WriteString(line)
-			return nil
-		}
-		r.output.WriteString(line)
-		return nil
+		return r.appendOutputChunk(s + "\n")
 	}
 	if v.Kind == KindString {
 		return appendLine(v.Str)
