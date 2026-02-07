@@ -1,0 +1,45 @@
+// サーバーサイドレンダリング済みHTML断片（`string` のエイリアス）
+export extern type JSX
+
+// HTTPサーバーインスタンス
+export extern type Server
+
+// HTTPリクエスト（`{ path: string, method: string, query: Map<string>, form: Map<string> }` オブジェクト）
+export extern type Request
+
+// HTTPレスポンス（`{ body: string }` オブジェクト）
+export extern type Response
+
+//   - 新しいHTTPサーバーインスタンスを作成します。
+export extern function create_server(): Server
+
+//   - サーバーに指定したパスのルートを追加します。ハンドラーはリクエストを受け取り、成功時は `Response`、失敗時は `error` を返す関数です。
+//   - `method` 付きの形式では、`"get"` または `"post"` を指定できます。指定したメソッドのときだけハンドラーが実行されます。
+//   - 3引数形式（`method` 省略）はすべてのメソッドにマッチします。
+//   - `path` は `/:id` や `/run/:id` のようなパスパラメータにも対応しています。マッチした値は `req.query.id` のように `query` に展開されます。
+//   - 同じメソッドの中では完全一致ルートが優先され、完全一致が無い場合にパスパラメータルートが解決されます。
+//   - メソッド指定ルートが優先され、見つからない場合は `method` 省略（全メソッド）ルートにフォールバックします。
+//   - `tuna run --sandbox` では `add_route(server, "/", handler)` の重複登録はエラーになります。
+export extern function add_route(server: Server, path: string, handler: (req: Request) => Response | error): void
+
+//   - サーバーを指定したポートで起動します。この関数はブロッキングで、サーバーが終了するまで戻りません。
+//   - `tuna run --sandbox` ではソケットは開かず、`GET /` を1回だけ仮想実行して直ちに終了します。`Response.body` は最終JSONの `html` フィールドに入ります。
+export extern function listen(server: Server, port: string): void
+
+//   - テキストレスポンスを作成します。
+export extern function responseText(text: string): Response
+
+//   - HTML を直接返す `contentType: "text/html; charset=utf-8"` のレスポンスを作成します。
+export extern function response_html(html: string): Response
+
+//   - JSON ボディを返すレスポンス（`contentType` は `application/json`）を作成します。
+export extern function responseJson(data: string): Response
+
+//   - `Location` ヘッダーと `302 Found` をセットしたリダイレクトを作成します。
+export extern function response_redirect(url: string): Response
+
+//   - リクエストのパスを取得します。
+export extern function getPath(req: Request): string
+
+//   - リクエストのHTTPメソッド（GET, POSTなど）を取得します。
+export extern function getMethod(req: Request): string

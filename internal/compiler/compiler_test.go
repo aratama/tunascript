@@ -51,9 +51,9 @@ func compileAndRunWithBackend(t *testing.T, files map[string]string, entry strin
 
 func TestBackendGCBasic(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  log(toString(42))
+  log(to_string(42))
 }
 `,
 	}, "main.ts", compiler.BackendGC)
@@ -64,15 +64,15 @@ export function main(): void {
 
 func TestBackendGCArrayAndObject(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const base: { x: integer } = { "x": 41 }
   const obj: { x: integer, y: string } = { ...base, "y": "ok" }
   const xs: integer[] = [1, 2, 3]
-  log(toString(obj.x + 1))
+  log(to_string(obj.x + 1))
   log(obj.y)
   for (const x: integer of xs) {
-    log(toString(x))
+    log(to_string(x))
   }
 }
 `,
@@ -85,10 +85,10 @@ export function main(): void {
 
 func TestBackendGCStringOps(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString, stringLength } from "prelude"
+		"main.ts": `import { log, to_string, string_length } from "prelude"
 export function main(): void {
   const s: string = "こん" + "にちは"
-  log(toString(stringLength(s)))
+  log(to_string(string_length(s)))
   if (s == "こんにちは") {
     log("eq")
   } else {
@@ -105,7 +105,7 @@ export function main(): void {
 
 func TestBackendGCHigherOrderCall(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 
 function apply(v: integer, fn: (integer) => integer): integer {
   return fn(v)
@@ -116,7 +116,7 @@ function add2(v: integer): integer {
 }
 
 export function main(): void {
-  log(toString(apply(40, add2)))
+  log(to_string(apply(40, add2)))
 }
 `,
 	}, "main.ts", compiler.BackendGC)
@@ -163,7 +163,7 @@ export function main(): void {
 
 func TestBackendGCMapReduceLength(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 import { map, reduce, length } from "array"
 
 function double(n: integer): integer {
@@ -179,8 +179,8 @@ export function main(): void {
   const doubled: integer[] = map(xs, double)
   const total: integer = reduce(doubled, sumValues, 0)
   const size: integer = length(doubled)
-  log(toString(total))
-  log(toString(size))
+  log(to_string(total))
+  log(to_string(size))
 }
 `,
 	}, "main.ts", compiler.BackendGC)
@@ -192,12 +192,12 @@ export function main(): void {
 
 func TestBackendGCTupleIndex(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 
 export function main(): void {
   const t: [integer, string] = [1, "a"]
   const v0 = switch (t[0]) {
-    case n as integer: toString(n)
+    case n as integer: to_string(n)
     case e as error: e.message
   }
   const v1 = switch (t[1]) {
@@ -248,10 +248,10 @@ func compileExpectErrorContains(t *testing.T, src, want string) {
 
 func TestArithmeticAndString(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const a: integer = 40 + 2
-  log(toString(a))
+  log(to_string(a))
   const s: string = "ab" + "cd"
   log(s)
 }
@@ -265,12 +265,12 @@ export function main(): void {
 
 func TestPreludeExternStringLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString, stringLength } from "prelude"
+		"main.ts": `import { log, to_string, string_length } from "prelude"
 export function main(): void {
-  const asciiLen: integer = stringLength("hello")
-  const utfLen: integer = stringLength("こんにちは")
-  log(toString(asciiLen))
-  log(toString(utfLen))
+  const asciiLen: integer = string_length("hello")
+  const utfLen: integer = string_length("こんにちは")
+  log(to_string(asciiLen))
+  log(to_string(utfLen))
 }
 `,
 	}, "main.ts")
@@ -282,7 +282,7 @@ export function main(): void {
 
 func TestPreludeAndThen(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString, andThen, error } from "prelude"
+		"main.ts": `import { log, to_string, then, error } from "prelude"
 
 function parseValue(text: string): integer | error {
   if (text == "bad") {
@@ -296,15 +296,15 @@ function plusOne(v: integer): integer | error {
 }
 
 export function main(): void {
-  const ok: integer | error = andThen(parseValue("ok"), plusOne)
-  const ng: integer | error = andThen(parseValue("bad"), plusOne)
+  const ok: integer | error = then(parseValue("ok"), plusOne)
+  const ng: integer | error = parseValue("bad").then(plusOne)
 
   const okText: string = switch (ok) {
-    case v as integer: toString(v)
+    case v as integer: to_string(v)
     case e as error: e.message
   }
   const ngText: string = switch (ng) {
-    case v as integer: toString(v)
+    case v as integer: to_string(v)
     case e as error: e.message
   }
   log(okText)
@@ -320,7 +320,7 @@ export function main(): void {
 
 func TestHigherOrderFunctionVariableCall(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 
 function apply(v: integer, fn: (integer) => integer): integer {
   return fn(v)
@@ -335,8 +335,8 @@ function add2(v: integer): integer {
 }
 
 export function main(): void {
-  log(toString(apply(40, inc)))
-  log(toString(apply(40, add2)))
+  log(to_string(apply(40, inc)))
+  log(to_string(apply(40, add2)))
 }
 `,
 	}, "main.ts")
@@ -348,7 +348,7 @@ export function main(): void {
 
 func TestMapWithFunctionVariable(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 import { map } from "array"
 
 function applyMap(xs: integer[], fn: (integer) => integer): integer[] {
@@ -362,7 +362,7 @@ function add3(x: integer): integer {
 export function main(): void {
   const ys: integer[] = applyMap([1, 2, 3], add3)
   for (const y: integer of ys) {
-    log(toString(y))
+    log(to_string(y))
   }
 }
 `,
@@ -392,11 +392,11 @@ export function main(): void {
 
 func TestArrayForOf(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const xs: integer[] = [1, 2, 3]
   for (const x: integer of xs) {
-    log(toString(x))
+    log(to_string(x))
   }
 }
 `,
@@ -409,12 +409,12 @@ export function main(): void {
 
 func TestPreludeRange(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 import { range } from "array"
 export function main(): void {
   const xs: integer[] = range(0, 4)
   for (const x: integer of xs) {
-    log(toString(x))
+    log(to_string(x))
   }
 }
 `,
@@ -427,14 +427,14 @@ export function main(): void {
 
 func TestFunctionDeclaration(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 function add(a: integer, b: integer): integer {
   return a + b
 }
 
 export function main(): void {
   const v: integer = add(1, 2)
-  log(toString(v))
+  log(to_string(v))
 }
 `,
 	}, "main.ts")
@@ -446,12 +446,12 @@ export function main(): void {
 
 func TestArraySpread(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const base: integer[] = [2, 3]
   const xs: integer[] = [1, ...base, 4]
   for (const x: integer of xs) {
-    log(toString(x))
+    log(to_string(x))
   }
 }
 `,
@@ -464,7 +464,7 @@ export function main(): void {
 
 func TestPreludeMapReduceLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 import { map, reduce, length } from "array"
 function double(n: integer): integer {
   return n * 2
@@ -479,8 +479,8 @@ export function main(): void {
   const doubled: integer[] = map(xs, double)
   const total: integer = reduce(doubled, sumValues, 0)
   const size: integer = length(doubled)
-  log(toString(total))
-  log(toString(size))
+  log(to_string(total))
+  log(to_string(size))
 }
 `,
 	}, "main.ts")
@@ -492,11 +492,11 @@ export function main(): void {
 
 func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const t: [integer, string] = [1, "a"]
   const v0 = switch (t[0]) {
-    case n as integer: toString(n)
+    case n as integer: to_string(n)
     case e as error: e.message
   }
   const v1 = switch (t[1]) {
@@ -536,10 +536,10 @@ export function main(): void {
 }
 
 func TestTernaryOperatorIsSyntaxError(t *testing.T) {
-	compileExpectError(t, `import { log, toString } from "prelude"
+	compileExpectError(t, `import { log, to_string } from "prelude"
 export function main(): void {
   const x: integer = true ? 1 : 2
-  log(toString(x))
+  log(to_string(x))
 }
 `)
 }
@@ -565,10 +565,10 @@ func TestModuleImport(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b }`,
 		"main.ts": `import { add } from "./lib"
-import { log, toString } from "prelude"
+import { log, to_string } from "prelude"
 export function main(): void {
   const v: integer = add(20, 22)
-  log(toString(v))
+  log(to_string(v))
 }
 `,
 	}, "main.ts")
@@ -605,11 +605,11 @@ export function main(): void {
 
 func TestLineHeadParenIsNotCall(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const n: integer = 1
   (2)
-  log(toString(n))
+  log(to_string(n))
 }
 `,
 	}, "main.ts")
@@ -621,11 +621,11 @@ export function main(): void {
 
 func TestLineHeadBracketIsNotIndexAccess(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, toString } from "prelude"
+		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
   const n: integer = 1
   [2]
-  log(toString(n))
+  log(to_string(n))
 }
 `,
 	}, "main.ts")

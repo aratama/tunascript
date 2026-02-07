@@ -39,7 +39,6 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 
 `stringify` でオブジェクトをJSONに変換する際、値が `undefined` のプロパティは出力されません（例: `{ name: undefined, x: 1 }` は `{"x":1}` になります）。
 
-
 ### 2.2 複合型
 
 - 配列: `T[]`（`Array<T>` のエイリアス。たとえば `string[]` は `Array<string>` と同じです）
@@ -58,7 +57,7 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 例:
 
 ```typescript
-const v: integer | string = 42
+const v: integer | string = 42;
 ```
 
 Union型の値を取り出すには `switch` 式の `case v as T` を使います（5.7参照）。
@@ -68,8 +67,8 @@ Union型の値を取り出すには `switch` 式の `case v as T` を使いま�
 TypeScriptと同様の構文で型に別名を付けることができます。
 
 ```typescript
-type MyType = { name: string, age: integer }
-export type Response = { body: string, contentType: string }
+type MyType = { name: string; age: integer };
+export type Response = { body: string; contentType: string };
 ```
 
 - `type Name = TypeExpr` で型エイリアスを定義できます。
@@ -80,7 +79,7 @@ export type Response = { body: string, contentType: string }
 - 型エイリアスには型パラメータを `<T>` 形式で付けられ、型式の中でそのパラメータを参照することで汎用的な別名を定義できます。たとえば `ApiResult<T>` は次のように書けます:
 
 ```typescript
-type ApiResult<T> = T | error
+type ApiResult<T> = T | error;
 ```
 
 このようなユニオンを型エイリアスにまとめておくと、`ApiResult<string>` のように使い回せます。`error` は組み込み型なので import は不要です。
@@ -89,20 +88,20 @@ type ApiResult<T> = T | error
 
 preludeには以下の型エイリアスが定義されている:
 
-| 型名    | 定義                                 |
-| ------- | ------------------------------------ |
-| `JSX`   | `string`                             |
+| 型名  | 定義     |
+| ----- | -------- |
+| `JSX` | `string` |
 
 そのほか、`Map<T>` は **文字列キー → 値 `T`** の動的オブジェクトを表し、`req.query.foo` や `req.form.bar` のように自由にアクセスできます。`Map<T>` を使うことで汎用的なオブジェクトやプロパティ型を記述できます。
 
 例:
 
 ```typescript
-import { type JSX } from "http"
-import { responseHtml } from "http"
+import { type JSX } from "http";
+import { response_html } from "http";
 
 function handleRoot(): JSX {
-  return responseHtml("<h1>Hello</h1>")
+  return response_html("<h1>Hello</h1>");
 }
 ```
 
@@ -124,7 +123,7 @@ log(message)
 リテラル型は特定の値だけを許す型で、文字列リテラル、整数、浮動小数点、真偽値のリテラルをそのまま型として書けます。たとえば `status` を `"error"` に限定することで、コードの意図が明示的になります:
 
 ```typescript
-const status: "error" = "error"
+const status: "error" = "error";
 ```
 
 リテラル型はその値そのものしか代入できないため、`string` や `integer` などの汎用的な型からの代入はエラーになります。逆に、リテラル型はより広い型（`string` / `integer` / `boolean` / `number`）には代入可能なので、タグ付きユニオンの `"type"` プロパティに使うと `switch` での絞り込みが強力になります。
@@ -149,17 +148,17 @@ const status: "error" = "error"
 
 ```typescript
 // トップレベル（型注釈必須）
-const x: integer = 1
-const s: string = "a"
+const x: integer = 1;
+const s: string = "a";
 
 function example(): void {
   // ローカル変数（型推論により省略可能）
-  const y = 2 // integer と推論
-  const t = "hello" // string と推論
-  const arr = [1, 2, 3] // integer[] と推論
+  const y = 2; // integer と推論
+  const t = "hello"; // string と推論
+  const arr = [1, 2, 3]; // integer[] と推論
 
   // 型注釈を明示することも可能
-  const z: integer = 3
+  const z: integer = 3;
 }
 ```
 
@@ -168,10 +167,10 @@ function example(): void {
 for-of文でも型推論が使用可能です:
 
 ```typescript
-const nums: integer[] = [1, 2, 3]
+const nums: integer[] = [1, 2, 3];
 for (const n of nums) {
   // n は integer と推論
-  log(n)
+  log(n);
 }
 ```
 
@@ -198,11 +197,11 @@ const [x: string, y: string] = ["foo", "bar"]
 オブジェクトのプロパティを分割して変数に代入できます:
 
 ```typescript
-const obj: { name: string, age: integer } = { name: "Alice", age: 30 }
-const { name, age } = obj // name="Alice", age=30
+const obj: { name: string; age: integer } = { name: "Alice", age: 30 };
+const { name, age } = obj; // name="Alice", age=30
 
 // 型注釈も可能（通常は不要です）
-const { name: string, age: integer } = obj
+const { name: string, age: integer } = obj;
 ```
 
 変数名はオブジェクトのキー名と一致する必要があります。キーのリネームはサポートしません。
@@ -210,7 +209,7 @@ const { name: string, age: integer } = obj
 ## 4. 関数
 
 - 宣言構文: `function add(a: integer, b: integer): integer { return a + b }`
-- 外部実装宣言: `extern function stringLength(str: string): integer`
+- 外部実装宣言: `extern function string_length(str: string): integer`
 - 関数宣言ではパラメータ型・戻り値型の注釈が必須です。関数リテラルは文脈（たとえば `map` / `filter` / `reduce` の期待型）から型を推論できる場合にのみ省略可能です。
 - `export` を付ければ外部公開できます（`export function`）。
 - 関数宣言は `function id<T>(value: T): T { ... }` のように型パラメータを持てます。型引数は呼び出し側で明示できず、引数から推論されます。
@@ -220,11 +219,11 @@ const { name: string, age: integer } = obj
 
 ```typescript
 function double(n: integer): integer {
-  return n * 2
+  return n * 2;
 }
 
-const nums: integer[] = [1, 2, 3]
-const doubled: integer[] = nums.map(double)
+const nums: integer[] = [1, 2, 3];
+const doubled: integer[] = nums.map(double);
 ```
 
 ### 4.1 関数リテラル
@@ -234,20 +233,20 @@ const doubled: integer[] = nums.map(double)
 関数リテラルの本体はモジュールスコープで型チェックされるため、ローカル変数を捕捉するクロージャとしては振る舞いません。たとえば `map` や `filter`、`reduce` などの組み込み関数に渡す `function` リテラルは引数の型と戻り値の型が既知なので、以下のように書いて型注釈を省略できます:
 
 ```typescript
-const nums: integer[] = [1, 2, 3, 4]
+const nums: integer[] = [1, 2, 3, 4];
 const doubled = map(nums, function (value) {
-  return value * 2
-})
+  return value * 2;
+});
 const evens = filter(nums, function (value) {
-  return value % 2 == 0
-})
+  return value % 2 == 0;
+});
 const total = reduce(
   nums,
   function (acc, value) {
-    return acc + value
+    return acc + value;
   },
   0,
-)
+);
 ```
 
 この例では `map` が `(value: integer) => U` を期待しているため、`value` は `integer` と推論され、戻り値も自動的に `integer` になります。`reduce` では累積値 `acc` の型として初期値 `0` の型 (`integer`) が知られているので、パラメータと戻り値の型がすべて推論されます。
@@ -258,12 +257,12 @@ const total = reduce(
 
 ```typescript
 // 通常の呼び出し
-addRoute(server, "/", handler)
-listen(server, ":8888")
+add_route(server, "/", handler);
+listen(server, ":8888");
 
 // メソッドスタイル呼び出し（等価）
-server.addRoute("/", handler)
-server.listen(":8888")
+server.add_route("/", handler);
+server.listen(":8888");
 ```
 
 これは純粋なシンタックスシュガーであり、`obj.func(a, b)` は `func(obj, a, b)` と同等に扱われます。
@@ -275,7 +274,7 @@ server.listen(":8888")
 一部の関数は型引数を受け取ります。型引数は `<...>` を関数名の直後に書き、通常の呼び出しと同様に引数リスト `(...)` を続けます。
 
 ```typescript
-const v = decode<Person>(jsonValue)
+const v = decode<Person>(jsonValue);
 ```
 
 - `func<T>(...)` の `T` を **型引数** と呼びます。
@@ -355,11 +354,11 @@ Rustの`match`に似たパターンマッチング式。`break`は不要です�
 ```typescript
 switch (expr) {
   case pattern1:
-    result1
+    result1;
   case pattern2:
-    result2
+    result2;
   default:
-    defaultResult
+    defaultResult;
 }
 ```
 
@@ -383,12 +382,12 @@ switch (expr) {
 例:
 
 ```typescript
-const opened = dbOpen("app.sqlite3") // undefined | error
+const opened = db_open("app.sqlite3"); // undefined | error
 if (opened as error) {
-  log("db open error: " + opened.message)
-  return
+  log("db open error: " + opened.message);
+  return;
 }
-log("db opened")
+log("db opened");
 ```
 
 ```typescript
@@ -419,13 +418,13 @@ switch (cmd) {
 // Union型の分岐
 const v: integer | string = 42
 const message = switch (v) {
-  case n as integer: "v is integer: " + toString(n)
+  case n as integer: "v is integer: " + to_string(n)
   case s as string: "v is string: " + s
 }
 
 // returnで関数から戻る
 const code = switch (formatted) {
-  case e as error: return responseHtml("format error: " + e.message)
+  case e as error: return response_html("format error: " + e.message)
   case formatted as string: formatted
 }
 ```
@@ -435,23 +434,23 @@ const code = switch (formatted) {
 バッククオート `` `...` `` でテンプレートリテラルを書けます。テンプレートリテラルは複数行文字列をそのまま記述でき、`${expr}` で式を埋め込めます。
 
 ```typescript
-const name = "Tuna"
-const count = 3
-const msg = `Hello, ${name}! count=${count}`
+const name = "Tuna";
+const count = 3;
+const msg = `Hello, ${name}! count=${count}`;
 
 const multi = `line1
-line2`
+line2`;
 ```
 
 - タグ付きテンプレート（`tag\`...\``）はサポートしません。
 - `${expr}` に埋め込めるのは `string` / `integer` / `number` / `boolean`（およびそれらのUnion）です。
-- 埋め込み式は `toString` 相当で文字列化されます。
+- 埋め込み式は `to_string` 相当で文字列化されます。
 
 ## 6. 文字列
 
 - UTF-8 です。
 - 連結は `string + string` のみです。
-- 数値は `toString` で明示的に変換します。
+- 数値は `to_string` で明示的に変換します。
 - テンプレートリテラル（`` `...${expr}...` ``）を使うと、複数行文字列と埋め込みが書けます。
 
 ## 7. 配列 / タプル
@@ -483,7 +482,7 @@ line2`
 - `for (const { prop } of arr)` / `for (const [first, second] of arr)`（オブジェクトやタプルの分割代入に対応）です。
 - `return` です。
 - 式文です。
-- 文末のセミコロンは使えません。` ; ` があるとコンパイルエラーになります。
+- 文末のセミコロンは使えません。`;` があるとコンパイルエラーになります。
 - 改行先頭の `(` は前行式への関数呼び出しとしては扱われません（グループ化された式として解釈されます）。
 - 改行先頭の `[` は前行式へのインデックスアクセスとしては扱われません（配列リテラルとして解釈されます）。
 
@@ -493,7 +492,7 @@ line2`
 - `import { log } from "prelude"` です。
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
-- `import { runSandbox, runFormatter } from "runtime"` です。
+- `import { run_sandbox, run_formatter } from "runtime"` です。
 - `import style from "./style.css"` のようにテキストファイルを `string` として読み込めます。
 - `export const name = ...` です。
 - 相対パスは `.ts` を省略可能です（テキストファイルの import は拡張子の省略不可）。
@@ -504,12 +503,12 @@ line2`
 
 ### 11.1 クエリキーワード
 
-| キーワード            | 用途                                           | 戻り値の型                           |
-| --------------------- | ---------------------------------------------- | ------------------------------------ |
-| `execute`             | 結果を返さないクエリ（INSERT, UPDATE, DELETE） | `undefined \| error`                     |
-| `fetch_one`           | 必ず1行を返すクエリ                            | `{ [column]: string } \| error`          |
-| `fetch_optional`      | 0または1行を返すクエリ                         | `{ [column]: string } \| null \| error`  |
-| `fetch` / `fetch_all` | 全行を返すクエリ                               | `{ [column]: string }[] \| error`        |
+| キーワード            | 用途                                           | 戻り値の型                              |
+| --------------------- | ---------------------------------------------- | --------------------------------------- |
+| `execute`             | 結果を返さないクエリ（INSERT, UPDATE, DELETE） | `undefined \| error`                    |
+| `fetch_one`           | 必ず1行を返すクエリ                            | `{ [column]: string } \| error`         |
+| `fetch_optional`      | 0または1行を返すクエリ                         | `{ [column]: string } \| null \| error` |
+| `fetch` / `fetch_all` | 全行を返すクエリ                               | `{ [column]: string }[] \| error`       |
 
 ### 11.2 構文
 
@@ -601,7 +600,7 @@ const { id, name } = rows[0]
 
 ### 11.5 データベースの永続化
 
-- SQLiteを内蔵しています。デフォルトではインメモリーデータベースが自動で開かれますが、`dbOpen`でデータベースファイルを開くこともできます。
+- SQLiteを内蔵しています。デフォルトではインメモリーデータベースが自動で開かれますが、`db_open`でデータベースファイルを開くこともできます。
 - 単一のSQLiteファイル接続しか提供していないため、並列プロセスや複数の接続から同時に書き込むケースではSQLiteのロックに注意する必要があります。
 - 複数のSQLデータベース接続は未対応
 
@@ -634,7 +633,7 @@ create_table todos {
 テーブル定義には以下の効果があります:
 
 1. **コンパイル時検証**: `execute`, `fetch_one`, `fetch_all` 等の SQL ブロック内で参照されるテーブル名とカラム名が `create_table` 定義と一致するか検証します
-2. **自動テーブル作成**: `dbOpen` プログラム起動時に、テーブルが存在しない場合は自動的に作成します
+2. **自動テーブル作成**: `db_open` プログラム起動時に、テーブルが存在しない場合は自動的に作成します
 3. **スキーマ検証**: プログラム起動時に、テーブルが存在する場合、カラム名と型が定義と一致するか検証します（不一致の場合はエラーになります）
 4. **行型エイリアスの自動生成**: テーブル名が行のオブジェクト型のエイリアスとして自動的に定義されます。各カラムは `string` 型として扱われます
 
@@ -743,15 +742,15 @@ const className = "highlight"
 
 #### 12.3.5 responseHtmlとの使用
 
-JSXは `responseHtml` 関数と組み合わせてHTMLレスポンスを返すのに最適です:
+JSXは `response_html` 関数と組み合わせてHTMLレスポンスを返すのに最適です:
 
 ```typescript
-import { responseHtml } from "http"
-import { createServer, addRoute, listen, type Request, type Response } from "http"
+import { response_html } from "http"
+import { create_server, add_route, listen, type Request, type Response } from "http"
 
 function handleRoot(req: Request): Response | error {
   const title = "Hello from TunaScript"
-  return responseHtml(
+  return response_html(
     <html>
       <head>
         <meta charset="utf-8" />
@@ -765,8 +764,8 @@ function handleRoot(req: Request): Response | error {
 }
 
 export function main(): void {
-  const server = createServer()
-  addRoute(server, "/", handleRoot)
+  const server = create_server()
+  add_route(server, "/", handleRoot)
   listen(server, ":8888")
 }
 ```
@@ -785,7 +784,7 @@ export function main(): void {
 
 - JSXの属性はプロパティオブジェクトのフィールドになります。属性値には任意の型の式を使えますが、対応するプロパティ型と一致する必要があります。対応するプロパティが明示的に定義されていない場合、`Map<string>` のようなインデックスシグネチャを通じて許可されていない限りコンパイルエラーになります。
 - `<CustomComponent>` のようにネストしたJSXがあると、それらは文字列として結合され、`children` プロパティに渡されます。コンポーネントのプロパティ型が `children`（またはインデックスで任意の名前）を受け取るように定義されていない場合は、ネストされたJSXはエラーになります。`children` プロパティがある場合、子要素がないときは空文字列が渡されるため常に安全に扱えます。
-- カスタムコンポーネントの関数が返す文字列は通常のJSXと同様に埋め込まれるため、`responseHtml` などで結果を合成できます。
+- カスタムコンポーネントの関数が返す文字列は通常のJSXと同様に埋め込まれるため、`response_html` などで結果を合成できます。
   なお、カスタムコンポーネントが返す `JSX` 文字列は周囲の JSX 子要素と同様にその場で連結されるため、通常のタグとまったく同じように出力されます。
 - プロパティが全く必要ないコンポーネント関数は引数を省略して定義できます。この場合、JSX 側で属性や子要素を与えるとコンパイルエラーになります。
 

@@ -429,7 +429,7 @@
   (global.get $const_number)
 )
 
-(func $prelude.toString (param $value anyref) (result anyref)
+(func $prelude.to_string (param $value anyref) (result anyref)
   (call $prelude._ensure_runtime)
 
   (if (ref.is_null (local.get $value))
@@ -489,7 +489,7 @@
 
 (func $prelude.log (param $value anyref)
   (local $text anyref)
-  (local.set $text (call $prelude.toString (local.get $value)))
+  (local.set $text (call $prelude.to_string (local.get $value)))
   (call $prelude._write_bytes
     (call $prelude._string_ptr (local.get $text))
     (call $prelude._string_bytelen (local.get $text)))
@@ -498,7 +498,7 @@
     (call $prelude._string_bytelen (global.get $const_newline)))
 )
 
-(func $prelude.stringLength (param $str anyref) (result i64)
+(func $prelude.string_length (param $str anyref) (result i64)
   (call $prelude.str_len (local.get $str))
 )
 

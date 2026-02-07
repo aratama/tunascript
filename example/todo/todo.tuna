@@ -1,7 +1,7 @@
-import { log, getArgs } from "prelude";
+import { log, get_args } from "prelude";
 import { stringify } from "json";
 import { length } from "array";
-import { dbOpen } from "sqlite";
+import { db_open } from "sqlite";
 
 // TODOリスト CLIツール
 // 使い方:
@@ -19,7 +19,7 @@ create_table todos {
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 }
 
-function listTodos(): void {
+function list_tofos(): void {
   const fetched = fetch_all {
     SELECT id, title, created_at FROM todos WHERE completed = 0 ORDER BY id
   };
@@ -40,7 +40,7 @@ function listTodos(): void {
   };
 }
 
-function listAllTodos(): void {
+function list_all_todos(): void {
   const fetched = fetch_all {
     SELECT id, title, completed, created_at FROM todos ORDER BY id
   };
@@ -62,16 +62,16 @@ function listAllTodos(): void {
   };
 }
 
-function openTodo(title: string): void {
+function open_todo(title: string): void {
   const inserted = execute {
     INSERT INTO todos (title) VALUES ({title})
   };
-  const insertError = switch (inserted) {
+  const insert_error = switch (inserted) {
     case e as error: e.message
     case ok as undefined: ""
   };
-  if (insertError != "") {
-    log("エラー: " + insertError);
+  if (insert_error != "") {
+    log("エラー: " + insert_error);
     return;
   }
   const fetched = fetch_one {
@@ -89,22 +89,22 @@ function openTodo(title: string): void {
   };
 }
 
-function closeTodo(id: string): void {
+function close_todo(id: string): void {
   const updated = execute {
     UPDATE todos SET completed = 1 WHERE id = {id}
   };
-  const updateError = switch (updated) {
+  const update_error = switch (updated) {
     case e as error: e.message
     case ok as undefined: ""
   };
-  if (updateError != "") {
-    log("エラー: " + updateError);
+  if (update_error != "") {
+    log("エラー: " + update_error);
     return;
   }
   log("Task #" + id + " completed!");
 }
 
-function showUsage(): void {
+function show_usage(): void {
   log("TODOリスト CLIツール");
   log("");
   log("使い方:");
@@ -116,16 +116,16 @@ function showUsage(): void {
   log("  todo version        - バージョンを表示");
 }
 
-function showVersion(): void {
+function show_version(): void {
   log("todo version 1.0.0");
 }
 
 export function main(): void {
-  const args = getArgs();
+  const args = get_args();
   const argc = args.length();
 
   // データベースを開く（テーブル定義に基づいて自動作成・検証）
-  const opened = dbOpen("todo.sqlite3");
+  const opened = db_open("todo.sqlite3");
   const openError = switch (opened) {
     case e as error: e.message
     case ok as undefined: ""
@@ -136,7 +136,7 @@ export function main(): void {
   }
 
   if (argc == 0) {
-    showUsage();
+    show_usage();
     return;
   }
 
@@ -160,13 +160,13 @@ export function main(): void {
           }
         };
         if(opt == "--all") {
-          listAllTodos();
+          list_all_todos();
         } else {
           log("エラー: 不明なオプション: " + opt);
-          showUsage();
+          show_usage();
         }
       } else {
-        listTodos();
+        list_tofos();
       }
     }
     case "open": {
@@ -178,10 +178,10 @@ export function main(): void {
             ""
           }
         };
-        openTodo(title);
+        open_todo(title);
       } else {
         log("エラー: タイトルを指定してください");
-        showUsage();
+        show_usage();
       }
     }
     case "close": {
@@ -193,19 +193,19 @@ export function main(): void {
             ""
           }
         };
-        closeTodo(id);
+        close_todo(id);
       } else {
         log("エラー: IDを指定してください");
-        showUsage();
+        show_usage();
       }
     }
     case "help":
-      showUsage()
+      show_usage()
     case "version":
-      showVersion()
+      show_version()
     default: {
       log("エラー: 不明なコマンド: " + cmd);
-      showUsage();
+      show_usage();
     }
   };
 

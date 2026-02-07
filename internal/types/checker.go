@@ -2363,9 +2363,9 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		ret := NewUnion([]*Type{target, resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "toString":
+	case "to_string":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "toString expects 1 arg")
+			c.errorf(call.Span, "to_string expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], nil)
@@ -2377,7 +2377,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 			c.ExprTypes[call] = String()
 			return String()
 		default:
-			c.errorf(call.Span, "toString expects primitive")
+			c.errorf(call.Span, "to_string expects primitive")
 			return nil
 		}
 	case "range":
@@ -2518,35 +2518,35 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = fnType.Ret
 		return fnType.Ret
-	case "dbOpen":
+	case "db_open":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "dbOpen expects 1 arg")
+			c.errorf(call.Span, "db_open expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "dbOpen expects string")
+			c.errorf(call.Span, "db_open expects string")
 			return nil
 		}
 		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "getArgs":
+	case "get_args":
 		if len(call.Args) != 0 {
-			c.errorf(call.Span, "getArgs expects 0 args")
+			c.errorf(call.Span, "get_args expects 0 args")
 			return nil
 		}
 		arr := NewArray(String())
 		c.ExprTypes[call] = arr
 		return arr
-	case "getEnv":
+	case "get_env":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "getEnv expects 1 arg")
+			c.errorf(call.Span, "get_env expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "getEnv expects string")
+			c.errorf(call.Span, "get_env expects string")
 			return nil
 		}
 		c.ExprTypes[call] = String()
@@ -2558,80 +2558,80 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		}
 		c.ExprTypes[call] = Void()
 		return Void()
-	case "runSandbox":
+	case "run_sandbox":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "runSandbox expects 1 arg")
+			c.errorf(call.Span, "run_sandbox expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "runSandbox expects string")
+			c.errorf(call.Span, "run_sandbox expects string")
 			return nil
 		}
 		c.ExprTypes[call] = String()
 		return String()
-	case "runFormatter":
+	case "run_formatter":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "runFormatter expects 1 arg")
+			c.errorf(call.Span, "run_formatter expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "runFormatter expects string")
+			c.errorf(call.Span, "run_formatter expects string")
 			return nil
 		}
 		ret := NewUnion([]*Type{String(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "readText":
+	case "read_text":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "readText expects 1 arg")
+			c.errorf(call.Span, "read_text expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "readText expects string")
+			c.errorf(call.Span, "read_text expects string")
 			return nil
 		}
 		ret := NewUnion([]*Type{String(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "writeText":
+	case "write_text":
 		if len(call.Args) != 2 {
-			c.errorf(call.Span, "writeText expects 2 args")
+			c.errorf(call.Span, "write_text expects 2 args")
 			return nil
 		}
 		pathType := c.checkExpr(env, call.Args[0], String())
 		contentType := c.checkExpr(env, call.Args[1], String())
 		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
-			c.errorf(call.Span, "writeText expects string, string")
+			c.errorf(call.Span, "write_text expects string, string")
 			return nil
 		}
 		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "appendText":
+	case "append_text":
 		if len(call.Args) != 2 {
-			c.errorf(call.Span, "appendText expects 2 args")
+			c.errorf(call.Span, "append_text expects 2 args")
 			return nil
 		}
 		pathType := c.checkExpr(env, call.Args[0], String())
 		contentType := c.checkExpr(env, call.Args[1], String())
 		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
-			c.errorf(call.Span, "appendText expects string, string")
+			c.errorf(call.Span, "append_text expects string, string")
 			return nil
 		}
 		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
 		c.ExprTypes[call] = ret
 		return ret
-	case "readDir":
+	case "read_dir":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "readDir expects 1 arg")
+			c.errorf(call.Span, "read_dir expects 1 arg")
 			return nil
 		}
 		argType := c.checkExpr(env, call.Args[0], String())
 		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "readDir expects string")
+			c.errorf(call.Span, "read_dir expects string")
 			return nil
 		}
 		ret := NewUnion([]*Type{NewArray(String()), resultErrorType()})
@@ -2673,18 +2673,18 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		c.ExprTypes[call] = ret
 		return ret
 	// HTTP Server builtins
-	case "createServer":
+	case "create_server":
 		if len(call.Args) != 0 {
-			c.errorf(call.Span, "createServer expects 0 args")
+			c.errorf(call.Span, "create_server expects 0 args")
 			return nil
 		}
 		// Return an opaque Server handle (represented as i32 object handle)
 		serverType := NewObject([]Prop{})
 		c.ExprTypes[call] = serverType
 		return serverType
-	case "addRoute":
+	case "add_route":
 		if len(call.Args) != 3 && len(call.Args) != 4 {
-			c.errorf(call.Span, "addRoute expects 3 args (server, path, handler) or 4 args (server, method, path, handler)")
+			c.errorf(call.Span, "add_route expects 3 args (server, path, handler) or 4 args (server, method, path, handler)")
 			return nil
 		}
 		// First arg: server handle (opaque object)
@@ -2698,13 +2698,13 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		if len(call.Args) == 4 {
 			methodType := c.checkExpr(env, call.Args[1], String())
 			if methodType == nil || methodType.Kind != KindString {
-				c.errorf(call.Span, "addRoute expects string as method")
+				c.errorf(call.Span, "add_route expects string as method")
 				return nil
 			}
 			if methodLit, ok := call.Args[1].(*ast.StringLit); ok {
 				method := strings.ToLower(strings.TrimSpace(methodLit.Value))
 				if method != "get" && method != "post" {
-					c.errorf(call.Span, `addRoute method must be "get" or "post"`)
+					c.errorf(call.Span, `add_route method must be "get" or "post"`)
 					return nil
 				}
 			}
@@ -2715,7 +2715,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		// Path arg: string
 		pathType := c.checkExpr(env, call.Args[pathArgIdx], String())
 		if pathType == nil || pathType.Kind != KindString {
-			c.errorf(call.Span, "addRoute expects string as path")
+			c.errorf(call.Span, "add_route expects string as path")
 			return nil
 		}
 		// Third arg: handler function
@@ -2732,7 +2732,7 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		)
 		handlerType := c.checkExpr(env, call.Args[handlerArgIdx], expectedHandler)
 		if handlerType == nil || handlerType.Kind != KindFunc || !handlerType.AssignableTo(expectedHandler) {
-			c.errorf(call.Span, "addRoute expects handler of type (req: Request) => (Response | error)")
+			c.errorf(call.Span, "add_route expects handler of type (req: Request) => (Response | error)")
 			return nil
 		}
 		c.ExprTypes[call] = Void()
@@ -2771,14 +2771,14 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		})
 		c.ExprTypes[call] = responseType
 		return responseType
-	case "responseHtml":
+	case "response_html":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "responseHtml expects 1 arg")
+			c.errorf(call.Span, "response_html expects 1 arg")
 			return nil
 		}
 		htmlType := c.checkExpr(env, call.Args[0], String())
 		if htmlType == nil || htmlType.Kind != KindString {
-			c.errorf(call.Span, "responseHtml expects string")
+			c.errorf(call.Span, "response_html expects string")
 			return nil
 		}
 		// Return response object
@@ -2820,14 +2820,14 @@ func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, ex
 		})
 		c.ExprTypes[call] = responseType
 		return responseType
-	case "responseRedirect":
+	case "response_redirect":
 		if len(call.Args) != 1 {
-			c.errorf(call.Span, "responseRedirect expects 1 arg")
+			c.errorf(call.Span, "response_redirect expects 1 arg")
 			return nil
 		}
 		urlType := c.checkExpr(env, call.Args[0], String())
 		if urlType == nil || urlType.Kind != KindString {
-			c.errorf(call.Span, "responseRedirect expects string")
+			c.errorf(call.Span, "response_redirect expects string")
 			return nil
 		}
 		// Return response object with redirect info
@@ -3800,8 +3800,8 @@ func (c *Checker) extractSelectColumns(query string) []string {
 
 func isPreludeName(name string) bool {
 	switch name {
-	case "log", "toString", "getArgs", "sqlQuery",
-		"getEnv", "gc", "responseText", "getPath", "getMethod":
+	case "log", "to_string", "get_args", "sqlQuery",
+		"get_env", "gc", "responseText", "getPath", "getMethod":
 		return true
 	default:
 		return false
@@ -3828,7 +3828,7 @@ func isArrayName(name string) bool {
 
 func isRuntimeName(name string) bool {
 	switch name {
-	case "runSandbox", "runFormatter":
+	case "run_sandbox", "run_formatter":
 		return true
 	default:
 		return false
@@ -3837,7 +3837,7 @@ func isRuntimeName(name string) bool {
 
 func isFileName(name string) bool {
 	switch name {
-	case "readText", "writeText", "appendText", "readDir", "exists":
+	case "read_text", "write_text", "append_text", "read_dir", "exists":
 		return true
 	default:
 		return false
@@ -3846,7 +3846,7 @@ func isFileName(name string) bool {
 
 func isHTTPName(name string) bool {
 	switch name {
-	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":
+	case "create_server", "listen", "add_route", "response_html", "responseJson", "response_redirect":
 		return true
 	default:
 		return false
@@ -3855,7 +3855,7 @@ func isHTTPName(name string) bool {
 
 func isSQLiteName(name string) bool {
 	switch name {
-	case "dbOpen":
+	case "db_open":
 		return true
 	default:
 		return false

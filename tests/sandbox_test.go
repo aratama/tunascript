@@ -19,17 +19,17 @@ func TestSandboxBuffersLogAndHTML(t *testing.T) {
 
 	src := `
 import { log } from "prelude"
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response } from "http"
 
 function handleRoot(req: Request): Response {
   log("from handler")
-  return responseHtml(<div>Hello Sandbox</div>)
+  return response_html(<div>Hello Sandbox</div>)
 }
 
 export function main(): void {
-  const server = createServer()
+  const server = create_server()
   log("before listen")
-  addRoute(server, "/", handleRoot)
+  add_route(server, "/", handleRoot)
   listen(server, ":8080")
 }
 `
@@ -51,16 +51,16 @@ func TestSandboxEscapesJSXAttributeValue(t *testing.T) {
 	}
 
 	src := `
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response } from "http"
 
 function handleRoot(req: Request): Response {
   const inner = "<div class=\"x\">Hello</div>"
-  return responseHtml(<iframe srcdoc={inner}></iframe>)
+  return response_html(<iframe srcdoc={inner}></iframe>)
 }
 
 export function main(): void {
-  const server = createServer()
-  addRoute(server, "/", handleRoot)
+  const server = create_server()
+  add_route(server, "/", handleRoot)
   listen(server, ":8080")
 }
 `
@@ -79,15 +79,15 @@ func TestSandboxRejectsDuplicateRootRoute(t *testing.T) {
 	}
 
 	src := `
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response } from "http"
 
-function h1(req: Request): Response { return responseHtml(<p>a</p>) }
-function h2(req: Request): Response { return responseHtml(<p>b</p>) }
+function h1(req: Request): Response { return response_html(<p>a</p>) }
+function h2(req: Request): Response { return response_html(<p>b</p>) }
 
 export function main(): void {
-  const server = createServer()
-  addRoute(server, "/", h1)
-  addRoute(server, "/", h2)
+  const server = create_server()
+  add_route(server, "/", h1)
+  add_route(server, "/", h2)
   listen(server, ":8080")
 }
 `
@@ -95,7 +95,7 @@ export function main(): void {
 	if result.ExitCode != 1 {
 		t.Fatalf("expected exitCode=1, got %d", result.ExitCode)
 	}
-	if !strings.Contains(result.Error, `addRoute(server, "/", handler)`) {
+	if !strings.Contains(result.Error, `add_route(server, "/", handler)`) {
 		t.Fatalf("unexpected error: %q", result.Error)
 	}
 }
@@ -107,22 +107,22 @@ func TestSandboxAddRouteMethodFiltering(t *testing.T) {
 
 	src := `
 import { log } from "prelude"
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response } from "http"
 
 function getRoot(req: Request): Response {
   log("get-route")
-  return responseHtml(<p>GET</p>)
+  return response_html(<p>GET</p>)
 }
 
 function postRoot(req: Request): Response {
   log("post-route")
-  return responseHtml(<p>POST</p>)
+  return response_html(<p>POST</p>)
 }
 
 export function main(): void {
-  const server = createServer()
-  addRoute(server, "get", "/", getRoot)
-  addRoute(server, "post", "/", postRoot)
+  const server = create_server()
+  add_route(server, "get", "/", getRoot)
+  add_route(server, "post", "/", postRoot)
   listen(server, ":8080")
 }
 `
@@ -144,16 +144,16 @@ func TestSandboxRejectsInvalidAddRouteMethod(t *testing.T) {
 	}
 
 	src := `
-import { createServer, addRoute, listen, responseHtml, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response } from "http"
 
 function h(req: Request): Response {
-  return responseHtml(<p>ok</p>)
+  return response_html(<p>ok</p>)
 }
 
 export function main(): void {
-  const server = createServer()
+  const server = create_server()
   const method = "put"
-  addRoute(server, method, "/", h)
+  add_route(server, method, "/", h)
   listen(server, ":8080")
 }
 `
@@ -161,7 +161,7 @@ export function main(): void {
 	if result.ExitCode != 1 {
 		t.Fatalf("expected exitCode=1, got %d", result.ExitCode)
 	}
-	if !strings.Contains(result.Error, "unsupported HTTP method for addRoute") {
+	if !strings.Contains(result.Error, "unsupported HTTP method for add_route") {
 		t.Fatalf("unexpected error: %q", result.Error)
 	}
 }
@@ -174,10 +174,10 @@ func TestSandboxDbOpenNoop(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "sandbox.sqlite3")
 	src := fmt.Sprintf(`
-import { dbOpen } from "sqlite"
+import { db_open } from "sqlite"
 
 export function main(): void {
-  dbOpen("%s")
+  db_open("%s")
 }
 `, dbPath)
 	result := compileAndRunSandbox(t, src, nil)
@@ -195,8 +195,8 @@ func TestRunSandboxBuiltin(t *testing.T) {
 	}
 
 	src := `
-import { runSandbox } from "runtime"
-import { toString, log } from "prelude"
+import { run_sandbox } from "runtime"
+import { to_string, log } from "prelude"
 import { parse, decode } from "json"
 
 type RunResult = {
@@ -208,7 +208,7 @@ type RunResult = {
 
 export function main(): void {
   const child = "import { log } from \"prelude\"\nexport function main(): void { log(\"child-ok\") }\n"
-  const raw = runSandbox(child)
+  const raw = run_sandbox(child)
   const parsed = parse(raw)
   const decoded: RunResult | error = switch (parsed) {
     case value as json: decode<RunResult>(value)
@@ -216,7 +216,7 @@ export function main(): void {
   }
   switch (decoded) {
     case ok as RunResult: {
-      log(toString(ok.exitCode))
+      log(to_string(ok.exitCode))
       log(ok.stdout)
     }
     case err as { type: "error", message: string }: {
@@ -241,11 +241,11 @@ func TestRunFormatterBuiltin(t *testing.T) {
 	}
 
 	src := `
-import { runFormatter } from "runtime"
+import { run_formatter } from "runtime"
 import { log } from "prelude"
 
 export function main(): void {
-  const ok: string | error = runFormatter("export function main(): void { const obj = { foo: 1, \"bar\": 2 } }")
+  const ok: string | error = run_formatter("export function main(): void { const obj = { foo: 1, \"bar\": 2 } }")
   switch (ok) {
     case formatted as string: {
       log(formatted)
@@ -255,7 +255,7 @@ export function main(): void {
     }
   }
 
-  const ng: string | error = runFormatter("export function main(: void {}")
+  const ng: string | error = run_formatter("export function main(: void {}")
   switch (ng) {
     case formatted as string: {
       log("unexpected formatter success: " + formatted)
@@ -285,13 +285,13 @@ func TestRunFormatterOutputCompiles(t *testing.T) {
 	}
 
 	src := `
-import { runFormatter } from "runtime"
+import { run_formatter } from "runtime"
 import { log } from "prelude"
 import { stringify } from "json"
 
 export function main(): void {
   const input = "import { log } from \"prelude\"\nexport function main(): void {\n  log(\"ok\")\n}\n"
-  const result: string | error = runFormatter(input)
+  const result: string | error = run_formatter(input)
   switch (result) {
     case formatted as string:
       log(stringify(formatted))
@@ -303,7 +303,7 @@ export function main(): void {
 
 	out := compileAndRunNormal(t, src, nil)
 	if strings.Contains(out, "formatter-error: ") {
-		t.Fatalf("runFormatter failed: %q", out)
+		t.Fatalf("run_formatter failed: %q", out)
 	}
 
 	line := strings.TrimSpace(out)

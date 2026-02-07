@@ -125,7 +125,7 @@ func (g *Generator) collectStrings() {
 	// Built-in error handling relies on these strings even if user code doesn't reference them directly.
 	g.internString("type")
 	g.internString("error")
-	// addRoute のメソッド省略時に使うワイルドカード。
+	// add_route のメソッド省略時に使うワイルドカード。
 	g.internString("*")
 	// Generate and intern table definitions JSON if any tables exist
 	if len(g.tableDefs) > 0 {
@@ -671,19 +671,19 @@ func (g *Generator) collectFunctionNamesExpr(expr ast.Expr) {
 	}
 	switch e := expr.(type) {
 	case *ast.CallExpr:
-		// Check if this is an addRoute call (regular or method-style)
+		// Check if this is an add_route call (regular or method-style)
 		var isAddRoute bool
 		var handlerArg ast.Expr
 
-		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "addRoute" {
+		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "add_route" {
 			isAddRoute = true
 			if len(e.Args) >= 4 {
 				handlerArg = e.Args[3]
 			} else if len(e.Args) >= 3 {
 				handlerArg = e.Args[2]
 			}
-		} else if member, ok := e.Callee.(*ast.MemberExpr); ok && member.Property == "addRoute" {
-			// Method-style: server.addRoute("/", handler)
+		} else if member, ok := e.Callee.(*ast.MemberExpr); ok && member.Property == "add_route" {
+			// Method-style: server.add_route("/", handler)
 			isAddRoute = true
 			if len(e.Args) >= 3 {
 				handlerArg = e.Args[2] // Handler is third arg when method is provided
@@ -2128,7 +2128,7 @@ func (f *funcEmitter) emitTemplatePartToString(t *types.Type) {
 	if t.Kind != types.KindUnion {
 		f.emitBoxIfPrimitive(t)
 	}
-	f.emit("(call $prelude.toString)")
+	f.emit("(call $prelude.to_string)")
 }
 
 func (f *funcEmitter) emitIfExpr(e *ast.IfExpr, t *types.Type) {
@@ -2811,11 +2811,11 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		}
 		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(schemaStr)))
 		f.emit(fmt.Sprintf("(call $%s.decode)", module))
-	case "toString":
+	case "to_string":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emitBoxIfPrimitive(f.g.checker.ExprTypes[arg])
-		f.emit(fmt.Sprintf("(call $%s.toString)", module))
+		f.emit(fmt.Sprintf("(call $%s.to_string)", module))
 	case "range":
 		start := call.Args[0]
 		end := call.Args[1]
@@ -2830,41 +2830,41 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitFilter(call, t)
 	case "reduce":
 		f.emitReduce(call, t)
-	case "dbOpen":
+	case "db_open":
 		f.emitDbOpen(call, module)
-	case "getArgs":
+	case "get_args":
 		f.emit(fmt.Sprintf("(call $%s.get_args)", module))
-	case "getEnv":
+	case "get_env":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.get_env)", module))
 	case "gc":
 		f.emit(fmt.Sprintf("(call $%s.gc)", module))
-	case "runSandbox":
+	case "run_sandbox":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.run_sandbox)", module))
-	case "runFormatter":
+	case "run_formatter":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.run_formatter)", module))
-	case "readText":
+	case "read_text":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.read_text)", module))
-	case "writeText":
+	case "write_text":
 		pathArg := call.Args[0]
 		contentArg := call.Args[1]
 		f.emitExpr(pathArg, f.g.checker.ExprTypes[pathArg])
 		f.emitExpr(contentArg, f.g.checker.ExprTypes[contentArg])
 		f.emit(fmt.Sprintf("(call $%s.write_text)", module))
-	case "appendText":
+	case "append_text":
 		pathArg := call.Args[0]
 		contentArg := call.Args[1]
 		f.emitExpr(pathArg, f.g.checker.ExprTypes[pathArg])
 		f.emitExpr(contentArg, f.g.checker.ExprTypes[contentArg])
 		f.emit(fmt.Sprintf("(call $%s.append_text)", module))
-	case "readDir":
+	case "read_dir":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.read_dir)", module))
@@ -2874,19 +2874,19 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emit(fmt.Sprintf("(call $%s.exists)", module))
 	case "sqlQuery":
 		f.emitSqlQuery(call)
-	case "createServer":
+	case "create_server":
 		f.emit(fmt.Sprintf("(call $%s.http_create_server)", module))
 	case "listen":
 		f.emitHttpListen(call, module)
-	case "addRoute":
+	case "add_route":
 		f.emitHttpAddRoute(call, module)
 	case "responseText":
 		f.emitHttpResponseText(call, module)
-	case "responseHtml":
+	case "response_html":
 		f.emitHttpResponseHtml(call, module)
 	case "responseJson":
 		f.emitHttpResponseJson(call, module)
-	case "responseRedirect":
+	case "response_redirect":
 		f.emitHttpResponseRedirect(call, module)
 	case "getPath":
 		f.emitHttpGetPath(call, module)
@@ -3859,21 +3859,21 @@ func elemType(t *types.Type) *types.Type {
 
 func builtinModule(name string) (string, bool) {
 	switch name {
-	case "log", "toString", "getArgs", "sqlQuery",
+	case "log", "to_string", "get_args", "sqlQuery",
 		"gc",
-		"getEnv", "responseText", "getPath", "getMethod":
+		"get_env", "responseText", "getPath", "getMethod":
 		return "prelude", true
 	case "stringify", "parse", "decode":
 		return "json", true
 	case "range", "length", "map", "filter", "reduce":
 		return "array", true
-	case "runSandbox", "runFormatter":
+	case "run_sandbox", "run_formatter":
 		return "runtime", true
-	case "readText", "writeText", "appendText", "readDir", "exists":
+	case "read_text", "write_text", "append_text", "read_dir", "exists":
 		return "file", true
-	case "dbOpen":
+	case "db_open":
 		return "sqlite", true
-	case "createServer", "listen", "addRoute", "responseHtml", "responseJson", "responseRedirect":
+	case "create_server", "listen", "add_route", "response_html", "responseJson", "response_redirect":
 		return "http", true
 	default:
 		return "", false
@@ -3946,7 +3946,7 @@ func (f *funcEmitter) emitJSXElement(e *ast.JSXElement) {
 			f.emitExpr(attr.Value, attrType)
 			// Convert to string if not already
 			if attrType != nil && attrType.Kind != types.KindString {
-				f.emit("(call $prelude.toString)")
+				f.emit("(call $prelude.to_string)")
 			}
 			f.emit("(call $prelude.escape_html_attr)")
 			f.emit("(call $prelude.str_concat)")
@@ -4051,7 +4051,7 @@ func (f *funcEmitter) emitJSXChild(child *ast.JSXChild) {
 				f.emit("(call $prelude.arr_join)")
 			} else if exprType != nil && exprType.Kind != types.KindString {
 				// Convert to string if not already
-				f.emit("(call $prelude.toString)")
+				f.emit("(call $prelude.to_string)")
 			}
 		} else {
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal("")))

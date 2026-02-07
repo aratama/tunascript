@@ -1,7 +1,7 @@
-import { log, getArgs, getEnv } from "prelude"
+import { log, get_args, get_env } from "prelude"
 import { length, map } from "array"
-import { createServer, addRoute, listen, responseHtml, responseJson, responseRedirect, type JSX, type Request, type Response } from "http"
-import { dbOpen } from "sqlite"
+import { create_server, add_route, listen, response_html, responseJson, response_redirect, type JSX, type Request, type Response } from "http"
+import { db_open } from "sqlite"
 import { Styles } from "./style.tuna"
 
 create_table todos {
@@ -37,8 +37,8 @@ function TodoList(): JSX {
   }
 }
 
-function handleRoot(req: Request): Response {
-  return responseHtml(
+function handle_root(req: Request): Response {
+  return response_html(
     <html>
       <head>
         <meta charset="utf-8" />
@@ -59,30 +59,30 @@ function handleRoot(req: Request): Response {
   )
 }
 
-function handleAdd(req: Request): Response {
+function handle_add(req: Request): Response {
   const { title } = req.form
   if (title != "") {
     const inserted = execute {
       INSERT INTO todos (title) VALUES ({title})
     }
-    const insertError = switch (inserted) {
+    const insert_error = switch (inserted) {
       case err as error: err.message
       case ok as undefined: ""
     }
-    if (insertError != "") {
-      return responseHtml(<p>DB error: {insertError}</p>)
+    if (insert_error != "") {
+      return response_html(<p>DB error: {insert_error}</p>)
     }
   }
-  return responseRedirect("/")
+  return response_redirect("/")
 }
 
-function handleToggle(req: Request): Response {
+function handle_toggle(req: Request): Response {
   const { id } = req.form
 	  const fetched = fetch_one {
 	    SELECT completed FROM todos WHERE id = {id}
 	  }
 	  return switch (fetched) {
-	    case err as error: responseHtml(<p>DB error: {err.message}</p>)
+	    case err as error: response_html(<p>DB error: {err.message}</p>)
 	    case row as { completed: string }: {
 	      const completed = row.completed
 	      const newCompleted = if (completed == "1") { 0 } else { 1 }
@@ -90,8 +90,8 @@ function handleToggle(req: Request): Response {
 	        UPDATE todos SET completed = {newCompleted} WHERE id = {id}
 	      }
 	      switch (updated) {
-	        case err as error: responseHtml(<p>DB error: {err.message}</p>)
-	        case ok as undefined: responseRedirect("/")
+	        case err as error: response_html(<p>DB error: {err.message}</p>)
+	        case ok as undefined: response_redirect("/")
 	      }
 	    }
 	  }
@@ -99,14 +99,14 @@ function handleToggle(req: Request): Response {
 
 export function main(): void {
 	  // Open or create the database
-	  const args = getArgs()
+	  const args = get_args()
 	  const dbPath = if (args.length() > 0) {
     switch (args[0]) {
       case path as string: path
       case e as error: ":memory:"
     }
   } else { ":memory:" }
-	  const opened = dbOpen(dbPath)
+	  const opened = db_open(dbPath)
 	  const openError = switch (opened) {
 	    case err as error: err.message
 	    case ok as undefined: ""
@@ -117,11 +117,11 @@ export function main(): void {
 	  }
 
   // Create server and define routes
-  const server = createServer()
-  server.addRoute("/", handleRoot)
-	  server.addRoute("/add", handleAdd)
-	  server.addRoute("/toggle", handleToggle)
-	  const portEnv = getEnv("PORT")
+  const server = create_server()
+  server.add_route("/", handle_root)
+	  server.add_route("/add", handle_add)
+	  server.add_route("/toggle", handle_toggle)
+	  const portEnv = get_env("PORT")
 	  const port = if (portEnv != "") { portEnv } else { "8888" }
 	  log("TODO App starting on http://localhost:" + port)
 	  server.listen(":" + port)

@@ -336,7 +336,7 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("stringLength", func(handle *Value) int64 {
+	if err := define("string_length", func(handle *Value) int64 {
 		return must(r.strLen(handle))
 	}); err != nil {
 		return err
@@ -467,8 +467,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("toString", func(handle *Value) *Value {
-		return must(r.toString(handle))
+	if err := define("to_string", func(handle *Value) *Value {
+		return must(r.to_string(handle))
 	}); err != nil {
 		return err
 	}
@@ -493,12 +493,12 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 		return err
 	}
 	if err := define("get_args", func() *Value {
-		return must(r.getArgs())
+		return must(r.get_args())
 	}); err != nil {
 		return err
 	}
 	if err := define("get_env", func(nameHandle *Value) *Value {
-		return must(r.getEnv(nameHandle))
+		return must(r.get_env(nameHandle))
 	}); err != nil {
 		return err
 	}
@@ -508,12 +508,12 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 		return err
 	}
 	if err := defineRuntime("run_sandbox", func(sourceHandle *Value) *Value {
-		return must(r.runSandbox(sourceHandle))
+		return must(r.run_sandbox(sourceHandle))
 	}); err != nil {
 		return err
 	}
 	if err := defineRuntime("run_formatter", func(sourceHandle *Value) *Value {
-		value, err := r.runFormatter(sourceHandle)
+		value, err := r.run_formatter(sourceHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
@@ -719,13 +719,13 @@ func (r *Runtime) strFromUTF8(caller *wasmtime.Caller, ptr int32, length int32) 
 	return r.newValue(Value{Kind: KindString, Str: string(data[start:end])}), nil
 }
 
-func (r *Runtime) getEnv(nameHandle *Value) (*Value, error) {
+func (r *Runtime) get_env(nameHandle *Value) (*Value, error) {
 	valueHandle, err := r.getValue(nameHandle)
 	if err != nil {
 		return nil, err
 	}
 	if valueHandle.Kind != KindString {
-		return nil, errors.New("getEnv expects string")
+		return nil, errors.New("get_env expects string")
 	}
 	if r.sandbox {
 		return r.newValue(Value{Kind: KindString, Str: ""}), nil
@@ -736,21 +736,21 @@ func (r *Runtime) getEnv(nameHandle *Value) (*Value, error) {
 
 func (r *Runtime) fileReadText(pathHandle *Value) (*Value, error) {
 	if r.sandbox {
-		return nil, errors.New("readText is not available in sandbox mode")
+		return nil, errors.New("read_text is not available in sandbox mode")
 	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return nil, err
 	}
 	if pathValue.Kind != KindString {
-		return nil, errors.New("readText expects string")
+		return nil, errors.New("read_text expects string")
 	}
 	data, err := os.ReadFile(pathValue.Str)
 	if err != nil {
 		return nil, err
 	}
 	if !utf8.Valid(data) {
-		return nil, errors.New("readText expects UTF-8 text")
+		return nil, errors.New("read_text expects UTF-8 text")
 	}
 	text := string(data)
 	text = strings.TrimPrefix(text, "\uFEFF")
@@ -759,48 +759,48 @@ func (r *Runtime) fileReadText(pathHandle *Value) (*Value, error) {
 
 func (r *Runtime) fileWriteText(pathHandle *Value, contentHandle *Value) error {
 	if r.sandbox {
-		return errors.New("writeText is not available in sandbox mode")
+		return errors.New("write_text is not available in sandbox mode")
 	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return err
 	}
 	if pathValue.Kind != KindString {
-		return errors.New("writeText expects string path")
+		return errors.New("write_text expects string path")
 	}
 	contentValue, err := r.getValue(contentHandle)
 	if err != nil {
 		return err
 	}
 	if contentValue.Kind != KindString {
-		return errors.New("writeText expects string content")
+		return errors.New("write_text expects string content")
 	}
 	if !utf8.ValidString(contentValue.Str) {
-		return errors.New("writeText expects UTF-8 text")
+		return errors.New("write_text expects UTF-8 text")
 	}
 	return os.WriteFile(pathValue.Str, []byte(contentValue.Str), 0644)
 }
 
 func (r *Runtime) fileAppendText(pathHandle *Value, contentHandle *Value) error {
 	if r.sandbox {
-		return errors.New("appendText is not available in sandbox mode")
+		return errors.New("append_text is not available in sandbox mode")
 	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return err
 	}
 	if pathValue.Kind != KindString {
-		return errors.New("appendText expects string path")
+		return errors.New("append_text expects string path")
 	}
 	contentValue, err := r.getValue(contentHandle)
 	if err != nil {
 		return err
 	}
 	if contentValue.Kind != KindString {
-		return errors.New("appendText expects string content")
+		return errors.New("append_text expects string content")
 	}
 	if !utf8.ValidString(contentValue.Str) {
-		return errors.New("appendText expects UTF-8 text")
+		return errors.New("append_text expects UTF-8 text")
 	}
 	f, err := os.OpenFile(pathValue.Str, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
@@ -813,14 +813,14 @@ func (r *Runtime) fileAppendText(pathHandle *Value, contentHandle *Value) error 
 
 func (r *Runtime) fileReadDir(pathHandle *Value) (*Value, error) {
 	if r.sandbox {
-		return nil, errors.New("readDir is not available in sandbox mode")
+		return nil, errors.New("read_dir is not available in sandbox mode")
 	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return nil, err
 	}
 	if pathValue.Kind != KindString {
-		return nil, errors.New("readDir expects string")
+		return nil, errors.New("read_dir expects string")
 	}
 	entries, err := os.ReadDir(pathValue.Str)
 	if err != nil {
@@ -852,16 +852,16 @@ func (r *Runtime) fileExists(pathHandle *Value) int32 {
 	return 0
 }
 
-func (r *Runtime) runSandbox(sourceHandle *Value) (*Value, error) {
+func (r *Runtime) run_sandbox(sourceHandle *Value) (*Value, error) {
 	sourceValue, err := r.getValue(sourceHandle)
 	if err != nil {
 		return nil, err
 	}
 	if sourceValue.Kind != KindString {
-		return nil, errors.New("runSandbox expects string")
+		return nil, errors.New("run_sandbox expects string")
 	}
 	if r.sandbox {
-		return nil, errors.New("runSandbox is not available in sandbox mode")
+		return nil, errors.New("run_sandbox is not available in sandbox mode")
 	}
 
 	result := SandboxResult{}
@@ -893,13 +893,13 @@ func (r *Runtime) runSandbox(sourceHandle *Value) (*Value, error) {
 	return r.sandboxResultString(result)
 }
 
-func (r *Runtime) runFormatter(sourceHandle *Value) (*Value, error) {
+func (r *Runtime) run_formatter(sourceHandle *Value) (*Value, error) {
 	sourceValue, err := r.getValue(sourceHandle)
 	if err != nil {
 		return nil, err
 	}
 	if sourceValue.Kind != KindString {
-		return nil, errors.New("runFormatter expects string")
+		return nil, errors.New("run_formatter expects string")
 	}
 	formatted, err := formatter.New().Format("<runtime>", sourceValue.Str)
 	if err != nil {
@@ -1327,7 +1327,7 @@ func (r *Runtime) stringify(handle *Value) (*Value, error) {
 	return r.newValue(Value{Kind: KindString, Str: text}), nil
 }
 
-func (r *Runtime) toString(handle *Value) (*Value, error) {
+func (r *Runtime) to_string(handle *Value) (*Value, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
 		return nil, err
@@ -1348,7 +1348,7 @@ func (r *Runtime) toString(handle *Value) (*Value, error) {
 		}
 		return r.newValue(Value{Kind: KindString, Str: "false"}), nil
 	default:
-		return nil, errors.New("toString expects primitive")
+		return nil, errors.New("to_string expects primitive")
 	}
 }
 
@@ -2131,8 +2131,8 @@ func (r *Runtime) createTable(tableDef TableDef) error {
 	return nil
 }
 
-// getArgs returns the command line arguments as a string array
-func (r *Runtime) getArgs() (*Value, error) {
+// get_args returns the command line arguments as a string array
+func (r *Runtime) get_args() (*Value, error) {
 	argHandles := make([]*Value, len(r.args))
 	for i, arg := range r.args {
 		argHandles[i] = r.newValue(Value{Kind: KindString, Str: arg})
@@ -2581,7 +2581,7 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle *Value, met
 
 	if r.sandbox && path == "/" && (routeMethod == routeMethodAny || routeMethod == http.MethodGet) {
 		if hasRootRouteForSandbox(server.routes) {
-			return errors.New(`addRoute(server, "/", handler) may only be called once in sandbox mode`)
+			return errors.New(`add_route(server, "/", handler) may only be called once in sandbox mode`)
 		}
 	}
 
@@ -2750,7 +2750,7 @@ func normalizeRouteMethod(method string) (string, error) {
 	case "GET", "POST":
 		return upper, nil
 	default:
-		return "", fmt.Errorf("unsupported HTTP method for addRoute: %s (expected get or post)", method)
+		return "", fmt.Errorf("unsupported HTTP method for add_route: %s (expected get or post)", method)
 	}
 }
 

@@ -24,7 +24,7 @@
 // expect: 89
 // expect: 97
 
-import { log, toString } from "prelude"
+import { log, to_string } from "prelude"
 import { range } from "array"
 
 function gcd(a: integer, b: integer): integer {
@@ -52,7 +52,7 @@ export function main(): void {
   const nums = range(2, 100)
   for (const n of nums) {
     if (isPrime(n, nums)) {
-      log(toString(n))
+      log(to_string(n))
     }
   }
 }

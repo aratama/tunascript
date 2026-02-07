@@ -1,0 +1,4 @@
+//   - 指定したSQLiteファイルを直接開きます。ファイルが存在しない場合は新規作成され、書き込みはそのままファイルに反映されます。`create_table` 定義がある場合、テーブルの自動作成と検証が行われます。
+//   - この関数は `import { db_open } from "sqlite";` でインポートしてください。
+//   - `tuna run --sandbox` では no-op になり、常にインメモリDB (`:memory:`) が使われます。
+export extern function db_open(filename: string): undefined | error

@@ -1,10 +1,10 @@
-import { log, toString, getArgs, getEnv, fallback } from "prelude"
+import { log, to_string, get_args, get_env, fallback } from "prelude"
 import { parse, decode } from "json"
 import { length } from "array"
-import { runSandbox, runFormatter } from "runtime"
-import { createServer, addRoute, listen, responseHtml, responseRedirect, type JSX, type Request, type Response } from "http"
-import { dbOpen } from "sqlite"
-import { readText } from "file"
+import { run_sandbox, run_formatter } from "runtime"
+import { create_server, add_route, listen, response_html, response_redirect, type JSX, type Request, type Response } from "http"
+import { db_open } from "sqlite"
+import { read_text } from "file"
 import style from "./style.css"
 import PLAYGROUND_EDITOR_JS from "./editor_script.js"
 import TUNASCRIPT_LEZER_GRAMMAR from "./tunascript.grammar"
@@ -24,9 +24,9 @@ create_table playground_sources {
 
 const MAX_SOURCE_SIZE_BYTES: integer = 10240
 const DEFAULT_SOURCE_PATH: string = "example/playground/default_source.tuna"
-const DEFAULT_SOURCE: string = readText(DEFAULT_SOURCE_PATH).fallback("")
+const DEFAULT_SOURCE: string = read_text(DEFAULT_SOURCE_PATH).fallback("")
 
-function Layout(source: string, stdout: string, html: string, error: string, exitCode: string, runPath: string, pagePath: string): JSX {
+function layout(source: string, stdout: string, html: string, error: string, exitCode: string, run_path: string, page_path: string): JSX {
   return (
     <html>
       <head>
@@ -39,7 +39,7 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
       <body>
         <main class="layout">
           <section class="panel">
-            <form method="POST" action={runPath} class="editor-form">
+            <form method="POST" action={run_path} class="editor-form">
               <header class="bar">
                 <span class="title">TunaScript Playground</span>
                 <span class="actions">
@@ -73,7 +73,7 @@ function Layout(source: string, stdout: string, html: string, error: string, exi
   )
 }
 
-function validateSourceSize(source: string): string {
+function validate_source_size(source: string): string {
   const checked = fetch_one {
     SELECT length(hex({source})) / 2 > {MAX_SOURCE_SIZE_BYTES} AS too_large
   }
@@ -83,20 +83,20 @@ function validateSourceSize(source: string): string {
   }
 }
 
-function handleRoot(req: Request): Response {
-  return runSource(DEFAULT_SOURCE, "/run", "/")
+function handle_root(req: Request): Response {
+  return run_source(DEFAULT_SOURCE, "/run", "/")
 }
 
-function handleGrammar(req: Request): Response {
-  return responseHtml(TUNASCRIPT_LEZER_GRAMMAR)
+function handle_grammar(req: Request): Response {
+  return response_html(TUNASCRIPT_LEZER_GRAMMAR)
 }
 
-function handleSnippet(req: Request): Response {
+function handle_snippet(req: Request): Response {
   const id = req.query.id
-  const pagePath = "/" + id
-  const runPath = "/run/" + id
+  const page_path = "/" + id
+  const run_path = "/run/" + id
   if (id == "") {
-    return responseHtml(Layout(DEFAULT_SOURCE, "", "", "invalid snippet id", "1", "/run", "/"))
+    return response_html(layout(DEFAULT_SOURCE, "", "", "invalid snippet id", "1", "/run", "/"))
   }
 
   const fetched = fetch_optional {
@@ -105,28 +105,28 @@ function handleSnippet(req: Request): Response {
     WHERE id = {id}
   }
   return switch (fetched) {
-    case e as error: responseHtml(Layout(DEFAULT_SOURCE, "", "", "db error: " + e.message, "1", "/run", pagePath))
-    case row as { source: string }: runSource(row.source, runPath, pagePath)
-    case none as null: responseHtml(Layout(DEFAULT_SOURCE, "", "", "snippet not found: " + id, "1", "/run", pagePath))
+    case e as error: response_html(layout(DEFAULT_SOURCE, "", "", "db error: " + e.message, "1", "/run", page_path))
+    case row as { source: string }: run_source(row.source, run_path, page_path)
+    case none as null: response_html(layout(DEFAULT_SOURCE, "", "", "snippet not found: " + id, "1", "/run", page_path))
   }
 }
 
-function handleRunRoot(req: Request): Response {
+function handle_run_root(req: Request): Response {
   const source = req.form.source
-  const sizeError = validateSourceSize(source)
-  if (sizeError != "") {
-    return responseHtml(Layout(source, "", "", sizeError, "1", "/run", "/"))
+  const size_error = validate_source_size(source)
+  if (size_error != "") {
+    return response_html(layout(source, "", "", size_error, "1", "/run", "/"))
   }
-  const formatted = runFormatter(source)
+  const formatted = run_formatter(source)
   const code = switch (formatted) {
-    case e as error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
+    case e as error: return response_html(layout(source, "", "", "format error: " + e.message, "1", "/run", "/"))
     case formatted as string: formatted
   }
   const generated = fetch_one {
     SELECT lower(hex(randomblob(8))) AS id
   }
   const { id } = switch (generated) {
-    case e as error: return responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case e as error: return response_html(layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
     case generated as { id: string }: generated
   }
 
@@ -135,28 +135,28 @@ function handleRunRoot(req: Request): Response {
     VALUES ({id}, {code}, datetime('now'))
   }
   return switch (inserted) {
-    case e as error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
-    case ok as undefined: responseRedirect("/" + id)
+    case e as error: response_html(layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
+    case ok as undefined: response_redirect("/" + id)
   }
 }
 
-function handleRunByID(req: Request): Response {
+function handle_run_by_id(req: Request): Response {
   const id = req.query.id
   const source = req.form.source
   if (id == "") {
-    return responseHtml(Layout(source, "", "", "invalid snippet id", "1", "/run", "/"))
+    return response_html(layout(source, "", "", "invalid snippet id", "1", "/run", "/"))
   }
-  const pagePath = "/" + id
-  const runPath = "/run/" + id
+  const page_path = "/" + id
+  const run_path = "/run/" + id
 
-  const sizeError = validateSourceSize(source)
-  if (sizeError != "") {
-    return responseHtml(Layout(source, "", "", sizeError, "1", runPath, pagePath))
+  const size_error = validate_source_size(source)
+  if (size_error != "") {
+    return response_html(layout(source, "", "", size_error, "1", run_path, page_path))
   }
 
-  const formatted = runFormatter(source)
+  const formatted = run_formatter(source)
   const code = switch (formatted) {
-    case e as error: return responseHtml(Layout(source, "", "", "format error: " + e.message, "1", runPath, pagePath))
+    case e as error: return response_html(layout(source, "", "", "format error: " + e.message, "1", run_path, page_path))
     case formatted as string: formatted
   }
     
@@ -165,47 +165,47 @@ function handleRunByID(req: Request): Response {
     VALUES ({id}, {code}, datetime('now'))
   }
   return switch (updated) {
-    case e as error: responseHtml(Layout(source, "", "", "db error: " + e.message, "1", runPath, pagePath))
-    case ok as undefined: responseRedirect(pagePath)
+    case e as error: response_html(layout(source, "", "", "db error: " + e.message, "1", run_path, page_path))
+    case ok as undefined: response_redirect(page_path)
   }
 }
 
-function runSource(source: string, runPath: string, pagePath: string): Response {
-  const parsed = parse(runSandbox(source))
+function run_source(source: string, run_path: string, page_path: string): Response {
+  const parsed = parse(run_sandbox(source))
   const raw = switch (parsed) {
-    case e as error: return responseHtml(Layout(source, "", "", "parse error: " + e.message, "1", runPath, pagePath))
+    case e as error: return response_html(layout(source, "", "", "parse error: " + e.message, "1", run_path, page_path))
     case raw as json: raw
   }
 
   const decoded: RunResult | error = decode<RunResult>(raw)
   return switch (decoded) {
-    case ok as RunResult: responseHtml(Layout(source, ok.stdout, ok.html, ok.error, toString(ok.exitCode), runPath, pagePath))
-    case e as error: responseHtml(Layout(source, "", "", e.message, "1", runPath, pagePath))
+    case ok as RunResult: response_html(layout(source, ok.stdout, ok.html, ok.error, to_string(ok.exitCode), run_path, page_path))
+    case e as error: response_html(layout(source, "", "", e.message, "1", run_path, page_path))
   }  
 }
 
 export function main(): void {
-  const args = getArgs()
+  const args = get_args()
   const dbPath = if (args.length() > 0) {
     switch (args[0]) {
       case path as string: path
       case e as error: "playground.sqlite3"
     }
   } else { "playground.sqlite3" }
-  const opened = dbOpen(dbPath)
+  const opened = db_open(dbPath)
   if (opened as error) {
     log("db open error: " + opened.message)
     return
   }
 
-  const server = createServer()
-  server.addRoute("get", "/", handleRoot)
-  server.addRoute("post", "/run", handleRunRoot)
-  server.addRoute("get", "/assets/tunascript.grammar", handleGrammar)
-  server.addRoute("get", "/:id", handleSnippet)
-  server.addRoute("post", "/run/:id", handleRunByID)
-  const portEnv = getEnv("PORT")
-  const port = if (portEnv != "") { portEnv } else { "8787" }
+  const server = create_server()
+  server.add_route("get", "/", handle_root)
+  server.add_route("post", "/run", handle_run_root)
+  server.add_route("get", "/assets/tunascript.grammar", handle_grammar)
+  server.add_route("get", "/:id", handle_snippet)
+  server.add_route("post", "/run/:id", handle_run_by_id)
+  const port_env = get_env("PORT")
+  const port = if (port_env != "") { port_env } else { "8787" }
   log("Playground starting on http://localhost:" + port)
   server.listen(":" + port)
 }

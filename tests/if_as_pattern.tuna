@@ -1,11 +1,11 @@
 // expect: format error
 // expect: db open ok
 import { log } from "prelude"
-import { runFormatter } from "runtime"
-import { dbOpen } from "sqlite"
+import { run_formatter } from "runtime"
+import { db_open } from "sqlite"
 
 export function main(): void {
-  const formatted = runFormatter("export function main(: void {}")
+  const formatted = run_formatter("export function main(: void {}")
   if (formatted as error) {
     formatted.message
     log("format error")
@@ -13,7 +13,7 @@ export function main(): void {
     log("format ok")
   }
 
-  const opened = dbOpen(":memory:")
+  const opened = db_open(":memory:")
   if (opened as error) {
     log("db open error: " + opened.message)
     return

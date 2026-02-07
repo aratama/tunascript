@@ -28,7 +28,7 @@ TunaScriptには以下の組み込みライブラリがあります。
   - `error` 値を生成するユーティリティー関数です（`{ type: "error", message }` を返します）。
 - `fallback<T>(result: T | error, defaultValue: T): T`
   - `result` が `error` の場合は `defaultValue` を返し、それ以外は `result` を返します。
-- `andThen<T, U>(value: T | error, fn: (v: T) => U | error): U | error`
+- `then<T, U>(value: T | error, fn: (v: T) => U | error): U | error`
   - `value` が成功値なら `fn` を適用し、`error` ならそのまま返します。
   - `fn` には関数値（関数名・関数リテラル・関数型変数）を渡せます。
 
@@ -40,7 +40,7 @@ import { parse, decode } from "json";
 
 type Person = { name: string; age: number };
 
-const parsed: json | error = parse("{\"name\": \"Alice\", \"age\": 30}");
+const parsed: json | error = parse('{"name": "Alice", "age": 30}');
 
 switch (parsed) {
   case json as json: {
@@ -56,12 +56,13 @@ switch (parsed) {
     log(parsedError.message);
 }
 ```
-- `toString(value: integer | number | boolean | string): string`
-- `stringLength(str: string): integer`
+
+- `to_string(value: integer | number | boolean | string): string`
+- `string_length(str: string): integer`
   - 文字列の長さ（Unicodeコードポイント数）を返します。
 - `getArgs(): string[]`
   - コマンドライン引数を配列として返します。
-- `getEnv(name: string): string`
+- `get_env(name: string): string`
   - 指定した名前の環境変数の値を返します。存在しない場合は空文字列になります。
   - `tuna run --sandbox` では常に空文字列を返します。
 - `gc(): void`
@@ -108,37 +109,37 @@ switch (parsed) {
 
 `runtime` モジュールは実行環境に関する関数を提供します。
 
-- `runSandbox(source: string): string`
+- `run_sandbox(source: string): string`
   - `source`（TunaScriptコード文字列）をサンドボックス実行し、`{ stdout, html, exitCode, error }` 形式のJSON文字列を返します。
   - この関数はサンドボックスモード内（`tuna run --sandbox`）では使用できません。
-- `runFormatter(source: string): string | error`
+- `run_formatter(source: string): string | error`
   - `source`（TunaScriptコード文字列）をフォーマットします。
   - フォーマット成功時は整形済みコード文字列、失敗時は `error` を返します。
 
 ### 12.1.4 sqliteモジュール
 
-`sqlite` モジュールは `dbOpen` を含む SQLite 固有の関数を提供します。
+`sqlite` モジュールは `db_open` を含む SQLite 固有の関数を提供します。
 
-- `dbOpen(filename: string): undefined | error`
+- `db_open(filename: string): undefined | error`
   - 指定したSQLiteファイルを直接開きます。ファイルが存在しない場合は新規作成され、書き込みはそのままファイルに反映されます。`create_table` 定義がある場合、テーブルの自動作成と検証が行われます。
-  - この関数は `import { dbOpen } from "sqlite";` でインポートしてください。
+  - この関数は `import { db_open } from "sqlite";` でインポートしてください。
   - `tuna run --sandbox` では no-op になり、常にインメモリDB (`:memory:`) が使われます。
 
 ### 12.1.5 fileモジュール
 
 `file` モジュールはテキストファイルとディレクトリの入出力を提供します。バイナリファイルは未対応です。
 
-- `readText(path: string): string | error`
+- `read_text(path: string): string | error`
   - `path` のテキストファイルをUTF-8として読み込みます。BOMがある場合は取り除きます。
   - UTF-8として不正なバイト列の場合は `error` を返します。
   - `tuna run --sandbox` では `error` を返します。
-- `writeText(path: string, content: string): undefined | error`
+- `write_text(path: string, content: string): undefined | error`
   - `path` にUTF-8テキストを書き込みます（既存ファイルは上書き）。
   - `tuna run --sandbox` では `error` を返します。
-- `appendText(path: string, content: string): undefined | error`
+- `append_text(path: string, content: string): undefined | error`
   - `path` の末尾にUTF-8テキストを追記します。ファイルが無ければ作成します。
   - `tuna run --sandbox` では `error` を返します。
-- `readDir(path: string): string[] | error`
+- `read_dir(path: string): string[] | error`
   - `path` 直下のエントリ名を配列で返します（ファイル・ディレクトリ混在）。
   - 返却順序は名前順にソートされます。
   - `tuna run --sandbox` では `error` を返します。
@@ -152,36 +153,36 @@ switch (parsed) {
 
 #### 12.2.1 HTTPサーバー関数
 
-これらの関数（`responseHtml`, `responseJson`, `responseRedirect` などを含む）は `http` モジュールから `import { ... } from "http";` で明示的にインポートしてください。
+これらの関数（`response_html`, `responseJson`, `response_redirect` などを含む）は `http` モジュールから `import { ... } from "http";` で明示的にインポートしてください。
 
-- `createServer(): Server`
+- `create_server(): Server`
   - 新しいHTTPサーバーインスタンスを作成します。
-- `addRoute(server: Server, path: string, handler: (req: Request) => Response | error): void`
-- `addRoute(server: Server, method: string, path: string, handler: (req: Request) => Response | error): void`
+- `add_route(server: Server, path: string, handler: (req: Request) => Response | error): void`
+- `add_route(server: Server, method: string, path: string, handler: (req: Request) => Response | error): void`
   - サーバーに指定したパスのルートを追加します。ハンドラーはリクエストを受け取り、成功時は `Response`、失敗時は `error` を返す関数です。
   - `method` 付きの形式では、`"get"` または `"post"` を指定できます。指定したメソッドのときだけハンドラーが実行されます。
   - 3引数形式（`method` 省略）はすべてのメソッドにマッチします。
   - `path` は `/:id` や `/run/:id` のようなパスパラメータにも対応しています。マッチした値は `req.query.id` のように `query` に展開されます。
   - 同じメソッドの中では完全一致ルートが優先され、完全一致が無い場合にパスパラメータルートが解決されます。
   - メソッド指定ルートが優先され、見つからない場合は `method` 省略（全メソッド）ルートにフォールバックします。
-  - `tuna run --sandbox` では `addRoute(server, "/", handler)` の重複登録はエラーになります。
+  - `tuna run --sandbox` では `add_route(server, "/", handler)` の重複登録はエラーになります。
 - `listen(server: Server, port: string): void`
   - サーバーを指定したポートで起動します。この関数はブロッキングで、サーバーが終了するまで戻りません。
   - `tuna run --sandbox` ではソケットは開かず、`GET /` を1回だけ仮想実行して直ちに終了します。`Response.body` は最終JSONの `html` フィールドに入ります。
 - `responseText(text: string): Response`
   - テキストレスポンスを作成します。
-- `responseHtml(html: string): Response`
+- `response_html(html: string): Response`
   - HTML を直接返す `contentType: "text/html; charset=utf-8"` のレスポンスを作成します。
 - `responseJson(data: string): Response`
   - JSON ボディを返すレスポンス（`contentType` は `application/json`）を作成します。
-- `responseRedirect(url: string): Response`
+- `response_redirect(url: string): Response`
   - `Location` ヘッダーと `302 Found` をセットしたリダイレクトを作成します。
 - `getPath(req: Request): string`
   - リクエストのパスを取得します。
 - `getMethod(req: Request): string`
   - リクエストのHTTPメソッド（GET, POSTなど）を取得します。
 
-- HTTPハンドラーは `addRoute` で登録されると、`listen` から実行されるたびに自動的にSQLiteトランザクション (`BEGIN ... COMMIT/ROLLBACK`) 内で動作します。ハンドラーが正常に戻るとコミットされ、ハンドラーの呼び出し中にエラーが発生した場合はロールバックされて変更は破棄されます。
+- HTTPハンドラーは `add_route` で登録されると、`listen` から実行されるたびに自動的にSQLiteトランザクション (`BEGIN ... COMMIT/ROLLBACK`) 内で動作します。ハンドラーが正常に戻るとコミットされ、ハンドラーの呼び出し中にエラーが発生した場合はロールバックされて変更は破棄されます。
 - このトランザクションの性質上、HTTPリクエストは1つずつ順番に処理され、同時リクエストは順番待ちになります。
 
 #### 12.2.2 型
@@ -198,7 +199,7 @@ switch (parsed) {
 `tuna run --sandbox <entry.tuna>` の標準出力は、必ず次のJSON 1件です。
 
 ```json
-{"stdout":"...","html":"...","exitCode":0,"error":""}
+{ "stdout": "...", "html": "...", "exitCode": 0, "error": "" }
 ```
 
 - `stdout`: `log` の出力（改行込み）

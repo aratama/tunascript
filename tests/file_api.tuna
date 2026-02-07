@@ -8,7 +8,7 @@
 // expect: missing_read_error
 
 import { log } from "prelude"
-import { readText, writeText, appendText, readDir, exists } from "file"
+import { read_text, write_text, append_text, read_dir, exists } from "file"
 import { filter, length } from "array"
 
 const filename: string = "file_api_test.txt"
@@ -21,7 +21,7 @@ export function main(): void {
     log("missing")
   }
 
-  const writeRes: undefined | error = writeText(filename, "hello")
+  const writeRes: undefined | error = write_text(filename, "hello")
   switch (writeRes) {
     case _ as undefined: {
       log("write_ok")
@@ -38,7 +38,7 @@ export function main(): void {
     log("not_exists")
   }
 
-  const readRes: string | error = readText(filename)
+  const readRes: string | error = read_text(filename)
   switch (readRes) {
     case text as string: {
       log(text)
@@ -49,7 +49,7 @@ export function main(): void {
     }
   }
 
-  const appendRes: undefined | error = appendText(filename, " world")
+  const appendRes: undefined | error = append_text(filename, " world")
   switch (appendRes) {
     case _ as undefined: {
       log("append_ok")
@@ -60,7 +60,7 @@ export function main(): void {
     }
   }
 
-  const readRes2: string | error = readText(filename)
+  const readRes2: string | error = read_text(filename)
   switch (readRes2) {
     case text as string: {
       log(text)
@@ -71,7 +71,7 @@ export function main(): void {
     }
   }
 
-  const dirRes: string[] | error = readDir(".")
+  const dirRes: string[] | error = read_dir(".")
   switch (dirRes) {
     case entries as string[]: {
       const matches = filter(entries, function (name: string): boolean {
@@ -89,7 +89,7 @@ export function main(): void {
     }
   }
 
-  const missingRead: string | error = readText(missing)
+  const missingRead: string | error = read_text(missing)
   switch (missingRead) {
     case _ as string: {
       log("missing_read_unexpected")

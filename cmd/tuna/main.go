@@ -100,7 +100,7 @@ func runCmd(args []string) {
 	// Remaining arguments after the entry file are passed to the script
 	scriptArgs := fs.Args()[1:]
 	if *sandbox {
-		runSandbox(entry, scriptArgs, backend)
+		run_sandbox(entry, scriptArgs, backend)
 		return
 	}
 	comp := compiler.New()
@@ -122,7 +122,7 @@ func runCmd(args []string) {
 	fmt.Print(out)
 }
 
-func runSandbox(entry string, scriptArgs []string, backend compiler.Backend) {
+func run_sandbox(entry string, scriptArgs []string, backend compiler.Backend) {
 	result := runtime.SandboxResult{ExitCode: 0}
 	comp := compiler.New()
 	if err := comp.SetBackend(backend); err != nil {

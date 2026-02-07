@@ -37,7 +37,7 @@ const tripled: integer[] = map(nums, triple)
 
 func TestMapInferenceHandlesObjectAndStringResults(t *testing.T) {
 	const src = `
-import { toString } from "prelude"
+import { to_string } from "prelude"
 import { map } from "array"
 
 function wrap(item: { value: integer }): { value: integer } {
@@ -45,7 +45,7 @@ function wrap(item: { value: integer }): { value: integer } {
 }
 
 function label(item: { value: integer }): string {
-  return toString(item.value)
+  return to_string(item.value)
 }
 
 const raw: { value: integer }[] = [
@@ -140,9 +140,9 @@ const fromError: string = fallback({ "type": "error", "message": "boom" }, "")
 
 func TestExternFunctionDeclaration(t *testing.T) {
 	const src = `
-extern function stringLength(str: string): integer
+extern function string_length(str: string): integer
 
-const n: integer = stringLength("hello")
+const n: integer = string_length("hello")
 `
 
 	mod := mustParseModule(t, "extern_decl.tuna", src)
@@ -158,9 +158,9 @@ const n: integer = stringLength("hello")
 
 func TestExternFunctionDeclarationInPrelude(t *testing.T) {
 	const src = `
-export extern function stringLength(str: string): integer
+export extern function string_length(str: string): integer
 
-const n: integer = stringLength("hello")
+const n: integer = string_length("hello")
 `
 
 	mod := mustParseModule(t, "prelude", src)

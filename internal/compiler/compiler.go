@@ -143,14 +143,14 @@ func filterPreludeForGC(mod *ast.Module) {
 	}
 	keepFunc := map[string]bool{
 		"fallback": true,
-		"andThen":  true,
+		"then":  true,
 		"error":    true,
 	}
 	keepExtern := map[string]bool{
 		"log":              true,
-		"toString":         true,
+		"to_string":         true,
 		"gc":               true,
-		"stringLength":     true,
+		"string_length":     true,
 		"str_from_utf8":    true,
 		"intern_string":    true,
 		"str_concat":       true,

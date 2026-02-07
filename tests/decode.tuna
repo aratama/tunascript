@@ -2,7 +2,7 @@
 // expect: Alice
 // expect: 30
 
-import { log, toString } from "prelude"
+import { log, to_string } from "prelude"
 import { parse, decode } from "json"
 
 type Person = { name: string, age: number }
@@ -12,5 +12,5 @@ export function main(): void | error {
   const decoded = decode<Person>(parsed)?
   log("ok")
   log(decoded.name)
-  log(toString(decoded.age))
+  log(to_string(decoded.age))
 }

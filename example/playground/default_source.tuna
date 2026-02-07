@@ -1,6 +1,6 @@
 import { log } from "prelude"
 import { map } from "array"
-import { createServer, addRoute, listen, responseHtml, type Request, type Response, type JSX } from "http"
+import { create_server, add_route, listen, response_html, type Request, type Response, type JSX } from "http"
 
 // create_table文でTODOリスト用のテーブルを定義します
 create_table todo {
@@ -37,13 +37,13 @@ function root(req: Request): Response {
   return switch (fetched) {
 
     // エラーが発生した場合
-    case e as error: responseHtml(<p>DB error: {e.message}</p>)
+    case e as error: response_html(<p>DB error: {e.message}</p>)
 
     // 正常に取得できた場合
     case rows as todo[]: {
 
       // HTMLレスポンス全体をレンダリングします
-      responseHtml(
+      response_html(
         <html>
           <head>
             <style>{`
@@ -87,8 +87,8 @@ export function main(): void | error {
   }?
 
   // Playgroundでは、ルートのページだけ出力されます
-  const server = createServer()
-  server.addRoute("get", "/", root)
+  const server = create_server()
+  server.add_route("get", "/", root)
   server.listen(":8888")
 
   // log関数で標準出力できます

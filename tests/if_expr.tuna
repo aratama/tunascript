@@ -5,7 +5,7 @@
 // expect: 42
 // expect: undefined
 
-import { log, toString } from "prelude"
+import { log, to_string } from "prelude"
 
 export function main(): void {
   const a = if (true) { 42 }
@@ -26,19 +26,19 @@ export function main(): void {
   }
 
   const aStr: string = switch (a) {
-    case a as integer: toString(a)
+    case a as integer: to_string(a)
     case a as undefined: "undefined"
   }
   const bStr: string = switch (b) {
-    case b as integer: toString(b)
+    case b as integer: to_string(b)
     case b as undefined: "undefined"
   }
   const cStr: string = switch (c) {
-    case c as integer: toString(c)
+    case c as integer: to_string(c)
     case c as string: c
   }
   const dStr: string = switch (d) {
-    case d as integer: toString(d)
+    case d as integer: to_string(d)
     case d as string: d
   }
 
@@ -46,6 +46,6 @@ export function main(): void {
   log(bStr)
   log(cStr)
   log(dStr)
-  log(toString(e))
+  log(to_string(e))
   log(if (f == undefined) { "undefined" } else { "not" })
 }

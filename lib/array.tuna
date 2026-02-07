@@ -1,0 +1,19 @@
+
+//  - `start` 以上 `end` **以下**の連続した `integer` を格納した配列を返します（`range(2, 5)` は `[2, 3, 4, 5]`）。
+//  - `end < start` などで範囲が不正な場合は空配列 `[]` を返します。
+export extern function range(start: integer, end: integer): integer[]
+
+//  - 配列の長さを返します。
+export extern function length(array: T[]): integer
+
+// - 添字アクセス `xs[i]` は `T | error` を返します。
+//   - 範囲外アクセス時は `{ type: "error", message: "index out of range" }` を返します。
+
+//  - 型変数 `T` / `S` を使って `xs` の各要素を `fn` で変換します。
+export extern function map<T, S>(fn: (value: T) => S, xs: Array<T>): Array<S>
+
+// - `fn` が `true` を返した要素のみを残します。
+export extern function filter<T>(fn: (value: T) => boolean, xs: Array<T>): Array<T>
+
+//   - `fn` による畳み込みの結果（型 `R`）を返します。`initial` は初期累積値です。
+export extern function reduce<T, R>(fn: (acc: R, value: T) => R, xs: Array<T>, initial: R): R
