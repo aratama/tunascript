@@ -1,5 +1,4 @@
 type RawValue = integer | number | boolean | string | json | null | undefined
-type SQLRows = Map<string>[]
 type Response = { body: string, contentType: string }
 
 // -----------------------------------------------------------------------------
@@ -30,7 +29,7 @@ export function error(message: string): error {
 // A2: GCバックエンドでは純粋Wasm実装されるextern境界
 // （hostrefバックエンドでは互換実装としてGo側が提供）
 
-extern function log<T>(value: T): void
+export extern function log<T>(value: T): void
 export extern function to_string(value: integer | number | boolean | string): string
 export extern function string_length(str: string): integer
 
@@ -65,25 +64,4 @@ extern function call_fn(fn: string, args: RawValue): RawValue
 extern function escape_html_attr(value: string): string
 
 // -----------------------------------------------------------------------------
-// セクションB: 現状Goホスト依存のextern境界
-// - これらはファイルI/O、DB、HTTP、環境変数などホスト機能に依存します。
-// - 将来的に純粋Wasmtime/ブラウザ実行を目指す場合は別実装が必要です。
-// -----------------------------------------------------------------------------
-
-export extern function gc(): void
-extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
-extern function register_tables(schemaPtr: short, schemaLen: short): void
-extern function sql_query(queryPtr: short, queryLen: short, params: RawValue): SQLRows | error
-extern function sql_fetch_one(queryPtr: short, queryLen: short, params: RawValue): Map<string> | error
-extern function sql_fetch_optional(queryPtr: short, queryLen: short, params: RawValue): Map<string> | null | error
-extern function sql_execute(queryPtr: short, queryLen: short, params: RawValue): undefined | error
-
-extern function http_response_text(textPtr: short, textLen: short): Response
-extern function http_response_text_str(text: string): Response
-extern function http_get_path(req: RawValue): string
-extern function http_get_method(req: RawValue): string
-
-extern function get_args(): string[]
-extern function get_env(name: string): string
-
-
+// セクションBは `server` モジュールへ移動しました。

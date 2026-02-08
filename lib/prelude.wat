@@ -1049,6 +1049,42 @@
   (struct.get $ObjEntry 1 (ref.cast (ref $ObjEntry) (local.get $entry)))
 )
 
+(func $prelude.obj_keys (param $obj anyref) (result anyref)
+  (local $typed (ref $Obj))
+  (local $entries (ref null $ObjData))
+  (local $count i32)
+  (local $out anyref)
+  (local $i i32)
+  (local $entry (ref null $ObjEntry))
+
+  (call $prelude._ensure_runtime)
+  (if (i32.eqz (ref.test (ref $Obj) (local.get $obj)))
+    (then
+      (return (call $prelude.arr_new (i32.const 0)))
+    )
+  )
+
+  (local.set $typed (ref.cast (ref $Obj) (local.get $obj)))
+  (local.set $entries (struct.get $Obj 0 (local.get $typed)))
+  (local.set $count (struct.get $Obj 1 (local.get $typed)))
+  (local.set $out (call $prelude.arr_new (local.get $count)))
+  (local.set $i (i32.const 0))
+  (block $done
+    (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $entry
+        (array.get $ObjData (local.get $entries) (local.get $i)))
+      (call $prelude.arr_set
+        (local.get $out)
+        (local.get $i)
+        (struct.get $ObjEntry 0 (ref.cast (ref $ObjEntry) (local.get $entry))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)
+    )
+  )
+  (local.get $out)
+)
+
 (func $prelude.arr_new (param $count i32) (result anyref)
   (local $len i32)
   (local.set $len (local.get $count))

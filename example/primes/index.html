@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TunaScript Primes (GC backend)</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "M PLUS 1 Code", "Fira Code", monospace;
+        background: #f6f3ef;
+        color: #1b1b1b;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: #3b3b3b;
+      }
+      pre {
+        background: #111;
+        color: #f0f0f0;
+        padding: 16px;
+        border-radius: 8px;
+        min-height: 240px;
+        white-space: pre-wrap;
+      }
+      .note {
+        margin-top: 16px;
+        font-size: 13px;
+        color: #5b5b5b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>100以下の素数（TunaScript / GC backend）</h1>
+    <p>標準出力はこのページに表示されます。</p>
+    <pre id="output">(実行中...)</pre>
+    <p class="note">
+      このページはWebAssembly GC対応ブラウザ向けです。対応していない場合はエラーになります。
+    </p>
+    <script type="module">
+      const output = document.getElementById("output");
+      const decoder = new TextDecoder("utf-8");
+      let memory = null;
+
+      const wasi = {
+        fd_write(fd, iovs, iovsLen, nwritten) {
+          if (!memory) {
+            return 0;
+          }
+          const view = new DataView(memory.buffer);
+          let written = 0;
+          let text = "";
+          for (let i = 0; i < iovsLen; i++) {
+            const ptr = view.getUint32(iovs + i * 8, true);
+            const len = view.getUint32(iovs + i * 8 + 4, true);
+            const bytes = new Uint8Array(memory.buffer, ptr, len);
+            text += decoder.decode(bytes, { stream: true });
+            written += len;
+          }
+          view.setUint32(nwritten, written, true);
+          if (fd === 1 || fd === 2) {
+            output.textContent += text;
+          }
+          return 0;
+        },
+      };
+
+      async function main() {
+        try {
+          const response = await fetch("./primes.wasm");
+          if (!response.ok) {
+            throw new Error("failed to fetch primes.wasm");
+          }
+          const wasmBytes = await response.arrayBuffer();
+          const { instance } = await WebAssembly.instantiate(wasmBytes, {
+            wasi_snapshot_preview1: wasi,
+          });
+          memory = instance.exports.memory;
+          if (!memory) {
+            throw new Error("memory export not found");
+          }
+          if (typeof instance.exports._start !== "function") {
+            throw new Error("_start export not found");
+          }
+          output.textContent = "";
+          instance.exports._start();
+        } catch (err) {
+          output.textContent = String(err);
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>

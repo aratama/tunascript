@@ -1,4 +1,4 @@
-export extern function stringify(value: T): string
+export extern function stringify<T>(value: T): string
 
 export extern function parse(s: string): json | error
 

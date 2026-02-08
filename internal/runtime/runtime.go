@@ -311,6 +311,12 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	defineFile := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "file", name, fn)
 	}
+	defineServer := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "server", name, fn)
+	}
+	defineHost := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "host", name, fn)
+	}
 	if err := define("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.strFromUTF8(caller, ptr, length))
 	}); err != nil {
@@ -441,6 +447,26 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := defineArray("length", func(arrHandle *Value) int64 {
+		return int64(must(r.arrLen(arrHandle)))
+	}); err != nil {
+		return err
+	}
+	if err := defineArray("map", func(arrHandle *Value, fnHandle *Value) *Value {
+		return must(r.arrayMap(arrHandle, fnHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineArray("filter", func(arrHandle *Value, fnHandle *Value) *Value {
+		return must(r.arrayFilter(arrHandle, fnHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineArray("reduce", func(arrHandle *Value, fnHandle *Value, initialHandle *Value) *Value {
+		return must(r.arrayReduce(arrHandle, fnHandle, initialHandle))
+	}); err != nil {
+		return err
+	}
 	if err := define("val_eq", func(a *Value, b *Value) int32 {
 		return must(r.valEq(a, b))
 	}); err != nil {
@@ -477,32 +503,32 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
-		return must(r.sqlExec(caller, ptr, length))
-	}); err != nil {
-		return err
-	}
 	if err := defineSQLite("db_open", func(strHandle *Value) *Value {
 		return r.resultError(r.dbOpenHandle(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("register_tables", func(caller *wasmtime.Caller, ptr int32, length int32) {
+	if err := defineServer("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
+		return must(r.sqlExec(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("register_tables", func(caller *wasmtime.Caller, ptr int32, length int32) {
 		must0(r.registerTables(caller, ptr, length))
 	}); err != nil {
 		return err
 	}
-	if err := define("get_args", func() *Value {
+	if err := defineServer("get_args", func() *Value {
 		return must(r.get_args())
 	}); err != nil {
 		return err
 	}
-	if err := define("get_env", func(nameHandle *Value) *Value {
+	if err := defineServer("get_env", func(nameHandle *Value) *Value {
 		return must(r.get_env(nameHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("gc", func() {
+	if err := defineServer("gc", func() {
 		r.maybeStoreGC(true)
 	}); err != nil {
 		return err
@@ -545,25 +571,175 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+	if err := defineServer("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+	if err := defineServer("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+	if err := defineServer("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
 		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}
-	if err := define("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+	if err := defineServer("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
+	}); err != nil {
+		return err
+	}
+
+	// Host bridge functions (externref-based)
+	if err := defineHost("val_from_i64", func(v int64) *Value {
+		return must(r.valFromI64(v))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_from_f64", func(v float64) *Value {
+		return must(r.valFromF64(v))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_from_bool", func(v int32) *Value {
+		return must(r.valFromBool(v))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_null", func() *Value {
+		return nullValue
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_undefined", func() *Value {
+		return undefinedValue
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_to_i64", func(handle *Value) int64 {
+		return must(r.valToI64(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_to_f64", func(handle *Value) float64 {
+		return must(r.valToF64(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_to_bool", func(handle *Value) int32 {
+		return must(r.valToBool(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("val_kind", func(handle *Value) int32 {
+		return must(r.valKind(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("str_from_utf8", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
+		return must(r.strFromUTF8(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("str_byte_len", func(handle *Value) int32 {
+		return must(r.strByteLen(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("str_copy", func(caller *wasmtime.Caller, handle *Value, ptr int32, length int32) {
+		must0(r.strCopy(caller, handle, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("arr_new", func(count int32) *Value {
+		return must(r.arrNew(count))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("arr_len", func(arrHandle *Value) int32 {
+		return must(r.arrLen(arrHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("arr_get", func(arrHandle *Value, index int32) *Value {
+		return must(r.arrGet(arrHandle, index))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("arr_set", func(arrHandle *Value, index int32, valHandle *Value) {
+		must0(r.arrSet(arrHandle, index, valHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("obj_new", func(count int32) *Value {
+		return must(r.objNew(count))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("obj_get", func(objHandle *Value, keyHandle *Value) *Value {
+		return must(r.objGet(objHandle, keyHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("obj_set", func(objHandle *Value, keyHandle *Value, valHandle *Value) {
+		must0(r.objSet(objHandle, keyHandle, valHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("obj_keys", func(objHandle *Value) *Value {
+		return must(r.objKeys(objHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("get_args", func() *Value {
+		return must(r.get_args())
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("get_env", func(nameHandle *Value) *Value {
+		return must(r.get_env(nameHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("gc", func() {
+		r.maybeStoreGC(true)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
+		return must(r.sqlExec(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("register_tables", func(caller *wasmtime.Caller, ptr int32, length int32) {
+		must0(r.registerTables(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
 		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
 	}); err != nil {
 		return err
@@ -584,7 +760,7 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) *Value {
+	if err := defineHTTP("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) *Value {
 		return must(r.httpResponseText(caller, textPtr, textLen))
 	}); err != nil {
 		return err
@@ -594,7 +770,7 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("http_response_text_str", func(strHandle *Value) *Value {
+	if err := defineHTTP("http_response_text_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseTextStr(strHandle))
 	}); err != nil {
 		return err
@@ -619,12 +795,12 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := define("http_get_path", func(reqHandle *Value) *Value {
+	if err := defineHTTP("http_get_path", func(reqHandle *Value) *Value {
 		return must(r.httpGetPath(reqHandle))
 	}); err != nil {
 		return err
 	}
-	if err := define("http_get_method", func(reqHandle *Value) *Value {
+	if err := defineHTTP("http_get_method", func(reqHandle *Value) *Value {
 		return must(r.httpGetMethod(reqHandle))
 	}); err != nil {
 		return err
@@ -1084,6 +1260,21 @@ func (r *Runtime) objGet(objHandle *Value, keyHandle *Value) (*Value, error) {
 	return val, nil
 }
 
+func (r *Runtime) objKeys(objHandle *Value) (*Value, error) {
+	objVal, err := r.getValue(objHandle)
+	if err != nil {
+		return nil, err
+	}
+	if objVal.Kind != KindObject {
+		return nil, errors.New("obj_keys expects object")
+	}
+	keys := make([]*Value, len(objVal.Obj.Order))
+	for i, key := range objVal.Obj.Order {
+		keys[i] = r.newValue(Value{Kind: KindString, Str: key})
+	}
+	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: keys}}), nil
+}
+
 func (r *Runtime) arrNew(count int32) (*Value, error) {
 	arr := make([]*Value, int(count))
 	for i := range arr {
@@ -1221,6 +1412,126 @@ func (r *Runtime) rangeFunc(start int64, end int64) *Value {
 		elems[int(i)] = val
 	}
 	return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}})
+}
+
+func (r *Runtime) arrayMap(arrHandle *Value, fnHandle *Value) (*Value, error) {
+	arrVal, err := r.getValue(arrHandle)
+	if err != nil {
+		return nil, err
+	}
+	if arrVal.Kind != KindArray {
+		return nil, errors.New("array.map expects array")
+	}
+	out, err := r.arrNew(int32(len(arrVal.Arr.Elems)))
+	if err != nil {
+		return nil, err
+	}
+	for i, elem := range arrVal.Arr.Elems {
+		args, err := r.arrNew(1)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(args, 0, elem); err != nil {
+			return nil, err
+		}
+		mapped, err := r.callFn(fnHandle, args)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(out, int32(i), mapped); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (r *Runtime) arrayFilter(arrHandle *Value, fnHandle *Value) (*Value, error) {
+	arrVal, err := r.getValue(arrHandle)
+	if err != nil {
+		return nil, err
+	}
+	if arrVal.Kind != KindArray {
+		return nil, errors.New("array.filter expects array")
+	}
+	count := 0
+	for _, elem := range arrVal.Arr.Elems {
+		args, err := r.arrNew(1)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(args, 0, elem); err != nil {
+			return nil, err
+		}
+		result, err := r.callFn(fnHandle, args)
+		if err != nil {
+			return nil, err
+		}
+		keep, err := r.valToBool(result)
+		if err != nil {
+			return nil, err
+		}
+		if keep != 0 {
+			count++
+		}
+	}
+	out, err := r.arrNew(int32(count))
+	if err != nil {
+		return nil, err
+	}
+	outIdx := int32(0)
+	for _, elem := range arrVal.Arr.Elems {
+		args, err := r.arrNew(1)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(args, 0, elem); err != nil {
+			return nil, err
+		}
+		result, err := r.callFn(fnHandle, args)
+		if err != nil {
+			return nil, err
+		}
+		keep, err := r.valToBool(result)
+		if err != nil {
+			return nil, err
+		}
+		if keep != 0 {
+			if err := r.arrSet(out, outIdx, elem); err != nil {
+				return nil, err
+			}
+			outIdx++
+		}
+	}
+	return out, nil
+}
+
+func (r *Runtime) arrayReduce(arrHandle *Value, fnHandle *Value, initialHandle *Value) (*Value, error) {
+	arrVal, err := r.getValue(arrHandle)
+	if err != nil {
+		return nil, err
+	}
+	if arrVal.Kind != KindArray {
+		return nil, errors.New("array.reduce expects array")
+	}
+	acc := initialHandle
+	for _, elem := range arrVal.Arr.Elems {
+		args, err := r.arrNew(2)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(args, 0, acc); err != nil {
+			return nil, err
+		}
+		if err := r.arrSet(args, 1, elem); err != nil {
+			return nil, err
+		}
+		next, err := r.callFn(fnHandle, args)
+		if err != nil {
+			return nil, err
+		}
+		acc = next
+	}
+	return acc, nil
 }
 
 func (r *Runtime) valEq(a *Value, b *Value) (int32, error) {
@@ -1361,6 +1672,46 @@ func (r *Runtime) strLen(handle *Value) (int64, error) {
 		return 0, errors.New("str_len expects string")
 	}
 	return int64(utf8.RuneCountInString(v.Str)), nil
+}
+
+func (r *Runtime) strByteLen(handle *Value) (int32, error) {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return 0, err
+	}
+	if v.Kind != KindString {
+		return 0, errors.New("str_byte_len expects string")
+	}
+	return int32(len(v.Str)), nil
+}
+
+func (r *Runtime) strCopy(caller *wasmtime.Caller, handle *Value, ptr int32, length int32) error {
+	v, err := r.getValue(handle)
+	if err != nil {
+		return err
+	}
+	if v.Kind != KindString {
+		return errors.New("str_copy expects string")
+	}
+	ext := caller.GetExport("memory")
+	if ext == nil {
+		return errors.New("memory not found")
+	}
+	memory := ext.Memory()
+	if memory == nil {
+		return errors.New("memory not found")
+	}
+	data := memory.UnsafeData(caller)
+	start := int(ptr)
+	end := start + int(length)
+	if start < 0 || end > len(data) {
+		return errors.New("string out of bounds")
+	}
+	if len(v.Str) != int(length) {
+		return errors.New("str_copy length mismatch")
+	}
+	copy(data[start:end], []byte(v.Str))
+	return nil
 }
 
 func (r *Runtime) escapeHTMLAttr(handle *Value) (*Value, error) {

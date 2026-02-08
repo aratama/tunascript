@@ -1,4 +1,5 @@
-import { log, get_args } from "prelude";
+import { log } from "prelude";
+import { get_args } from "server";
 import { stringify } from "json";
 import { length } from "array";
 import { db_open } from "sqlite";

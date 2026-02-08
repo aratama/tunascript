@@ -31,7 +31,7 @@ TunaScriptは以下のようなコンセプトを持ったプログラミング�
 
 `error` は言語組み込みのエラー型です。実データ構造は `{ type: "error", message: string }` で、`?` 演算子や `T | error` の失敗側として使います。
 
-`short` は Wasm の `i32` に対応する32bit整数型です。主に `prelude` の低レベル `extern function` 宣言で使うための型で、通常のアプリケーションコードでは `integer` の使用を推奨します。
+`short` は Wasm の `i32` に対応する32bit整数型です。主に `prelude` / `server` の低レベル `extern function` 宣言で使うための型で、通常のアプリケーションコードでは `integer` の使用を推奨します。
 
 `undefined` は「値が存在しない」ことを表すプリミティブ型です。`undefined` はリテラルとして `undefined` と書け、`==` / `!=` で比較できます。
 
@@ -213,7 +213,7 @@ const { name: string, age: integer } = obj;
 - 関数宣言ではパラメータ型・戻り値型の注釈が必須です。関数リテラルは文脈（たとえば `map` / `filter` / `reduce` の期待型）から型を推論できる場合にのみ省略可能です。
 - `export` を付ければ外部公開できます（`export function`）。
 - 関数宣言は `function id<T>(value: T): T { ... }` のように型パラメータを持てます。型引数は呼び出し側で明示できず、引数から推論されます。
-- `extern function` は本体を持たない宣言で、実装は `lib/prelude.wat` に置きます。現時点では `prelude` モジュール内でのみ使用できます。
+- `extern function` は本体を持たない宣言で、実装は `lib/*.wat` もしくはホスト側に置きます。現時点では `lib` 配下の組み込みモジュール内でのみ使用できます。
 
 例:
 
@@ -490,6 +490,7 @@ line2`;
 
 - `import { foo } from "./mod"` です。
 - `import { log } from "prelude"` です。
+- `import { get_args, get_env, sqlQuery, gc } from "server"` です（ホスト依存）。
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
 - `import { run_sandbox, run_formatter } from "runtime"` です。
@@ -500,6 +501,7 @@ line2`;
 ## 11. SQL
 
 ソースコード内に直接SQLクエリを記述できます。Rustのsqlxライブラリに倣い、期待する結果に応じたキーワードを使用します。
+SQL機能は `server` モジュールに依存するため、ホスト機能が必要です。
 
 ### 11.1 クエリキーワード
 
@@ -821,4 +823,4 @@ function Page(): JSX {
   - 前回GCからのハンドラー処理回数が `100` 回以上
   - 前回GC基準からのGoヒープ使用量（`HeapAlloc`）増分が `64 MiB` 以上
   - 前回GCからの経過時間が `1分` 以上
-- `prelude.gc(): void` を呼ぶと、上記しきい値に関係なく即時に `Store.GC()` を実行します。
+- `server.gc(): void` を呼ぶと、上記しきい値に関係なく即時に `Store.GC()` を実行します。

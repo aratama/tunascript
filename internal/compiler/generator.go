@@ -28,7 +28,8 @@ type Generator struct {
 	globalNames   map[*types.Symbol]string
 	globalExports map[*types.Symbol]bool
 	symModulePath map[*types.Symbol]string
-	preludeWAT    string
+	moduleWAT     map[string]string
+	moduleWATDefs map[string]map[string]bool
 	backend       Backend
 
 	lambdaFuncs map[*ast.ArrowFunc]*lambdaInfo
@@ -66,8 +67,17 @@ func NewGenerator(checker *types.Checker) *Generator {
 	}
 }
 
-func (g *Generator) SetPreludeWAT(src string) {
-	g.preludeWAT = src
+func (g *Generator) SetModuleWATs(srcs map[string]string) {
+	if srcs == nil {
+		g.moduleWAT = nil
+		g.moduleWATDefs = nil
+		return
+	}
+	g.moduleWAT = map[string]string{}
+	for name, src := range srcs {
+		g.moduleWAT[name] = src
+	}
+	g.moduleWATDefs = nil
 }
 
 func (g *Generator) SetBackend(backend Backend) {
@@ -91,7 +101,7 @@ func (g *Generator) Generate(entry string) (string, error) {
 	w.line("(module")
 	w.indent++
 	g.emitImports(w)
-	g.emitPreludeWAT(w)
+	g.emitModuleWATs(w)
 	g.emitMemory(w)
 	g.emitGlobals(w)
 	g.emitFunctions(w, entry)
@@ -143,6 +153,9 @@ func (g *Generator) internAllFunctionValueNames() {
 				continue
 			}
 			if target.Kind != types.SymFunc || target.Type == nil || target.Type.Kind != types.KindFunc {
+				continue
+			}
+			if g.isIntrinsicSymbol(target) && !g.isIntrinsicValueAllowed(target) {
 				continue
 			}
 			if _, ok := g.funcNames[target]; !ok {
@@ -430,7 +443,7 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 		g.internString(e.Value)
 	case *ast.IdentExpr:
 		sym := resolveSymbolAlias(g.checker.IdentSymbols[e])
-		if sym != nil && sym.Kind == types.SymFunc {
+		if sym != nil && sym.Kind == types.SymFunc && (!g.isIntrinsicSymbol(sym) || g.isIntrinsicValueAllowed(sym)) {
 			g.internString(g.funcValueExportName(sym))
 		}
 	case *ast.TemplateLit:
@@ -460,17 +473,27 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 			g.collectStringsExpr(entry.Value)
 		}
 	case *ast.CallExpr:
-		g.collectStringsExpr(e.Callee)
+		switch callee := e.Callee.(type) {
+		case *ast.MemberExpr:
+			g.collectStringsExpr(callee.Object)
+			g.internString(callee.Property)
+		case *ast.IdentExpr:
+			// 呼び出し位置の識別子は関数値として扱わない。
+		default:
+			g.collectStringsExpr(e.Callee)
+		}
 		for _, ta := range e.TypeArgs {
 			g.collectStringsType(ta)
 		}
 		for _, arg := range e.Args {
 			g.collectStringsExpr(arg)
 		}
-		if ident, ok := e.Callee.(*ast.IdentExpr); ok && ident.Name == "decode" && len(e.TypeArgs) == 1 {
-			targetType := g.checker.TypeExprTypes[e.TypeArgs[0]]
-			if targetType != nil {
-				g.internString(decodeSchemaString(targetType))
+		if ident, ok := e.Callee.(*ast.IdentExpr); ok && len(e.TypeArgs) == 1 {
+			if sym := resolveSymbolAlias(g.checker.IdentSymbols[ident]); sym != nil && sym.Name == "decode" && g.symModulePath[sym] == "json" {
+				targetType := g.checker.TypeExprTypes[e.TypeArgs[0]]
+				if targetType != nil {
+					g.internString(decodeSchemaString(targetType))
+				}
 			}
 		}
 	case *ast.MemberExpr:
@@ -816,147 +839,261 @@ func (g *Generator) assignSymbols(entry string) {
 }
 
 func (g *Generator) emitImports(w *watBuilder) {
-	if g.backend == BackendGC {
-		for _, imp := range g.preludeHostImports() {
-			w.line(fmt.Sprintf("(import \"prelude\" \"%s\" %s)", imp.name, imp.sig))
+	for _, mod := range g.modules {
+		moduleName := mod.AST.Path
+		if !isBuiltinModulePath(moduleName) {
+			continue
 		}
-		return
-	}
-
-	imports := []struct {
-		module string
-		name   string
-	}{
-		{"array", "range"},
-		{"file", "append_text"},
-		{"file", "exists"},
-		{"file", "read_dir"},
-		{"file", "read_text"},
-		{"file", "write_text"},
-		{"http", "http_add_route"},
-		{"http", "http_create_server"},
-		{"http", "http_listen"},
-		{"http", "http_response_html"},
-		{"http", "http_response_html_str"},
-		{"http", "http_response_json"},
-		{"http", "http_response_redirect"},
-		{"http", "http_response_redirect_str"},
-		{"json", "decode"},
-		{"json", "parse"},
-		{"json", "stringify"},
-		{"runtime", "run_formatter"},
-		{"runtime", "run_sandbox"},
-		{"sqlite", "db_open"},
-	}
-	for _, imp := range imports {
-		sig := importSig(imp.module, imp.name)
-		w.line(fmt.Sprintf("(import \"%s\" \"%s\" %s)", imp.module, imp.name, sig))
-	}
-	for _, imp := range g.preludeHostImports() {
-		w.line(fmt.Sprintf("(import \"prelude\" \"%s\" %s)", imp.name, imp.sig))
+		if g.backend == BackendGC && !g.hasModuleWAT(moduleName) {
+			continue
+		}
+		for _, imp := range g.moduleHostImports(mod) {
+			w.line(fmt.Sprintf("(import \"%s\" \"%s\" %s)", moduleName, imp.name, imp.sig))
+		}
 	}
 }
 
-func (g *Generator) emitPreludeWAT(w *watBuilder) {
-	src := strings.TrimSpace(g.preludeWAT)
-	if src == "" {
+func (g *Generator) emitModuleWATs(w *watBuilder) {
+	if len(g.moduleWAT) == 0 {
 		return
 	}
-	for _, line := range strings.Split(src, "\n") {
+	var modules []string
+	for name := range g.moduleWAT {
+		modules = append(modules, name)
+	}
+	sort.Strings(modules)
+	var importForms []string
+	var bodyForms []string
+	for _, name := range modules {
+		src := strings.TrimSpace(g.moduleWAT[name])
+		if src == "" {
+			continue
+		}
+		imports, body := splitWATImportForms(src)
+		importForms = append(importForms, imports...)
+		bodyForms = append(bodyForms, body...)
+	}
+	for _, form := range importForms {
+		emitWATForm(w, form)
+	}
+	for _, form := range bodyForms {
+		emitWATForm(w, form)
+	}
+}
+
+func emitWATForm(w *watBuilder, form string) {
+	if strings.TrimSpace(form) == "" {
+		return
+	}
+	for _, line := range strings.Split(form, "\n") {
 		w.line(strings.TrimRight(line, "\r"))
 	}
 }
 
-func importSig(module, name string) string {
-	prefix := fmt.Sprintf("$%s", module)
-	switch name {
-	case "append_text":
-		return fmt.Sprintf("(func %s.append_text (param externref externref) (result externref))", prefix)
-	case "exists":
-		return fmt.Sprintf("(func %s.exists (param externref) (result i32))", prefix)
-	case "read_dir":
-		return fmt.Sprintf("(func %s.read_dir (param externref) (result externref))", prefix)
-	case "read_text":
-		return fmt.Sprintf("(func %s.read_text (param externref) (result externref))", prefix)
-	case "range":
-		return fmt.Sprintf("(func %s.range (param i64 i64) (result externref))", prefix)
-	case "write_text":
-		return fmt.Sprintf("(func %s.write_text (param externref externref) (result externref))", prefix)
-	case "http_add_route":
-		return fmt.Sprintf("(func %s.http_add_route (param externref externref i32 i32 externref))", prefix)
-	case "http_create_server":
-		return fmt.Sprintf("(func %s.http_create_server (result externref))", prefix)
-	case "http_listen":
-		return fmt.Sprintf("(func %s.http_listen (param externref externref))", prefix)
-	case "http_response_html":
-		return fmt.Sprintf("(func %s.http_response_html (param i32 i32) (result externref))", prefix)
-	case "http_response_html_str":
-		return fmt.Sprintf("(func %s.http_response_html_str (param externref) (result externref))", prefix)
-	case "http_response_json":
-		return fmt.Sprintf("(func %s.http_response_json (param externref) (result externref))", prefix)
-	case "http_response_redirect":
-		return fmt.Sprintf("(func %s.http_response_redirect (param i32 i32) (result externref))", prefix)
-	case "http_response_redirect_str":
-		return fmt.Sprintf("(func %s.http_response_redirect_str (param externref) (result externref))", prefix)
-	case "decode":
-		return fmt.Sprintf("(func %s.decode (param externref externref) (result externref))", prefix)
-	case "parse":
-		return fmt.Sprintf("(func %s.parse (param externref) (result externref))", prefix)
-	case "stringify":
-		return fmt.Sprintf("(func %s.stringify (param externref) (result externref))", prefix)
-	case "run_formatter":
-		return fmt.Sprintf("(func %s.run_formatter (param externref) (result externref))", prefix)
-	case "run_sandbox":
-		return fmt.Sprintf("(func %s.run_sandbox (param externref) (result externref))", prefix)
-	case "db_open":
-		return fmt.Sprintf("(func %s.db_open (param externref) (result externref))", prefix)
-	default:
-		return ""
+func splitWATImportForms(src string) (imports []string, body []string) {
+	for _, form := range splitWATTopLevelForms(src) {
+		if strings.TrimSpace(form) == "" {
+			continue
+		}
+		if isWATImportForm(form) {
+			imports = append(imports, form)
+		} else {
+			body = append(body, form)
+		}
 	}
+	return imports, body
 }
 
-type preludeImportInfo struct {
+func splitWATTopLevelForms(src string) []string {
+	var forms []string
+	var buf strings.Builder
+	depth := 0
+	inString := false
+	inLineComment := false
+	inBlockComment := false
+	escaped := false
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
+		next := byte(0)
+		if i+1 < len(src) {
+			next = src[i+1]
+		}
+
+		if inLineComment {
+			buf.WriteByte(ch)
+			if ch == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			buf.WriteByte(ch)
+			if ch == ';' && next == ')' {
+				buf.WriteByte(next)
+				i++
+				inBlockComment = false
+			}
+			continue
+		}
+		if inString {
+			buf.WriteByte(ch)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if ch == ';' && next == ';' {
+			buf.WriteByte(ch)
+			buf.WriteByte(next)
+			i++
+			inLineComment = true
+			continue
+		}
+		if ch == '(' && next == ';' {
+			buf.WriteByte(ch)
+			buf.WriteByte(next)
+			i++
+			inBlockComment = true
+			continue
+		}
+
+		buf.WriteByte(ch)
+		if ch == '"' {
+			inString = true
+			continue
+		}
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+			if depth == 0 {
+				form := strings.TrimSpace(buf.String())
+				if form != "" {
+					forms = append(forms, form)
+				}
+				buf.Reset()
+			}
+		}
+	}
+	if strings.TrimSpace(buf.String()) != "" {
+		forms = append(forms, strings.TrimSpace(buf.String()))
+	}
+	return forms
+}
+
+func isWATImportForm(form string) bool {
+	i := 0
+	for i < len(form) {
+		switch form[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+			continue
+		case ';':
+			if i+1 < len(form) && form[i+1] == ';' {
+				i += 2
+				for i < len(form) && form[i] != '\n' {
+					i++
+				}
+				continue
+			}
+		case '(':
+			if i+1 < len(form) && form[i+1] == ';' {
+				i += 2
+				for i+1 < len(form) {
+					if form[i] == ';' && form[i+1] == ')' {
+						i += 2
+						break
+					}
+					i++
+				}
+				continue
+			}
+			return strings.HasPrefix(form[i:], "(import")
+		}
+		i++
+	}
+	return false
+}
+
+type importInfo struct {
 	name string
 	sig  string
 }
 
-var preludeWATFuncPattern = regexp.MustCompile(`\(\s*func\s+\$prelude\.([A-Za-z0-9_]+)`)
-
-func (g *Generator) preludeHostImports() []preludeImportInfo {
-	preludeMod := g.findModule("prelude")
-	if preludeMod == nil {
-		return nil
+func (g *Generator) hasModuleWAT(moduleName string) bool {
+	if g.moduleWAT == nil {
+		return false
 	}
-	definedInWAT := preludeDefinedInWAT(g.preludeWAT)
-	var imports []preludeImportInfo
-	for _, decl := range preludeMod.AST.Decls {
-		ext, ok := decl.(*ast.ExternFuncDecl)
-		if !ok {
-			continue
-		}
-		if definedInWAT[ext.Name] {
-			continue
-		}
-		sym := preludeMod.Top[ext.Name]
-		if sym == nil || sym.Type == nil || sym.Type.Kind != types.KindFunc {
-			continue
-		}
-		imports = append(imports, preludeImportInfo{
-			name: ext.Name,
-			sig:  externFuncImportSig("prelude", ext.Name, sym.Type),
-		})
-	}
-	return imports
+	return strings.TrimSpace(g.moduleWAT[moduleName]) != ""
 }
 
-func preludeDefinedInWAT(src string) map[string]bool {
+func (g *Generator) moduleDefinedInWAT(moduleName string) map[string]bool {
+	if g.moduleWATDefs == nil {
+		g.moduleWATDefs = map[string]map[string]bool{}
+	}
+	if defined, ok := g.moduleWATDefs[moduleName]; ok {
+		return defined
+	}
+	src := strings.TrimSpace(g.moduleWAT[moduleName])
+	if src == "" {
+		g.moduleWATDefs[moduleName] = nil
+		return nil
+	}
+	pattern := regexp.MustCompile(fmt.Sprintf(`\(\s*func\s+\$%s\.([A-Za-z0-9_]+)`, regexp.QuoteMeta(moduleName)))
 	defined := map[string]bool{}
-	for _, match := range preludeWATFuncPattern.FindAllStringSubmatch(src, -1) {
+	for _, match := range pattern.FindAllStringSubmatch(src, -1) {
 		if len(match) > 1 {
 			defined[match[1]] = true
 		}
 	}
+	g.moduleWATDefs[moduleName] = defined
 	return defined
+}
+
+func (g *Generator) moduleHostImports(mod *types.ModuleInfo) []importInfo {
+	if mod == nil {
+		return nil
+	}
+	definedInWAT := g.moduleDefinedInWAT(mod.AST.Path)
+	var imports []importInfo
+	for _, decl := range mod.AST.Decls {
+		ext, ok := decl.(*ast.ExternFuncDecl)
+		if !ok {
+			continue
+		}
+		if mod.AST.Path == "json" && ext.Name == "decode" {
+			sig := externFuncImportSig(mod.AST.Path, ext.Name, types.NewFunc([]*types.Type{types.JSON(), types.String()}, types.JSON()))
+			imports = append(imports, importInfo{
+				name: ext.Name,
+				sig:  sig,
+			})
+			continue
+		}
+		if definedInWAT != nil && definedInWAT[ext.Name] {
+			continue
+		}
+		if noImportIntrinsicNames[ext.Name] {
+			continue
+		}
+		sym := mod.Top[ext.Name]
+		if sym == nil || sym.Type == nil || sym.Type.Kind != types.KindFunc {
+			continue
+		}
+		imports = append(imports, importInfo{
+			name: ext.Name,
+			sig:  externFuncImportSig(mod.AST.Path, ext.Name, sym.Type),
+		})
+	}
+	return imports
 }
 
 func externFuncImportSig(module, name string, fnType *types.Type) string {
@@ -1072,7 +1209,7 @@ func (g *Generator) emitInit(w *watBuilder) {
 				continue
 			}
 			if ident, ok := cd.Init.(*ast.IdentExpr); ok {
-				if _, ok := builtinModule(ident.Name); ok {
+				if sym := resolveSymbolAlias(g.checker.IdentSymbols[ident]); sym != nil && g.isIntrinsicSymbol(sym) {
 					continue
 				}
 			}
@@ -1093,7 +1230,7 @@ func (g *Generator) emitInit(w *watBuilder) {
 		datum := g.stringData[g.stringIDs[jsonStr]]
 		emitter.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 		emitter.emit(fmt.Sprintf("(i32.const %d)", datum.length))
-		emitter.emit("(call $prelude.register_tables)")
+		emitter.emit("(call $server.register_tables)")
 	}
 
 	emitter.emit("(i32.const 1)")
@@ -1383,7 +1520,14 @@ func (g *Generator) emitFunctionValueWrappers(w *watBuilder) {
 			if _, ok := g.funcNames[target]; !ok {
 				continue
 			}
+			if g.isIntrinsicSymbol(target) && !g.isIntrinsicValueAllowed(target) {
+				continue
+			}
 			emitted[target] = true
+			if g.isIntrinsicSymbol(target) {
+				g.emitIntrinsicFunctionValueWrapper(w, target)
+				continue
+			}
 			g.emitFunctionValueWrapper(
 				w,
 				g.funcValueWrapperName(target),
@@ -1423,6 +1567,9 @@ func (g *Generator) functionValueDispatchEntries() []functionDispatchEntry {
 				continue
 			}
 			if target.Kind != types.SymFunc || target.Type == nil || target.Type.Kind != types.KindFunc {
+				continue
+			}
+			if g.isIntrinsicSymbol(target) && !g.isIntrinsicValueAllowed(target) {
 				continue
 			}
 			if _, ok := g.funcNames[target]; !ok {
@@ -1505,6 +1652,83 @@ func (g *Generator) emitFunctionValueWrapper(w *watBuilder, wrapperName, exportN
 		w.line("(call $prelude.val_undefined)")
 	} else {
 		emitBoxPrimitive(w, fnType.Ret)
+	}
+	w.indent--
+	w.line(")")
+	w.line(fmt.Sprintf("(export \"%s\" (func %s))", exportName, wrapperName))
+}
+
+func intrinsicArgLocalType(t *types.Type, refTy string) string {
+	if t == nil {
+		return refTy
+	}
+	switch t.Kind {
+	case types.KindI64:
+		return "i64"
+	case types.KindI32:
+		return "i32"
+	case types.KindF64:
+		return "f64"
+	case types.KindBool:
+		return "i32"
+	default:
+		return refTy
+	}
+}
+
+func (g *Generator) emitIntrinsicFunctionValueWrapper(w *watBuilder, sym *types.Symbol) {
+	fnType := sym.Type
+	if fnType == nil || fnType.Kind != types.KindFunc {
+		return
+	}
+	if !g.isIntrinsicValueAllowed(sym) {
+		return
+	}
+	module, ok := g.intrinsicModule(sym)
+	if !ok {
+		return
+	}
+
+	refTy := g.refType()
+	emitter := newFuncEmitter(g, fnType.Ret)
+	argExprs := make([]ast.Expr, len(fnType.Params))
+
+	for i, param := range fnType.Params {
+		argName := fmt.Sprintf("_arg%d", i)
+		local := emitter.addLocalRaw(intrinsicArgLocalType(param, refTy))
+		emitter.bindLocal(argName, local)
+		emitter.emit("(local.get $args)")
+		emitter.emit(fmt.Sprintf("(i32.const %d)", i))
+		emitter.emit("(call $prelude.arr_get)")
+		emitter.emitUnboxIfPrimitive(param)
+		emitter.emit(fmt.Sprintf("(local.set %s)", local))
+
+		ident := &ast.IdentExpr{Name: argName}
+		argExprs[i] = ident
+		g.checker.ExprTypes[ident] = param
+		g.checker.IdentSymbols[ident] = &types.Symbol{Name: argName, Kind: types.SymVar, Type: param, StorageType: param}
+	}
+
+	call := &ast.CallExpr{
+		Callee: &ast.IdentExpr{Name: sym.Name},
+		Args:   argExprs,
+	}
+	emitter.emitBuiltinCall(module, sym.Name, call, fnType.Ret)
+	if fnType.Ret == nil || fnType.Ret.Kind == types.KindVoid {
+		emitter.emit("(call $prelude.val_undefined)")
+	} else {
+		emitter.emitBoxIfPrimitive(fnType.Ret)
+	}
+
+	wrapperName := g.funcValueWrapperName(sym)
+	exportName := g.funcValueExportName(sym)
+	w.line(fmt.Sprintf("(func %s (param $args %s) (result %s)", wrapperName, refTy, refTy))
+	w.indent++
+	for _, local := range emitter.locals {
+		w.line(fmt.Sprintf("(local %s %s)", local.name, local.typ))
+	}
+	for _, line := range emitter.body {
+		w.line(line)
 	}
 	w.indent--
 	w.line(")")
@@ -2026,7 +2250,7 @@ func (f *funcEmitter) emitExpr(expr ast.Expr, t *types.Type) {
 			f.emit(fmt.Sprintf("(local.get %s)", local))
 		} else if sym != nil && sym.Kind == types.SymVar {
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.globalNames[sym]))
-		} else if sym != nil && sym.Kind == types.SymFunc {
+		} else if sym != nil && sym.Kind == types.SymFunc && (!f.g.isIntrinsicSymbol(sym) || f.g.isIntrinsicValueAllowed(sym)) {
 			f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(f.g.funcValueExportName(sym))))
 		}
 		if sym != nil && sym.Kind == types.SymVar {
@@ -2629,21 +2853,15 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 		}
 		return
 	}
-	name := ident.Name
 	sym := resolveSymbolAlias(f.g.checker.IdentSymbols[ident])
 	if sym == nil {
-		if module, ok := builtinModule(name); ok {
-			f.emitBuiltinCall(module, name, call, t)
-		}
-		return
-	}
-	if sym.Kind == types.SymBuiltin {
-		if module, ok := builtinModule(sym.Name); ok {
-			f.emitBuiltinCall(module, sym.Name, call, t)
-		}
 		return
 	}
 	if sym.Type == nil || sym.Type.Kind != types.KindFunc {
+		return
+	}
+	if module, ok := f.g.intrinsicModule(sym); ok {
+		f.emitBuiltinCall(module, sym.Name, call, t)
 		return
 	}
 	if sym.Kind == types.SymFunc {
@@ -2727,19 +2945,20 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 		}
 	}
 	if targetSym == nil {
-		if module, ok := builtinModule(funcName); ok {
-			// Create a synthetic call with object as first argument
-			allArgs := append([]ast.Expr{member.Object}, call.Args...)
-			syntheticCall := &ast.CallExpr{
-				Callee: &ast.IdentExpr{Name: funcName, Span: member.Span},
-				Args:   allArgs,
-				Span:   call.Span,
-			}
-			f.emitBuiltinCall(module, funcName, syntheticCall, t)
-		}
 		return
 	}
 	if targetSym.Type == nil || targetSym.Type.Kind != types.KindFunc {
+		return
+	}
+	if module, ok := f.g.intrinsicModule(targetSym); ok {
+		// Create a synthetic call with object as first argument
+		allArgs := append([]ast.Expr{member.Object}, call.Args...)
+		syntheticCall := &ast.CallExpr{
+			Callee: &ast.IdentExpr{Name: funcName, Span: member.Span},
+			Args:   allArgs,
+			Span:   call.Span,
+		}
+		f.emitBuiltinCall(module, funcName, syntheticCall, t)
 		return
 	}
 
@@ -2822,14 +3041,6 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitExpr(start, f.g.checker.ExprTypes[start])
 		f.emitExpr(end, f.g.checker.ExprTypes[end])
 		f.emit(fmt.Sprintf("(call $%s.range)", module))
-	case "length":
-		f.emitLength(call)
-	case "map":
-		f.emitMap(call, t)
-	case "filter":
-		f.emitFilter(call, t)
-	case "reduce":
-		f.emitReduce(call, t)
 	case "db_open":
 		f.emitDbOpen(call, module)
 	case "get_args":
@@ -2892,6 +3103,26 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitHttpGetPath(call, module)
 	case "getMethod":
 		f.emitHttpGetMethod(call, module)
+	default:
+		mod := f.g.findModule(module)
+		if mod == nil {
+			return
+		}
+		sym := mod.Top[name]
+		if sym == nil || sym.Type == nil || sym.Type.Kind != types.KindFunc {
+			return
+		}
+		for i, arg := range call.Args {
+			argType := f.g.checker.ExprTypes[arg]
+			f.emitExpr(arg, argType)
+			if i < len(sym.Type.Params) {
+				f.emitCoerce(argType, sym.Type.Params[i])
+			}
+		}
+		f.emit(fmt.Sprintf("(call $%s.%s)", module, name))
+		if sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
+			f.emitUnboxIfPrimitive(t)
+		}
 	}
 }
 
@@ -2943,7 +3174,7 @@ func (f *funcEmitter) emitSqlQuery(call *ast.CallExpr) {
 	// Emit params array
 	f.emitExpr(paramsArg, paramsType)
 
-	f.emit("(call $prelude.sql_query)")
+	f.emit("(call $server.sql_query)")
 }
 
 // HTTP Server helper methods
@@ -3626,19 +3857,19 @@ func (f *funcEmitter) emitSQLExpr(e *ast.SQLExpr, t *types.Type) {
 	switch e.Kind {
 	case ast.SQLQueryExecute:
 		// execute returns nothing
-		f.emit("(call $prelude.sql_execute)")
+		f.emit("(call $server.sql_execute)")
 	case ast.SQLQueryFetchOne:
 		// fetch_one returns a single row object
-		f.emit("(call $prelude.sql_fetch_one)")
+		f.emit("(call $server.sql_fetch_one)")
 	case ast.SQLQueryFetchOptional:
 		// fetch_optional returns a single row object or null
-		f.emit("(call $prelude.sql_fetch_optional)")
+		f.emit("(call $server.sql_fetch_optional)")
 	case ast.SQLQueryFetch, ast.SQLQueryFetchAll:
 		// fetch and fetch_all return { columns: [], rows: [] }
-		f.emit("(call $prelude.sql_query)")
+		f.emit("(call $server.sql_query)")
 	default:
 		// Default behavior (same as fetch_all)
-		f.emit("(call $prelude.sql_query)")
+		f.emit("(call $server.sql_query)")
 	}
 }
 
@@ -3857,27 +4088,100 @@ func elemType(t *types.Type) *types.Type {
 	}
 }
 
-func builtinModule(name string) (string, bool) {
-	switch name {
-	case "log", "to_string", "get_args", "sqlQuery",
-		"gc",
-		"get_env", "responseText", "getPath", "getMethod":
-		return "prelude", true
-	case "stringify", "parse", "decode":
-		return "json", true
-	case "range", "length", "map", "filter", "reduce":
-		return "array", true
-	case "run_sandbox", "run_formatter":
-		return "runtime", true
-	case "read_text", "write_text", "append_text", "read_dir", "exists":
-		return "file", true
-	case "db_open":
-		return "sqlite", true
-	case "create_server", "listen", "add_route", "response_html", "responseJson", "response_redirect":
-		return "http", true
-	default:
+var intrinsicFuncNames = map[string]bool{
+	"log":               true,
+	"stringify":         true,
+	"parse":             true,
+	"decode":            true,
+	"to_string":         true,
+	"range":             true,
+	"length":            true,
+	"map":               true,
+	"filter":            true,
+	"reduce":            true,
+	"db_open":           true,
+	"get_args":          true,
+	"get_env":           true,
+	"gc":                true,
+	"run_sandbox":       true,
+	"run_formatter":     true,
+	"read_text":         true,
+	"write_text":        true,
+	"append_text":       true,
+	"read_dir":          true,
+	"exists":            true,
+	"sqlQuery":          true,
+	"create_server":     true,
+	"listen":            true,
+	"add_route":         true,
+	"responseText":      true,
+	"response_html":     true,
+	"responseJson":      true,
+	"response_redirect": true,
+	"getPath":           true,
+	"getMethod":         true,
+}
+
+var noImportIntrinsicNames = map[string]bool{
+	"sqlQuery":          true,
+	"create_server":     true,
+	"listen":            true,
+	"add_route":         true,
+	"responseText":      true,
+	"response_html":     true,
+	"responseJson":      true,
+	"response_redirect": true,
+	"getPath":           true,
+	"getMethod":         true,
+}
+
+var intrinsicValueDenied = map[string]bool{
+	"add_route": true,
+	"decode":    true,
+	"range":     true,
+	"sqlQuery":  true,
+}
+
+func isBuiltinModulePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	if strings.Contains(path, "/") || strings.Contains(path, "\\") {
+		return false
+	}
+	if filepath.Ext(path) != "" {
+		return false
+	}
+	return true
+}
+
+func (g *Generator) isIntrinsicSymbol(sym *types.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	moduleName := g.symModulePath[sym]
+	if !isBuiltinModulePath(moduleName) {
+		return false
+	}
+	return intrinsicFuncNames[sym.Name]
+}
+
+func (g *Generator) isIntrinsicValueAllowed(sym *types.Symbol) bool {
+	if sym == nil || !g.isIntrinsicSymbol(sym) {
+		return false
+	}
+	return !intrinsicValueDenied[sym.Name]
+}
+
+func (g *Generator) intrinsicModule(sym *types.Symbol) (string, bool) {
+	if !g.isIntrinsicSymbol(sym) {
 		return "", false
 	}
+	moduleName := g.symModulePath[sym]
+	if moduleName == "" {
+		moduleName = "prelude"
+	}
+	return moduleName, true
 }
 
 func resolveSymbolAlias(sym *types.Symbol) *types.Symbol {

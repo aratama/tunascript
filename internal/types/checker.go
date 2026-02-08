@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode"
@@ -84,6 +85,7 @@ type Checker struct {
 	Tables        map[string]*TableInfo // table name -> table info
 	Errors        []error
 	JSXComponents map[*ast.JSXElement]*JSXComponentInfo
+	symbolModule  map[*Symbol]*ModuleInfo
 }
 
 func NewChecker() *Checker {
@@ -94,6 +96,7 @@ func NewChecker() *Checker {
 		TypeExprTypes: map[ast.TypeExpr]*Type{},
 		Tables:        map[string]*TableInfo{},
 		JSXComponents: map[*ast.JSXElement]*JSXComponentInfo{},
+		symbolModule:  map[*Symbol]*ModuleInfo{},
 	}
 }
 
@@ -110,21 +113,42 @@ func (c *Checker) Check() bool {
 		c.collectTop(preludeMod)
 	}
 
-	// Second: process imports (including type aliases from built-in modules)
+	var builtinMods []*ModuleInfo
 	for _, mod := range c.Modules {
 		if mod == preludeMod {
+			continue
+		}
+		if isBuiltinModulePath(mod.AST.Path) {
+			builtinMods = append(builtinMods, mod)
+		}
+	}
+	sort.Slice(builtinMods, func(i, j int) bool {
+		return builtinMods[i].AST.Path < builtinMods[j].AST.Path
+	})
+
+	// Second: process imports for builtin modules (so their type aliases are available)
+	for _, mod := range builtinMods {
+		c.processImports(mod)
+	}
+	// Third: collect top-level declarations for builtin modules
+	for _, mod := range builtinMods {
+		c.collectTop(mod)
+	}
+	// Fourth: process imports for user modules
+	for _, mod := range c.Modules {
+		if mod == preludeMod || isBuiltinModulePath(mod.AST.Path) {
 			continue
 		}
 		c.processImports(mod)
 	}
-	// Third: collect top-level declarations
+	// Fifth: collect top-level declarations for user modules
 	for _, mod := range c.Modules {
-		if mod == preludeMod {
+		if mod == preludeMod || isBuiltinModulePath(mod.AST.Path) {
 			continue
 		}
 		c.collectTop(mod)
 	}
-	// Fourth: type check the module
+	// Sixth: type check the module
 	for _, mod := range c.Modules {
 		c.checkModule(mod)
 	}
@@ -134,79 +158,23 @@ func (c *Checker) Check() bool {
 // processImports handles import statements, including type aliases from built-in modules
 func (c *Checker) processImports(mod *ModuleInfo) {
 	for _, imp := range mod.AST.Imports {
-		if imp.From == "prelude" {
-			preludeMod := c.Modules["prelude"]
-			for _, item := range imp.Items {
-				if item.IsType {
-					// Check if it's a prelude type
-					if preludeMod != nil {
-						if aliasInfo := preludeMod.TypeAliases[item.Name]; aliasInfo != nil {
-							mod.TypeAliases[item.Name] = aliasInfo
-							continue
-						}
-						if exp := preludeMod.Exports[item.Name]; exp != nil && exp.Kind == SymType {
-							mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
-							continue
-						}
-					}
-					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias != nil {
-						mod.TypeAliases[item.Name] = preludeAlias
-					}
-				}
-			}
+		if !isBuiltinModulePath(imp.From) {
+			continue
 		}
-		if imp.From == "http" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if httpAlias := getHTTPTypeAlias(item.Name); httpAlias != nil {
-						mod.TypeAliases[item.Name] = httpAlias
-					}
-				}
-			}
+		dep := c.Modules[imp.From]
+		if dep == nil {
+			continue
 		}
-		if imp.From == "sqlite" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if sqliteAlias := getSQLiteTypeAlias(item.Name); sqliteAlias != nil {
-						mod.TypeAliases[item.Name] = sqliteAlias
-					}
-				}
+		for _, item := range imp.Items {
+			if !item.IsType {
+				continue
 			}
-		}
-		if imp.From == "json" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if jsonAlias := getJSONTypeAlias(item.Name); jsonAlias != nil {
-						mod.TypeAliases[item.Name] = jsonAlias
-					}
-				}
+			if aliasInfo := dep.TypeAliases[item.Name]; aliasInfo != nil {
+				mod.TypeAliases[item.Name] = aliasInfo
+				continue
 			}
-		}
-		if imp.From == "array" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if arrayAlias := getArrayTypeAlias(item.Name); arrayAlias != nil {
-						mod.TypeAliases[item.Name] = arrayAlias
-					}
-				}
-			}
-		}
-		if imp.From == "runtime" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if runtimeAlias := getRuntimeTypeAlias(item.Name); runtimeAlias != nil {
-						mod.TypeAliases[item.Name] = runtimeAlias
-					}
-				}
-			}
-		}
-		if imp.From == "file" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if fileAlias := getFileTypeAlias(item.Name); fileAlias != nil {
-						mod.TypeAliases[item.Name] = fileAlias
-					}
-				}
+			if exp := dep.Exports[item.Name]; exp != nil && exp.Kind == SymType {
+				mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
 			}
 		}
 	}
@@ -221,6 +189,7 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 			if d.Export {
 				sym := &Symbol{Name: d.Name, Kind: SymType, Type: alias.Template, Decl: d}
 				mod.Exports[d.Name] = sym
+				c.symbolModule[sym] = mod
 			}
 		}
 	}
@@ -242,6 +211,7 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 			if d.Export {
 				mod.Exports[d.Name] = sym
 			}
+			c.symbolModule[sym] = mod
 		case *ast.FuncDecl:
 			if _, exists := mod.Top[d.Name]; exists {
 				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
@@ -253,13 +223,14 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 			if d.Export {
 				mod.Exports[d.Name] = sym
 			}
+			c.symbolModule[sym] = mod
 		case *ast.ExternFuncDecl:
 			if _, exists := mod.Top[d.Name]; exists {
 				c.errorf(d.Span, "shadowing is not allowed: %s", d.Name)
 				continue
 			}
-			if mod.AST.Path != "prelude" {
-				c.errorf(d.Span, "extern function is only supported in prelude")
+			if !isBuiltinModulePath(mod.AST.Path) {
+				c.errorf(d.Span, "extern function is only supported in builtin modules")
 				continue
 			}
 			sig, _ := c.funcTypeFromExternDecl(d, mod)
@@ -268,6 +239,7 @@ func (c *Checker) collectTop(mod *ModuleInfo) {
 			if d.Export {
 				mod.Exports[d.Name] = sym
 			}
+			c.symbolModule[sym] = mod
 		case *ast.TableDecl:
 			// Collect table definition
 			tableInfo := &TableInfo{
@@ -314,163 +286,6 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 		env.vars[name] = sym
 	}
 	for _, imp := range mod.AST.Imports {
-		if imp.From == "prelude" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			preludeMod := c.Modules["prelude"]
-			for _, item := range imp.Items {
-				if item.IsType {
-					if preludeMod != nil {
-						if aliasInfo := preludeMod.TypeAliases[item.Name]; aliasInfo != nil {
-							mod.TypeAliases[item.Name] = aliasInfo
-							continue
-						}
-						if exp := preludeMod.Exports[item.Name]; exp != nil {
-							if exp.Kind != SymType {
-								c.errorf(imp.Span, "%s is not a type", item.Name)
-								continue
-							}
-							mod.TypeAliases[item.Name] = &TypeAlias{Template: exp.Type}
-							continue
-						}
-					}
-					if preludeAlias := getPreludeTypeAlias(item.Name); preludeAlias != nil {
-						mod.TypeAliases[item.Name] = preludeAlias
-						continue
-					}
-					c.errorf(imp.Span, "%s is not a type in prelude", item.Name)
-					continue
-				}
-				if preludeMod != nil {
-					if exp := preludeMod.Exports[item.Name]; exp != nil {
-						if exp.Kind == SymType {
-							c.errorf(imp.Span, "%s is a type, use 'type %s' to import", item.Name, item.Name)
-							continue
-						}
-						c.bindImportedValue(env, item.Name, exp, imp.Span)
-						continue
-					}
-				}
-				if !isPreludeName(item.Name) {
-					c.errorf(imp.Span, "%s is not in prelude", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "http" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			for _, item := range imp.Items {
-				if item.IsType {
-					if httpAlias := getHTTPTypeAlias(item.Name); httpAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in http", item.Name)
-					}
-					continue
-				}
-				if !isHTTPName(item.Name) {
-					c.errorf(imp.Span, "%s is not in http", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "sqlite" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			for _, item := range imp.Items {
-				if item.IsType {
-					if sqliteAlias := getSQLiteTypeAlias(item.Name); sqliteAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in sqlite", item.Name)
-					}
-					continue
-				}
-				if !isSQLiteName(item.Name) {
-					c.errorf(imp.Span, "%s is not in sqlite", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "json" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			for _, item := range imp.Items {
-				if item.IsType {
-					if jsonAlias := getJSONTypeAlias(item.Name); jsonAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in json", item.Name)
-					}
-					continue
-				}
-				if !isJSONName(item.Name) {
-					c.errorf(imp.Span, "%s is not in json", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "array" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			for _, item := range imp.Items {
-				if item.IsType {
-					if arrayAlias := getArrayTypeAlias(item.Name); arrayAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in array", item.Name)
-					}
-					continue
-				}
-				if !isArrayName(item.Name) {
-					c.errorf(imp.Span, "%s is not in array", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "runtime" {
-			if imp.DefaultName != "" {
-				c.errorf(imp.Span, "default import is not supported for %s", imp.From)
-			}
-			for _, item := range imp.Items {
-				if item.IsType {
-					if runtimeAlias := getRuntimeTypeAlias(item.Name); runtimeAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in runtime", item.Name)
-					}
-					continue
-				}
-				if !isRuntimeName(item.Name) {
-					c.errorf(imp.Span, "%s is not in runtime", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
-		if imp.From == "file" {
-			for _, item := range imp.Items {
-				if item.IsType {
-					if fileAlias := getFileTypeAlias(item.Name); fileAlias == nil {
-						c.errorf(imp.Span, "%s is not a type in file", item.Name)
-					}
-					continue
-				}
-				if !isFileName(item.Name) {
-					c.errorf(imp.Span, "%s is not in file", item.Name)
-					continue
-				}
-				c.bindImportedValue(env, item.Name, &Symbol{Name: item.Name, Kind: SymBuiltin}, imp.Span)
-			}
-			continue
-		}
 		dep, ok := c.Modules[imp.From]
 		if !ok {
 			c.errorf(imp.Span, "%s not found", imp.From)
@@ -490,7 +305,6 @@ func (c *Checker) checkModule(mod *ModuleInfo) {
 				c.errorf(imp.Span, "%s is not exported from %s", item.Name, imp.From)
 				continue
 			}
-			// Handle type alias imports
 			if item.IsType {
 				if exp.Kind != SymType {
 					c.errorf(imp.Span, "%s is not a type", item.Name)
@@ -636,13 +450,17 @@ func (c *Checker) checkFuncLiteral(env *Env, fn *ast.ArrowFunc, expected *Type) 
 		return sig
 	}
 
-	if expectedRet != nil {
+	if expectedRet != nil && !typeContainsTypeParam(expectedRet) {
 		sig := NewFunc(params, expectedRet)
 		c.checkFuncBody(env, fn.Params, body, sig, typeParams)
 		return sig
 	}
 
-	ret := c.checkFuncBodyInfer(env, fn.Params, body, params, nil)
+	inferExpected := expectedRet
+	if expectedRet != nil && typeContainsTypeParam(expectedRet) {
+		inferExpected = nil
+	}
+	ret := c.checkFuncBodyInfer(env, fn.Params, body, params, inferExpected)
 	if ret == nil {
 		return nil
 	}
@@ -1295,13 +1113,9 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			c.errorf(e.Span, "undefined: %s", e.Name)
 			return nil
 		}
-		if sym.Kind == SymBuiltin {
-			if expected == nil || expected.Kind != KindFunc {
-				c.errorf(e.Span, "builtin cannot be used as value")
-				return nil
-			}
-			c.ExprTypes[expr] = expected
-			return expected
+		if c.isIntrinsicSymbol(sym) && !c.isIntrinsicValueAllowed(sym) {
+			c.errorf(e.Span, "builtin cannot be used as value")
+			return nil
 		}
 		c.IdentSymbols[e] = sym
 		c.ExprTypes[expr] = sym.Type
@@ -1377,7 +1191,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 
 		resultType := NewUnion([]*Type{thenValueType, elseValueType})
-		if expected != nil && resultType != nil && !resultType.AssignableTo(expected) {
+		if expected != nil && resultType != nil && !typeContainsTypeParam(expected) && !resultType.AssignableTo(expected) {
 			c.errorf(e.Span, "if expression type mismatch")
 			return nil
 		}
@@ -1942,6 +1756,160 @@ func isTemplateStringConvertible(t *Type) bool {
 	}
 }
 
+func collectTypeParamPlaceholders(t *Type, placeholders map[string]*Type) {
+	if t == nil {
+		return
+	}
+	switch t.Kind {
+	case KindTypeParam:
+		if _, ok := placeholders[t.Name]; !ok {
+			placeholders[t.Name] = t
+		}
+	case KindArray:
+		collectTypeParamPlaceholders(t.Elem, placeholders)
+	case KindFunc:
+		for _, param := range t.Params {
+			collectTypeParamPlaceholders(param, placeholders)
+		}
+		collectTypeParamPlaceholders(t.Ret, placeholders)
+	case KindTuple:
+		for _, elem := range t.Tuple {
+			collectTypeParamPlaceholders(elem, placeholders)
+		}
+	case KindObject:
+		for _, prop := range t.Props {
+			collectTypeParamPlaceholders(prop.Type, placeholders)
+		}
+		if t.Index != nil {
+			collectTypeParamPlaceholders(t.Index, placeholders)
+		}
+	case KindUnion:
+		for _, member := range t.Union {
+			collectTypeParamPlaceholders(member, placeholders)
+		}
+	}
+}
+
+func (c *Checker) checkCallWithSymbol(env *Env, sym *Symbol, call *ast.CallExpr, expected *Type) *Type {
+	if sym.Type == nil || sym.Type.Kind != KindFunc {
+		c.errorf(call.Span, "%s is not function", sym.Name)
+		return nil
+	}
+	sig := sym.Type
+	if c.isIntrinsicSymbol(sym) && sym.Name == "add_route" && len(call.Args) == 4 && len(sig.Params) == 3 {
+		if c.checkExpr(env, call.Args[0], sig.Params[0]) == nil {
+			return nil
+		}
+		if c.checkExpr(env, call.Args[1], String()) == nil {
+			return nil
+		}
+		if c.checkExpr(env, call.Args[2], sig.Params[1]) == nil {
+			return nil
+		}
+		if c.checkExpr(env, call.Args[3], sig.Params[2]) == nil {
+			return nil
+		}
+		c.ExprTypes[call] = sig.Ret
+		return sig.Ret
+	}
+	if len(call.Args) != len(sig.Params) {
+		c.errorf(call.Span, "argument count mismatch")
+		return nil
+	}
+	bindings := map[*Type]*Type{}
+	explicitTypeArgs := len(call.TypeArgs) > 0
+	if explicitTypeArgs {
+		if len(sig.TypeParams) == 0 {
+			c.errorf(call.Span, "type arguments are only supported for generic functions")
+			return nil
+		}
+		if len(call.TypeArgs) != len(sig.TypeParams) {
+			c.errorf(call.Span, "type argument count mismatch")
+			return nil
+		}
+		placeholders := map[string]*Type{}
+		collectTypeParamPlaceholders(sig, placeholders)
+		for i, name := range sig.TypeParams {
+			argType := c.resolveTypeInEnv(call.TypeArgs[i], env)
+			if argType == nil {
+				return nil
+			}
+			if placeholder := placeholders[name]; placeholder != nil {
+				bindings[placeholder] = argType
+			}
+			if c.isDecodeSymbol(sym) {
+				if !isDecodableType(argType, nil) {
+					c.errorf(call.Span, "decode target type not supported")
+					return nil
+				}
+			}
+		}
+	} else if c.isDecodeSymbol(sym) && len(sig.TypeParams) > 0 {
+		c.errorf(call.Span, "decode expects 1 type argument")
+		return nil
+	}
+
+	var argTypes []*Type
+	if !explicitTypeArgs {
+		argTypes = make([]*Type, len(call.Args))
+		for i, arg := range call.Args {
+			if _, ok := arg.(*ast.ArrowFunc); ok {
+				continue
+			}
+			expectedParam := c.substituteTypeParams(sig.Params[i], bindings)
+			argType := c.checkExpr(env, arg, expectedParam)
+			if argType == nil {
+				return nil
+			}
+			argTypes[i] = argType
+			if typeContainsTypeParam(expectedParam) {
+				if !c.matchType(expectedParam, argType, bindings) {
+					c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
+					return nil
+				}
+			}
+		}
+	}
+
+	for i, arg := range call.Args {
+		expectedParam := c.substituteTypeParams(sig.Params[i], bindings)
+		var argType *Type
+		if explicitTypeArgs {
+			argType = c.checkExpr(env, arg, expectedParam)
+		} else {
+			argType = argTypes[i]
+			if argType == nil {
+				argType = c.checkExpr(env, arg, expectedParam)
+			} else {
+				argType = c.substituteTypeParams(argType, bindings)
+				c.ExprTypes[arg] = argType
+			}
+		}
+		if argType == nil {
+			return nil
+		}
+		if explicitTypeArgs {
+			if expectedParam != nil && !argType.AssignableTo(expectedParam) {
+				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
+				return nil
+			}
+			continue
+		}
+		if typeContainsTypeParam(expectedParam) {
+			if !c.matchType(expectedParam, argType, bindings) {
+				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
+				return nil
+			}
+		} else if !argType.AssignableTo(expectedParam) {
+			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
+			return nil
+		}
+	}
+	retType := c.substituteTypeParams(sig.Ret, bindings)
+	c.ExprTypes[call] = retType
+	return retType
+}
+
 func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type {
 	// Handle method-style call: obj.func(args) => func(obj, args)
 	if member, ok := call.Callee.(*ast.MemberExpr); ok {
@@ -1958,43 +1926,8 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 		c.errorf(call.Span, "undefined: %s", ident.Name)
 		return nil
 	}
-	if sym.Kind == SymBuiltin {
-		return c.checkBuiltinCall(env, ident.Name, call, expected)
-	}
-	if len(call.TypeArgs) != 0 {
-		c.errorf(call.Span, "type arguments are only supported for builtin functions")
-		return nil
-	}
-	if sym.Type == nil || sym.Type.Kind != KindFunc {
-		c.errorf(call.Span, "%s is not function", ident.Name)
-		return nil
-	}
 	c.IdentSymbols[ident] = sym
-	sig := sym.Type
-	if len(call.Args) != len(sig.Params) {
-		c.errorf(call.Span, "argument count mismatch")
-		return nil
-	}
-	bindings := map[*Type]*Type{}
-	for i, arg := range call.Args {
-		argType := c.checkExpr(env, arg, sig.Params[i])
-		if argType == nil {
-			return nil
-		}
-		expectedParam := sig.Params[i]
-		if typeContainsTypeParam(expectedParam) {
-			if !c.matchType(expectedParam, argType, bindings) {
-				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
-				return nil
-			}
-		} else if !argType.AssignableTo(expectedParam) {
-			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
-			return nil
-		}
-	}
-	retType := c.substituteTypeParams(sig.Ret, bindings)
-	c.ExprTypes[call] = retType
-	return retType
+	return c.checkCallWithSymbol(env, sym, call, expected)
 }
 
 func normalizeTypeParamBinding(typ *Type) *Type {
@@ -2235,612 +2168,22 @@ func typeContainsTypeParam(typ *Type) bool {
 func (c *Checker) checkMethodCall(env *Env, call *ast.CallExpr, member *ast.MemberExpr, expected *Type) *Type {
 	funcName := member.Property
 
-	// Check the receiver object type first
-	objType := c.checkExpr(env, member.Object, nil)
-	if objType == nil {
-		return nil
-	}
-
 	sym := env.lookup(funcName)
 	if sym == nil {
 		c.errorf(call.Span, "undefined: %s", funcName)
 		return nil
 	}
 
-	if sym.Kind == SymBuiltin {
-		// For builtin calls, prepend the object as first argument
-		allArgs := append([]ast.Expr{member.Object}, call.Args...)
-		syntheticCall := &ast.CallExpr{
-			Callee: &ast.IdentExpr{Name: funcName, Span: member.Span},
-			Args:   allArgs,
-			Span:   call.Span,
-		}
-		result := c.checkBuiltinCall(env, funcName, syntheticCall, expected)
-		c.ExprTypes[call] = result
-		return result
+	allArgs := append([]ast.Expr{member.Object}, call.Args...)
+	syntheticCall := &ast.CallExpr{
+		Callee:   &ast.IdentExpr{Name: funcName, Span: member.Span},
+		Args:     allArgs,
+		TypeArgs: call.TypeArgs,
+		Span:     call.Span,
 	}
-
-	if sym.Kind != SymFunc || sym.Type == nil || sym.Type.Kind != KindFunc {
-		c.errorf(call.Span, "%s is not function", funcName)
-		return nil
-	}
-
-	sig := sym.Type
-	// Check that argument count matches (object + args == params)
-	if len(call.Args)+1 != len(sig.Params) {
-		c.errorf(call.Span, "argument count mismatch")
-		return nil
-	}
-
-	// Check object type matches first parameter
-	bindings := map[*Type]*Type{}
-	if typeContainsTypeParam(sig.Params[0]) {
-		if !c.matchType(sig.Params[0], objType, bindings) {
-			c.errorf(call.Span, "receiver type mismatch")
-			return nil
-		}
-	} else if !objType.AssignableTo(sig.Params[0]) {
-		c.errorf(call.Span, "receiver type mismatch")
-		return nil
-	}
-
-	// Check remaining arguments
-	for i, arg := range call.Args {
-		argType := c.checkExpr(env, arg, sig.Params[i+1])
-		if argType == nil {
-			return nil
-		}
-		expectedParam := sig.Params[i+1]
-		if typeContainsTypeParam(expectedParam) {
-			if !c.matchType(expectedParam, argType, bindings) {
-				c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
-				return nil
-			}
-		} else if !argType.AssignableTo(expectedParam) {
-			c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(expectedParam), typeNameForError(argType))
-			return nil
-		}
-	}
-
-	retType := c.substituteTypeParams(sig.Ret, bindings)
-	c.ExprTypes[call] = retType
-	return retType
-}
-
-func (c *Checker) checkBuiltinCall(env *Env, name string, call *ast.CallExpr, expected *Type) *Type {
-	switch name {
-	case "log":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "log expects 1 arg")
-			return nil
-		}
-		c.checkExpr(env, call.Args[0], nil)
-		c.ExprTypes[call] = Void()
-		return Void()
-	case "stringify":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "stringify expects 1 arg")
-			return nil
-		}
-		c.checkExpr(env, call.Args[0], nil)
-		c.ExprTypes[call] = String()
-		return String()
-	case "parse":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "parse expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "parse expects string")
-			return nil
-		}
-		ret := NewUnion([]*Type{JSON(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "decode":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "decode expects 1 arg")
-			return nil
-		}
-		if len(call.TypeArgs) != 1 {
-			c.errorf(call.Span, "decode expects 1 type argument")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], JSON())
-		if argType == nil || argType.Kind != KindJSON {
-			c.errorf(call.Span, "decode expects json")
-			return nil
-		}
-		target := c.resolveTypeInEnv(call.TypeArgs[0], env)
-		if target == nil {
-			return nil
-		}
-		if !isDecodableType(target, nil) {
-			c.errorf(call.Span, "decode target type not supported")
-			return nil
-		}
-		ret := NewUnion([]*Type{target, resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "to_string":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "to_string expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], nil)
-		if argType == nil {
-			return nil
-		}
-		switch argType.Kind {
-		case KindI64, KindF64, KindBool, KindString:
-			c.ExprTypes[call] = String()
-			return String()
-		default:
-			c.errorf(call.Span, "to_string expects primitive")
-			return nil
-		}
-	case "range":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "range expects 2 args")
-			return nil
-		}
-		startType := c.checkExpr(env, call.Args[0], I64())
-		endType := c.checkExpr(env, call.Args[1], I64())
-		if startType == nil || endType == nil {
-			return nil
-		}
-		if startType.Kind != KindI64 || endType.Kind != KindI64 {
-			c.errorf(call.Span, "range expects integer args")
-			return nil
-		}
-		arr := NewArray(I64())
-		c.ExprTypes[call] = arr
-		return arr
-	case "length":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "length expects 1 arg")
-			return nil
-		}
-		arrType := c.checkExpr(env, call.Args[0], nil)
-		if arrType == nil || arrType.Kind != KindArray {
-			c.errorf(call.Span, "length expects array")
-			return nil
-		}
-		c.ExprTypes[call] = I64()
-		return I64()
-	case "map":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "map expects 2 args")
-			return nil
-		}
-		arrType := c.checkExpr(env, call.Args[0], nil)
-		if arrType == nil {
-			return nil
-		}
-		if arrType.Kind != KindArray {
-			c.errorf(call.Span, "map expects array")
-			return nil
-		}
-		elemType := baseType(arrType.Elem)
-		if elemType == nil {
-			c.errorf(call.Span, "map element type required")
-			return nil
-		}
-		expectedFn := &Type{Kind: KindFunc, Params: []*Type{elemType}}
-		fnType := c.checkExpr(env, call.Args[1], expectedFn)
-		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 1 {
-			c.errorf(call.Span, "map expects function")
-			return nil
-		}
-		if !typesEqual(baseType(fnType.Params[0]), baseType(elemType)) {
-			c.errorf(call.Span, "map callback type mismatch")
-			return nil
-		}
-		ret := NewArray(fnType.Ret)
-		c.ExprTypes[call] = ret
-		return ret
-	case "filter":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "filter expects 2 args")
-			return nil
-		}
-		arrType := c.checkExpr(env, call.Args[0], nil)
-		if arrType == nil {
-			return nil
-		}
-		if arrType.Kind != KindArray {
-			c.errorf(call.Span, "filter expects array")
-			return nil
-		}
-		elemType := baseType(arrType.Elem)
-		if elemType == nil {
-			c.errorf(call.Span, "filter element type required")
-			return nil
-		}
-		expectedFn := &Type{Kind: KindFunc, Params: []*Type{elemType}}
-		fnType := c.checkExpr(env, call.Args[1], expectedFn)
-		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 1 {
-			c.errorf(call.Span, "filter expects function")
-			return nil
-		}
-		if !typesEqual(baseType(fnType.Params[0]), baseType(elemType)) {
-			c.errorf(call.Span, "filter callback type mismatch")
-			return nil
-		}
-		if fnType.Ret == nil || fnType.Ret.Kind != KindBool {
-			c.errorf(call.Span, "filter expects boolean return")
-			return nil
-		}
-		ret := NewArray(elemType)
-		c.ExprTypes[call] = ret
-		return ret
-	case "reduce":
-		if len(call.Args) != 3 {
-			c.errorf(call.Span, "reduce expects 3 args")
-			return nil
-		}
-		arrType := c.checkExpr(env, call.Args[0], nil)
-		if arrType == nil {
-			return nil
-		}
-		if arrType.Kind != KindArray {
-			c.errorf(call.Span, "reduce expects array")
-			return nil
-		}
-		elemType := baseType(arrType.Elem)
-		if elemType == nil {
-			c.errorf(call.Span, "reduce element type required")
-			return nil
-		}
-		initType := c.checkExpr(env, call.Args[2], nil)
-		if initType == nil {
-			return nil
-		}
-		initBase := baseType(initType)
-		if initBase == nil {
-			c.errorf(call.Span, "reduce initial value required")
-			return nil
-		}
-		expectedFn := &Type{Kind: KindFunc, Params: []*Type{initBase, elemType}}
-		fnType := c.checkExpr(env, call.Args[1], expectedFn)
-		if fnType == nil || fnType.Kind != KindFunc || len(fnType.Params) != 2 {
-			c.errorf(call.Span, "reduce expects function")
-			return nil
-		}
-		if !typesEqual(baseType(fnType.Params[0]), baseType(initType)) || !typesEqual(baseType(fnType.Ret), baseType(fnType.Params[0])) {
-			c.errorf(call.Span, "reduce accumulator type mismatch")
-			return nil
-		}
-		if !typesEqual(baseType(fnType.Params[1]), baseType(elemType)) {
-			c.errorf(call.Span, "reduce element type mismatch")
-			return nil
-		}
-		c.ExprTypes[call] = fnType.Ret
-		return fnType.Ret
-	case "db_open":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "db_open expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "db_open expects string")
-			return nil
-		}
-		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "get_args":
-		if len(call.Args) != 0 {
-			c.errorf(call.Span, "get_args expects 0 args")
-			return nil
-		}
-		arr := NewArray(String())
-		c.ExprTypes[call] = arr
-		return arr
-	case "get_env":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "get_env expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "get_env expects string")
-			return nil
-		}
-		c.ExprTypes[call] = String()
-		return String()
-	case "gc":
-		if len(call.Args) != 0 {
-			c.errorf(call.Span, "gc expects 0 args")
-			return nil
-		}
-		c.ExprTypes[call] = Void()
-		return Void()
-	case "run_sandbox":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "run_sandbox expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "run_sandbox expects string")
-			return nil
-		}
-		c.ExprTypes[call] = String()
-		return String()
-	case "run_formatter":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "run_formatter expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "run_formatter expects string")
-			return nil
-		}
-		ret := NewUnion([]*Type{String(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "read_text":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "read_text expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "read_text expects string")
-			return nil
-		}
-		ret := NewUnion([]*Type{String(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "write_text":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "write_text expects 2 args")
-			return nil
-		}
-		pathType := c.checkExpr(env, call.Args[0], String())
-		contentType := c.checkExpr(env, call.Args[1], String())
-		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
-			c.errorf(call.Span, "write_text expects string, string")
-			return nil
-		}
-		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "append_text":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "append_text expects 2 args")
-			return nil
-		}
-		pathType := c.checkExpr(env, call.Args[0], String())
-		contentType := c.checkExpr(env, call.Args[1], String())
-		if pathType == nil || pathType.Kind != KindString || contentType == nil || contentType.Kind != KindString {
-			c.errorf(call.Span, "append_text expects string, string")
-			return nil
-		}
-		ret := NewUnion([]*Type{Undefined(), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "read_dir":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "read_dir expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "read_dir expects string")
-			return nil
-		}
-		ret := NewUnion([]*Type{NewArray(String()), resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	case "exists":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "exists expects 1 arg")
-			return nil
-		}
-		argType := c.checkExpr(env, call.Args[0], String())
-		if argType == nil || argType.Kind != KindString {
-			c.errorf(call.Span, "exists expects string")
-			return nil
-		}
-		c.ExprTypes[call] = Bool()
-		return Bool()
-	case "sqlQuery":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "sqlQuery expects 2 args: query string and params array")
-			return nil
-		}
-		queryType := c.checkExpr(env, call.Args[0], String())
-		if queryType == nil || queryType.Kind != KindString {
-			c.errorf(call.Span, "sqlQuery expects string as first arg")
-			return nil
-		}
-		paramsType := c.checkExpr(env, call.Args[1], nil)
-		if paramsType == nil || paramsType.Kind != KindArray {
-			c.errorf(call.Span, "sqlQuery expects array as second arg")
-			return nil
-		}
-		// Return type is object with columns and rows
-		resultType := NewObject([]Prop{
-			{Name: "columns", Type: NewArray(String())},
-			{Name: "rows", Type: NewArray(NewArray(String()))},
-		})
-		ret := NewUnion([]*Type{resultType, resultErrorType()})
-		c.ExprTypes[call] = ret
-		return ret
-	// HTTP Server builtins
-	case "create_server":
-		if len(call.Args) != 0 {
-			c.errorf(call.Span, "create_server expects 0 args")
-			return nil
-		}
-		// Return an opaque Server handle (represented as i32 object handle)
-		serverType := NewObject([]Prop{})
-		c.ExprTypes[call] = serverType
-		return serverType
-	case "add_route":
-		if len(call.Args) != 3 && len(call.Args) != 4 {
-			c.errorf(call.Span, "add_route expects 3 args (server, path, handler) or 4 args (server, method, path, handler)")
-			return nil
-		}
-		// First arg: server handle (opaque object)
-		serverType := c.checkExpr(env, call.Args[0], nil)
-		if serverType == nil {
-			return nil
-		}
-
-		pathArgIdx := 1
-		handlerArgIdx := 2
-		if len(call.Args) == 4 {
-			methodType := c.checkExpr(env, call.Args[1], String())
-			if methodType == nil || methodType.Kind != KindString {
-				c.errorf(call.Span, "add_route expects string as method")
-				return nil
-			}
-			if methodLit, ok := call.Args[1].(*ast.StringLit); ok {
-				method := strings.ToLower(strings.TrimSpace(methodLit.Value))
-				if method != "get" && method != "post" {
-					c.errorf(call.Span, `add_route method must be "get" or "post"`)
-					return nil
-				}
-			}
-			pathArgIdx = 2
-			handlerArgIdx = 3
-		}
-
-		// Path arg: string
-		pathType := c.checkExpr(env, call.Args[pathArgIdx], String())
-		if pathType == nil || pathType.Kind != KindString {
-			c.errorf(call.Span, "add_route expects string as path")
-			return nil
-		}
-		// Third arg: handler function
-		// Handler must be (req: Request) => (Response | error)
-		requestAlias := getHTTPTypeAlias("Request")
-		responseAlias := getHTTPTypeAlias("Response")
-		if requestAlias == nil || responseAlias == nil {
-			c.errorf(call.Span, "internal error: http type alias not found")
-			return nil
-		}
-		expectedHandler := NewFunc(
-			[]*Type{requestAlias.Template},
-			NewUnion([]*Type{responseAlias.Template, resultErrorType()}),
-		)
-		handlerType := c.checkExpr(env, call.Args[handlerArgIdx], expectedHandler)
-		if handlerType == nil || handlerType.Kind != KindFunc || !handlerType.AssignableTo(expectedHandler) {
-			c.errorf(call.Span, "add_route expects handler of type (req: Request) => (Response | error)")
-			return nil
-		}
-		c.ExprTypes[call] = Void()
-		return Void()
-	case "listen":
-		if len(call.Args) != 2 {
-			c.errorf(call.Span, "listen expects 2 args: server, port")
-			return nil
-		}
-		// First arg: server handle (opaque object)
-		serverType := c.checkExpr(env, call.Args[0], nil)
-		if serverType == nil {
-			return nil
-		}
-		// Second arg: port string
-		portType := c.checkExpr(env, call.Args[1], String())
-		if portType == nil || portType.Kind != KindString {
-			c.errorf(call.Span, "listen expects string as port")
-			return nil
-		}
-		c.ExprTypes[call] = Void()
-		return Void()
-	case "responseText":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "responseText expects 1 arg")
-			return nil
-		}
-		textType := c.checkExpr(env, call.Args[0], String())
-		if textType == nil || textType.Kind != KindString {
-			c.errorf(call.Span, "responseText expects string")
-			return nil
-		}
-		// Return response object
-		responseType := NewObject([]Prop{
-			{Name: "body", Type: String()},
-		})
-		c.ExprTypes[call] = responseType
-		return responseType
-	case "response_html":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "response_html expects 1 arg")
-			return nil
-		}
-		htmlType := c.checkExpr(env, call.Args[0], String())
-		if htmlType == nil || htmlType.Kind != KindString {
-			c.errorf(call.Span, "response_html expects string")
-			return nil
-		}
-		// Return response object
-		responseType := NewObject([]Prop{
-			{Name: "body", Type: String()},
-			{Name: "contentType", Type: String()},
-		})
-		c.ExprTypes[call] = responseType
-		return responseType
-	case "getPath":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "getPath expects 1 arg")
-			return nil
-		}
-		// First arg: request object
-		c.checkExpr(env, call.Args[0], nil)
-		c.ExprTypes[call] = String()
-		return String()
-	case "getMethod":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "getMethod expects 1 arg")
-			return nil
-		}
-		// First arg: request object
-		c.checkExpr(env, call.Args[0], nil)
-		c.ExprTypes[call] = String()
-		return String()
-	case "responseJson":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "responseJson expects 1 arg")
-			return nil
-		}
-		// Accept any type for JSON serialization
-		c.checkExpr(env, call.Args[0], nil)
-		// Return response object
-		responseType := NewObject([]Prop{
-			{Name: "body", Type: String()},
-			{Name: "contentType", Type: String()},
-		})
-		c.ExprTypes[call] = responseType
-		return responseType
-	case "response_redirect":
-		if len(call.Args) != 1 {
-			c.errorf(call.Span, "response_redirect expects 1 arg")
-			return nil
-		}
-		urlType := c.checkExpr(env, call.Args[0], String())
-		if urlType == nil || urlType.Kind != KindString {
-			c.errorf(call.Span, "response_redirect expects string")
-			return nil
-		}
-		// Return response object with redirect info
-		responseType := NewObject([]Prop{
-			{Name: "body", Type: String()},
-			{Name: "contentType", Type: String()},
-		})
-		c.ExprTypes[call] = responseType
-		return responseType
-	default:
-		c.errorf(call.Span, "unknown builtin")
-		return nil
-	}
+	result := c.checkCallWithSymbol(env, sym, syntheticCall, expected)
+	c.ExprTypes[call] = result
+	return result
 }
 
 func isDecodableType(t *Type, stack map[*Type]bool) bool {
@@ -3798,119 +3141,90 @@ func (c *Checker) extractSelectColumns(query string) []string {
 	return columns
 }
 
-func isPreludeName(name string) bool {
-	switch name {
-	case "log", "to_string", "get_args", "sqlQuery",
-		"get_env", "gc", "responseText", "getPath", "getMethod":
-		return true
-	default:
+var intrinsicFuncNames = map[string]bool{
+	"log":               true,
+	"stringify":         true,
+	"parse":             true,
+	"decode":            true,
+	"to_string":         true,
+	"range":             true,
+	"length":            true,
+	"map":               true,
+	"filter":            true,
+	"reduce":            true,
+	"db_open":           true,
+	"get_args":          true,
+	"get_env":           true,
+	"gc":                true,
+	"run_sandbox":       true,
+	"run_formatter":     true,
+	"read_text":         true,
+	"write_text":        true,
+	"append_text":       true,
+	"read_dir":          true,
+	"exists":            true,
+	"sqlQuery":          true,
+	"create_server":     true,
+	"listen":            true,
+	"add_route":         true,
+	"responseText":      true,
+	"response_html":     true,
+	"responseJson":      true,
+	"response_redirect": true,
+	"getPath":           true,
+	"getMethod":         true,
+}
+
+var intrinsicValueDenied = map[string]bool{
+	"add_route": true,
+	"decode":    true,
+	"range":     true,
+	"sqlQuery":  true,
+}
+
+func isBuiltinModulePath(path string) bool {
+	if path == "" {
 		return false
 	}
-}
-
-func isJSONName(name string) bool {
-	switch name {
-	case "stringify", "parse", "decode":
-		return true
-	default:
+	if strings.Contains(path, "/") || strings.Contains(path, "\\") {
 		return false
 	}
-}
-
-func isArrayName(name string) bool {
-	switch name {
-	case "range", "length", "map", "filter", "reduce":
-		return true
-	default:
+	if filepath.Ext(path) != "" {
 		return false
 	}
+	return true
 }
 
-func isRuntimeName(name string) bool {
-	switch name {
-	case "run_sandbox", "run_formatter":
-		return true
-	default:
+func (c *Checker) isIntrinsicSymbol(sym *Symbol) bool {
+	if sym == nil {
 		return false
 	}
-}
-
-func isFileName(name string) bool {
-	switch name {
-	case "read_text", "write_text", "append_text", "read_dir", "exists":
-		return true
-	default:
+	mod := c.symbolModule[sym]
+	if mod == nil {
 		return false
 	}
-}
-
-func isHTTPName(name string) bool {
-	switch name {
-	case "create_server", "listen", "add_route", "response_html", "responseJson", "response_redirect":
-		return true
-	default:
+	if !isBuiltinModulePath(mod.AST.Path) {
 		return false
 	}
+	return intrinsicFuncNames[sym.Name]
 }
 
-func isSQLiteName(name string) bool {
-	switch name {
-	case "db_open":
-		return true
-	default:
+func (c *Checker) isIntrinsicValueAllowed(sym *Symbol) bool {
+	if sym == nil || !c.isIntrinsicSymbol(sym) {
 		return false
 	}
+	return !intrinsicValueDenied[sym.Name]
 }
 
-// getPreludeTypeAlias returns the prelude type alias definition, if any.
-func getPreludeTypeAlias(name string) *TypeAlias {
-	return nil
-}
-
-// getHTTPTypeAlias returns the HTTP module type alias definition, if any.
-func getHTTPTypeAlias(name string) *TypeAlias {
-	switch name {
-	case "JSX":
-		// JSX is a string alias for server-rendered fragments
-		return newTypeAlias(nil, String(), nil)
-	case "Request":
-		// Request = { path: string, method: string, query: Map<string>, form: Map<string> }
-		mapOfString := NewObjectWithIndex(nil, String())
-		return newTypeAlias(nil, NewObject([]Prop{
-			{Name: "form", Type: mapOfString},
-			{Name: "method", Type: String()},
-			{Name: "path", Type: String()},
-			{Name: "query", Type: mapOfString},
-		}), nil)
-	case "Response":
-		// Response = { "body": string, "contentType": string }
-		return newTypeAlias(nil, NewObject([]Prop{
-			{Name: "body", Type: String()},
-			{Name: "contentType", Type: String()},
-		}), nil)
-	default:
-		return nil
+func (c *Checker) isDecodeSymbol(sym *Symbol) bool {
+	if sym == nil || sym.Name != "decode" {
+		return false
 	}
-}
-
-func getSQLiteTypeAlias(name string) *TypeAlias {
-	return nil
-}
-
-func getJSONTypeAlias(name string) *TypeAlias {
-	return nil
-}
-
-func getArrayTypeAlias(name string) *TypeAlias {
-	return nil
-}
-
-func getRuntimeTypeAlias(name string) *TypeAlias {
-	return nil
-}
-
-func getFileTypeAlias(name string) *TypeAlias {
-	return nil
+	mod := c.symbolModule[sym]
+	if mod == nil {
+		return false
+	}
+	return mod.AST.Path == "json"
 }
 
 func resultErrorType() *Type {

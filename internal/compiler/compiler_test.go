@@ -1,13 +1,15 @@
 package compiler_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"testing"
 
 	"tuna/internal/compiler"
-	"tuna/internal/runtime"
+	tunaruntime "tuna/internal/runtime"
 )
 
 func writeFiles(t *testing.T, dir string, files map[string]string) {
@@ -30,6 +32,7 @@ func compileAndRunWithBackend(t *testing.T, files map[string]string, entry strin
 	if !runtimeAvailable {
 		t.Skip("CGO が無効なためテストをスキップします")
 	}
+	ensureLibDirEnv(t)
 	dir := t.TempDir()
 	writeFiles(t, dir, files)
 	entryPath := filepath.Join(dir, entry)
@@ -41,12 +44,58 @@ func compileAndRunWithBackend(t *testing.T, files map[string]string, entry strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := runtime.NewRunner()
+	runner := tunaruntime.NewRunner()
 	out, err := runner.Run(res.Wasm)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return out
+}
+
+func ensureLibDirEnv(t *testing.T) {
+	t.Helper()
+	if os.Getenv("TUNASCRIPT_LIB_DIR") != "" {
+		return
+	}
+	libDir, err := findLibDirForTests()
+	if err != nil {
+		t.Fatalf("failed to locate lib dir: %v", err)
+	}
+	t.Setenv("TUNASCRIPT_LIB_DIR", libDir)
+}
+
+func findLibDirForTests() (string, error) {
+	searchUp := func(dir string) (string, bool) {
+		cur := dir
+		for {
+			candidate := filepath.Join(cur, "lib")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate, true
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+		return "", false
+	}
+	if pwd := os.Getenv("PWD"); pwd != "" {
+		if path, ok := searchUp(pwd); ok {
+			return path, nil
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if path, ok := searchUp(cwd); ok {
+			return path, nil
+		}
+	}
+	if _, file, _, ok := goruntime.Caller(0); ok {
+		if path, ok := searchUp(filepath.Dir(file)); ok {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("lib directory not found")
 }
 
 func TestBackendGCBasic(t *testing.T) {

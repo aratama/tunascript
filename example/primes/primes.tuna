@@ -1,0 +1,32 @@
+import { log, to_string } from "prelude"
+import { range } from "array"
+
+function gcd(a: integer, b: integer): integer {
+  if (b == 0) {
+    return a
+  }
+  return gcd(b, a % b)
+}
+
+function is_prime(n: integer, nums: integer[]): boolean {
+  if (n < 2) {
+    return false
+  }
+  for (const d of nums) {
+    if (d < n) {
+      if (gcd(n, d) != 1) {
+        return false
+      }
+    }
+  }
+  return true
+}
+
+export function main(): void {
+  const nums = range(2, 100)
+  for (const n of nums) {
+    if (is_prime(n, nums)) {
+      log(to_string(n))
+    }
+  }
+}

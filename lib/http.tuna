@@ -1,14 +1,28 @@
 // サーバーサイドレンダリング済みHTML断片（`string` のエイリアス）
-export extern type JSX
+export type JSX = string
 
 // HTTPサーバーインスタンス
-export extern type Server
+export type Server = {}
 
 // HTTPリクエスト（`{ path: string, method: string, query: Map<string>, form: Map<string> }` オブジェクト）
-export extern type Request
+export type Request = { path: string, method: string, query: Map<string>, form: Map<string> }
 
-// HTTPレスポンス（`{ body: string }` オブジェクト）
-export extern type Response
+// HTTPレスポンス（`{ body: string, contentType: string }` オブジェクト）
+export type Response = { body: string, contentType: string }
+
+// 低レベルHTTP extern（コンパイラ内部で利用）
+extern function http_create_server(): Server
+extern function http_add_route(server: Server, method: string, pathPtr: short, pathLen: short, handler: string): void
+extern function http_listen(server: Server, port: string): void
+extern function http_response_text(textPtr: short, textLen: short): Response
+extern function http_response_text_str(text: string): Response
+extern function http_response_html(htmlPtr: short, htmlLen: short): Response
+extern function http_response_html_str(html: string): Response
+extern function http_response_json(data: json): Response
+extern function http_response_redirect(urlPtr: short, urlLen: short): Response
+extern function http_response_redirect_str(url: string): Response
+extern function http_get_path(req: Request): string
+extern function http_get_method(req: Request): string
 
 //   - 新しいHTTPサーバーインスタンスを作成します。
 export extern function create_server(): Server

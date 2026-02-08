@@ -1,0 +1,22 @@
+type RawValue = integer | number | boolean | string | json | null | undefined
+type SQLRows = Map<string>[]
+
+// -----------------------------------------------------------------------------
+// セクションB: ホスト関数に依存するAPI
+// -----------------------------------------------------------------------------
+
+export extern function gc(): void
+extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
+extern function register_tables(schemaPtr: short, schemaLen: short): void
+extern function sql_query(queryPtr: short, queryLen: short, params: RawValue): SQLRows | error
+extern function sql_fetch_one(queryPtr: short, queryLen: short, params: RawValue): Map<string> | error
+extern function sql_fetch_optional(queryPtr: short, queryLen: short, params: RawValue): Map<string> | null | error
+extern function sql_execute(queryPtr: short, queryLen: short, params: RawValue): undefined | error
+export extern function sqlQuery(query: string, params: RawValue[]): SQLRows | error
+
+export extern function get_args(): string[]
+export extern function get_env(name: string): string
+
+export function getArgs(): string[] {
+  return get_args()
+}

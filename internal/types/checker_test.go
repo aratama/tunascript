@@ -1,6 +1,10 @@
 package types
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -151,7 +155,7 @@ const n: integer = string_length("hello")
 	if checker.Check() {
 		t.Fatalf("expected extern declaration outside prelude to fail")
 	}
-	if !hasErrorContaining(checker.Errors, "extern function is only supported in prelude") {
+	if !hasErrorContaining(checker.Errors, "extern function is only supported in builtin modules") {
 		t.Fatalf("expected extern restriction error, got: %v", checker.Errors)
 	}
 }
@@ -311,11 +315,81 @@ func mustParseModule(t *testing.T, path, src string) *ast.Module {
 func runChecker(t *testing.T, mod *ast.Module) *Checker {
 	t.Helper()
 	checker := NewChecker()
+	if err := addLibModules(checker); err != nil {
+		t.Fatalf("failed to load lib modules: %v", err)
+	}
 	checker.AddModule(mod)
 	if !checker.Check() {
 		t.Fatalf("type check failed: %v", checker.Errors)
 	}
 	return checker
+}
+
+func addLibModules(checker *Checker) error {
+	libDir, err := findLibDir()
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(libDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if strings.ToLower(filepath.Ext(entry.Name())) != ".tuna" {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		path := filepath.Join(libDir, entry.Name())
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		p := parser.New(path, string(src))
+		mod, err := p.ParseModule()
+		if err != nil {
+			return err
+		}
+		mod.Path = name
+		checker.AddModule(mod)
+	}
+	return nil
+}
+
+func findLibDir() (string, error) {
+	searchUp := func(dir string) (string, bool) {
+		cur := dir
+		for {
+			candidate := filepath.Join(cur, "lib")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				return candidate, true
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+		return "", false
+	}
+	if pwd := os.Getenv("PWD"); pwd != "" {
+		if path, ok := searchUp(pwd); ok {
+			return path, nil
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if path, ok := searchUp(cwd); ok {
+			return path, nil
+		}
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		if path, ok := searchUp(filepath.Dir(file)); ok {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("lib directory not found")
 }
 
 func findConstDecl(t *testing.T, mod *ast.Module, name string) *ast.ConstDecl {
