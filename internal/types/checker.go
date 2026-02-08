@@ -3157,6 +3157,7 @@ var intrinsicFuncNames = map[string]bool{
 	"get_env":           true,
 	"gc":                true,
 	"run_formatter":     true,
+	"run_sandbox":       true,
 	"read_text":         true,
 	"write_text":        true,
 	"append_text":       true,

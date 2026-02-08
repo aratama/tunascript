@@ -42,8 +42,6 @@ type Generator struct {
 	httpHandlerLambdas map[*ast.ArrowFunc]bool
 }
 
-var activeCodegenBackend = BackendGC
-
 type stringDatum struct {
 	value  string
 	offset int
@@ -85,12 +83,6 @@ func (g *Generator) SetBackend(backend Backend) {
 }
 
 func (g *Generator) Generate(entry string) (string, error) {
-	prevBackend := activeCodegenBackend
-	activeCodegenBackend = g.backend
-	defer func() {
-		activeCodegenBackend = prevBackend
-	}()
-
 	g.initModules()
 	g.assignSymbols(entry)
 	g.collectStrings()
@@ -1284,7 +1276,8 @@ func (g *Generator) emitStart(w *watBuilder, entryAbs string) {
 	}
 
 	// Runner が main の (void | error) を検査するためのアクセサ。
-	w.line("(func $__get_main_result (result externref)")
+	refTy := g.refType()
+	w.line(fmt.Sprintf("(func $__get_main_result (result %s)", refTy))
 	w.indent++
 	w.line("(global.get $__main_result)")
 	w.indent--
@@ -1436,21 +1429,35 @@ func (g *Generator) emitHttpHandlerWrapper(w *watBuilder, sym *types.Symbol, fun
 
 	var params []string
 	for i, p := range funcType.Params {
-		params = append(params, fmt.Sprintf("(param $p%d %s)", i, wasmType(p)))
+		paramType := wasmType(p)
+		if g.backend == BackendHost && isRefWasmType(paramType) {
+			paramType = "externref"
+		}
+		params = append(params, fmt.Sprintf("(param $p%d %s)", i, paramType))
 	}
 	result := ""
 	if funcType.Ret.Kind != types.KindVoid {
-		result = fmt.Sprintf("(result %s)", wasmType(funcType.Ret))
+		resultType := wasmType(funcType.Ret)
+		if g.backend == BackendHost && isRefWasmType(resultType) {
+			resultType = "externref"
+		}
+		result = fmt.Sprintf("(result %s)", resultType)
 	}
 
 	// Emit the exported wrapper that calls __ensure_init then the inner impl
 	w.line(fmt.Sprintf("(func %s %s %s", exportName, strings.Join(params, " "), result))
 	w.indent++
 	w.line("(call $__ensure_init)")
-	for i := range funcType.Params {
+	for i, p := range funcType.Params {
 		w.line(fmt.Sprintf("(local.get $p%d)", i))
+		if g.backend == BackendHost && isRefWasmType(wasmType(p)) {
+			w.line("(call $host.to_gc)")
+		}
 	}
 	w.line(fmt.Sprintf("(call %s)", internalImplName))
+	if funcType.Ret.Kind != types.KindVoid && g.backend == BackendHost && isRefWasmType(wasmType(funcType.Ret)) {
+		w.line("(call $host.to_host)")
+	}
 	w.indent--
 	w.line(")")
 	// Export directly with the wrapper function
@@ -1605,10 +1612,6 @@ func (g *Generator) functionValueDispatchEntries() []functionDispatchEntry {
 }
 
 func (g *Generator) emitFunctionValueDispatcher(w *watBuilder) {
-	if g.backend != BackendGC {
-		return
-	}
-
 	refTy := g.refType()
 	entries := g.functionValueDispatchEntries()
 	w.line(fmt.Sprintf("(func $__call_fn_dispatch (param $fn %s) (param $args %s) (result %s)", refTy, refTy, refTy))
@@ -1742,20 +1745,34 @@ func (g *Generator) emitHttpLambdaWrapper(w *watBuilder, info *lambdaInfo) {
 
 	var params []string
 	for i, p := range funcType.Params {
-		params = append(params, fmt.Sprintf("(param $p%d %s)", i, wasmType(p)))
+		paramType := wasmType(p)
+		if g.backend == BackendHost && isRefWasmType(paramType) {
+			paramType = "externref"
+		}
+		params = append(params, fmt.Sprintf("(param $p%d %s)", i, paramType))
 	}
 	result := ""
 	if funcType.Ret.Kind != types.KindVoid {
-		result = fmt.Sprintf("(result %s)", wasmType(funcType.Ret))
+		resultType := wasmType(funcType.Ret)
+		if g.backend == BackendHost && isRefWasmType(resultType) {
+			resultType = "externref"
+		}
+		result = fmt.Sprintf("(result %s)", resultType)
 	}
 
 	w.line(fmt.Sprintf("(func %s %s %s", wrapperName, strings.Join(params, " "), result))
 	w.indent++
 	w.line("(call $__ensure_init)")
-	for i := range funcType.Params {
+	for i, p := range funcType.Params {
 		w.line(fmt.Sprintf("(local.get $p%d)", i))
+		if g.backend == BackendHost && isRefWasmType(wasmType(p)) {
+			w.line("(call $host.to_gc)")
+		}
 	}
 	w.line(fmt.Sprintf("(call %s)", info.name))
+	if funcType.Ret.Kind != types.KindVoid && g.backend == BackendHost && isRefWasmType(wasmType(funcType.Ret)) {
+		w.line("(call $host.to_host)")
+	}
 	w.indent--
 	w.line(")")
 	w.line(fmt.Sprintf("(export \"%s\" (func %s))", info.name, wrapperName))
@@ -1796,6 +1813,9 @@ func (g *Generator) funcCallName(sym *types.Symbol) string {
 		}
 		return fmt.Sprintf("$%s.%s", moduleName, sym.Name)
 	}
+	if g.httpHandlerFuncs[sym] {
+		return g.funcImplName(sym) + "_inner"
+	}
 	return g.funcImplName(sym)
 }
 
@@ -1826,15 +1846,9 @@ func wasmType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	case types.KindString, types.KindJSON, types.KindArray, types.KindTuple, types.KindObject, types.KindUnion, types.KindNull, types.KindUndefined:
-		if activeCodegenBackend == BackendGC {
-			return "anyref"
-		}
-		return "externref"
+		return "anyref"
 	default:
-		if activeCodegenBackend == BackendGC {
-			return "anyref"
-		}
-		return "externref"
+		return "anyref"
 	}
 }
 
@@ -3055,6 +3069,10 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.run_formatter)", module))
+	case "run_sandbox":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.run_sandbox)", module))
 	case "read_text":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -3244,7 +3262,10 @@ func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 	if ident, ok := handlerArg.(*ast.IdentExpr); ok {
 		sym := f.g.checker.IdentSymbols[ident]
 		if sym != nil {
-			funcName := f.g.funcValueExportName(sym)
+			funcName := f.g.funcImplName(sym)
+			if f.g.backend == BackendGC {
+				funcName = f.g.funcValueExportName(sym)
+			}
 			// Intern the function name as a string
 			f.g.internString(funcName)
 			datum := f.g.stringDataByValue(funcName)
@@ -3256,7 +3277,10 @@ func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 		}
 	} else if arrow, ok := handlerArg.(*ast.ArrowFunc); ok {
 		// Handle anonymous function
-		lambdaName := f.g.lambdaValueExportName(arrow)
+		lambdaName := f.g.lambdaName(arrow)
+		if f.g.backend == BackendGC {
+			lambdaName = f.g.lambdaValueExportName(arrow)
+		}
 		f.g.internString(lambdaName)
 		datum := f.g.stringDataByValue(lambdaName)
 		if datum != nil {
@@ -3977,10 +4001,7 @@ func valueLocalType(t *types.Type) string {
 	case types.KindBool:
 		return "i32"
 	default:
-		if activeCodegenBackend == BackendGC {
-			return "anyref"
-		}
-		return "externref"
+		return "anyref"
 	}
 }
 
@@ -4022,10 +4043,7 @@ func isRefWasmType(wt string) bool {
 }
 
 func (g *Generator) refType() string {
-	if g.backend == BackendGC {
-		return "anyref"
-	}
-	return "externref"
+	return "anyref"
 }
 
 func (g *Generator) nullRef() string {
@@ -4100,6 +4118,7 @@ var intrinsicFuncNames = map[string]bool{
 	"get_env":           true,
 	"gc":                true,
 	"run_formatter":     true,
+	"run_sandbox":       true,
 	"read_text":         true,
 	"write_text":        true,
 	"append_text":       true,

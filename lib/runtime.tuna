@@ -1,3 +1,8 @@
 //   - `source`（TunaScriptコード文字列）をフォーマットします。
 //   - フォーマット成功時は整形済みコード文字列、失敗時は `error` を返します。
 export extern function run_formatter(source: string): string | error
+
+//   - `source`（TunaScriptコード文字列）をGCバックエンドで実行します。
+//   - `stdout` は通常出力、`html` は fd=3 に書き込まれたHTML出力です。
+export type SandboxResult = { stdout: string, html: string }
+export extern function run_sandbox(source: string): SandboxResult | error

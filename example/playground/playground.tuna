@@ -1,7 +1,7 @@
 import { log, fallback } from "prelude"
 import { get_args, get_env } from "server"
 import { length } from "array"
-import { run_formatter } from "runtime"
+import { run_formatter, run_sandbox, type SandboxResult } from "runtime"
 import { create_server, add_route, listen, response_html, response_redirect, type JSX, type Request, type Response } from "http"
 import { db_open } from "sqlite"
 import { read_text } from "file"
@@ -164,7 +164,11 @@ function handle_run_by_id(req: Request): Response {
 }
 
 function run_source(source: string, run_path: string, page_path: string): Response {
-  return response_html(layout(source, "", "", "runtime execution is unavailable", "1", run_path, page_path))
+  const executed = run_sandbox(source)
+  return switch (executed) {
+    case e as error: response_html(layout(source, "", "", "runtime error: " + e.message, "1", run_path, page_path))
+    case result as SandboxResult: response_html(layout(source, result.stdout, result.html, "", "0", run_path, page_path))
+  }
 }
 
 export function main(): void {

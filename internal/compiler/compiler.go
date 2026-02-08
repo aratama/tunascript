@@ -21,7 +21,8 @@ type Result struct {
 type Backend string
 
 const (
-	BackendGC Backend = "gc"
+	BackendGC   Backend = "gc"
+	BackendHost Backend = "host"
 )
 
 type Compiler struct {
@@ -41,7 +42,7 @@ func New() *Compiler {
 
 func (c *Compiler) SetBackend(backend Backend) error {
 	switch backend {
-	case BackendGC:
+	case BackendGC, BackendHost:
 		c.backend = backend
 		return nil
 	default:
@@ -122,7 +123,7 @@ func (c *Compiler) loadBuiltinModule(name string) error {
 	if _, ok := c.Modules[name]; ok {
 		return nil
 	}
-	if name == "server" || ((name == "json" || name == "runtime") && c.backend == BackendGC) {
+	if c.moduleNeedsHostBridge(name) {
 		if err := c.loadBuiltinModule("host"); err != nil {
 			return err
 		}
@@ -138,19 +139,17 @@ func (c *Compiler) loadBuiltinModule(name string) error {
 	if err != nil {
 		return err
 	}
-	if c.backend == BackendGC && c.libDir != "" {
+	if c.libDir != "" {
 		if c.moduleWAT == nil {
 			c.moduleWAT = map[string]string{}
 		}
 		if _, ok := c.moduleWAT[name]; !ok {
-			watPath := filepath.Join(c.libDir, name+".wat")
-			watSrc, watErr := os.ReadFile(watPath)
+			watSrc, watErr := c.loadBuiltinModuleWAT(name)
 			if watErr != nil {
-				if !os.IsNotExist(watErr) {
-					return watErr
-				}
-			} else {
-				c.moduleWAT[name] = string(watSrc)
+				return watErr
+			}
+			if watSrc != "" {
+				c.moduleWAT[name] = watSrc
 			}
 		}
 	}
@@ -159,10 +158,8 @@ func (c *Compiler) loadBuiltinModule(name string) error {
 	if err != nil {
 		return err
 	}
-	if c.backend == BackendGC {
-		if watSrc := c.moduleWAT[name]; watSrc != "" {
-			filterDeclsForGC(mod, moduleDefinedInWAT(name, watSrc))
-		}
+	if watSrc := c.moduleWAT[name]; watSrc != "" {
+		filterDeclsForWAT(mod, moduleDefinedInWAT(name, watSrc))
 	}
 	mod.Path = name
 	c.Modules[name] = mod
@@ -528,6 +525,38 @@ func (c *Compiler) resolveImport(baseDir, spec string) (string, error) {
 	return "", fmt.Errorf("unsupported import: %s", spec)
 }
 
+func (c *Compiler) moduleNeedsHostBridge(name string) bool {
+	switch name {
+	case "server", "json", "runtime":
+		return true
+	case "http", "file", "sqlite":
+		return c.backend == BackendHost
+	default:
+		return false
+	}
+}
+
+func (c *Compiler) loadBuiltinModuleWAT(name string) (string, error) {
+	if c.libDir == "" {
+		return "", nil
+	}
+	candidates := make([]string, 0, 2)
+	if c.backend == BackendHost {
+		candidates = append(candidates, filepath.Join(c.libDir, name+".host.wat"))
+	}
+	candidates = append(candidates, filepath.Join(c.libDir, name+".wat"))
+	for _, candidate := range candidates {
+		src, err := os.ReadFile(candidate)
+		if err == nil {
+			return string(src), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return "", nil
+}
+
 func moduleDefinedInWAT(moduleName, src string) map[string]bool {
 	defined := map[string]bool{}
 	if strings.TrimSpace(src) == "" {
@@ -542,7 +571,7 @@ func moduleDefinedInWAT(moduleName, src string) map[string]bool {
 	return defined
 }
 
-func filterDeclsForGC(mod *ast.Module, defined map[string]bool) {
+func filterDeclsForWAT(mod *ast.Module, defined map[string]bool) {
 	if mod == nil {
 		return
 	}

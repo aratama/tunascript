@@ -35,6 +35,7 @@ func main() {
 func buildCmd(args []string) {
 	fs := flag.NewFlagSet("build", flag.ExitOnError)
 	out := fs.String("o", "", "出力ファイルのベース名（入力ファイルと同じフォルダに生成）")
+	backend := fs.String("backend", string(compiler.BackendGC), "バックエンド（gc|host）")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "入力ファイルが必要です")
@@ -47,6 +48,10 @@ func buildCmd(args []string) {
 		entryBase = entryBase[:len(entryBase)-len(ext)]
 	}
 	comp := compiler.New()
+	if err := comp.SetBackend(parseBackend(*backend)); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	res, err := comp.Compile(entry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -73,6 +78,7 @@ func buildCmd(args []string) {
 
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	backend := fs.String("backend", string(compiler.BackendGC), "バックエンド（gc|host）")
 	_ = fs.Parse(args)
 	if fs.NArg() < 1 {
 		fmt.Fprintln(os.Stderr, "入力ファイルが必要です")
@@ -82,6 +88,10 @@ func runCmd(args []string) {
 	// Remaining arguments after the entry file are passed to the script
 	scriptArgs := fs.Args()[1:]
 	comp := compiler.New()
+	if err := comp.SetBackend(parseBackend(*backend)); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	res, err := comp.Compile(entry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -98,10 +108,21 @@ func runCmd(args []string) {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "使い方:")
-	fmt.Fprintln(os.Stderr, "  tuna build <entry.tuna> [-o <name>]")
-	fmt.Fprintln(os.Stderr, "  tuna run <entry.tuna> [args...]")
+	fmt.Fprintln(os.Stderr, "  tuna build [--backend gc|host] <entry.tuna> [-o <name>]")
+	fmt.Fprintln(os.Stderr, "  tuna run [--backend gc|host] <entry.tuna> [args...]")
 	fmt.Fprintln(os.Stderr, "  tuna launch <entry.wasm> [args...]")
 	fmt.Fprintln(os.Stderr, "  tuna format <file.tuna> [--write]")
+}
+
+func parseBackend(name string) compiler.Backend {
+	switch name {
+	case string(compiler.BackendGC):
+		return compiler.BackendGC
+	case string(compiler.BackendHost):
+		return compiler.BackendHost
+	default:
+		return compiler.Backend(name)
+	}
 }
 
 func launchCmd(args []string) {

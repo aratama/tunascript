@@ -14,6 +14,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
 	_ "modernc.org/sqlite"
+	"tuna/internal/compiler"
 	"tuna/internal/formatter"
 )
 
@@ -128,7 +130,7 @@ type Runtime struct {
 	currentTx       *sql.Tx
 	args            []string
 	tableDefs       []TableDef // Table definitions for validation
-	httpServers     map[*Value]*HTTPServer
+	httpServers     map[int64]*HTTPServer
 	httpMu          sync.Mutex
 	store           *wasmtime.Store
 	instance        *wasmtime.Instance
@@ -193,7 +195,7 @@ type pendingHTTPServer struct {
 func NewRuntime() *Runtime {
 	now := time.Now()
 	r := &Runtime{
-		httpServers:     make(map[*Value]*HTTPServer),
+		httpServers:     make(map[int64]*HTTPServer),
 		internedStrings: make(map[uint64]*Value),
 		decodeSchemas:   make(map[string]*decodeSchema),
 		gcLastHeap:      currentHeapAlloc(),
@@ -283,20 +285,8 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	defineJSON := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "json", name, fn)
 	}
-	defineArray := func(name string, fn interface{}) error {
-		return linker.DefineFunc(store, "array", name, fn)
-	}
-	defineHTTP := func(name string, fn interface{}) error {
-		return linker.DefineFunc(store, "http", name, fn)
-	}
-	defineSQLite := func(name string, fn interface{}) error {
-		return linker.DefineFunc(store, "sqlite", name, fn)
-	}
 	defineRuntime := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "runtime", name, fn)
-	}
-	defineFile := func(name string, fn interface{}) error {
-		return linker.DefineFunc(store, "file", name, fn)
 	}
 	defineServer := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "server", name, fn)
@@ -429,31 +419,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineArray("range", func(start int64, end int64) *Value {
-		return r.rangeFunc(start, end)
-	}); err != nil {
-		return err
-	}
-	if err := defineArray("length", func(arrHandle *Value) int64 {
-		return int64(must(r.arrLen(arrHandle)))
-	}); err != nil {
-		return err
-	}
-	if err := defineArray("map", func(arrHandle *Value, fnHandle *Value) *Value {
-		return must(r.arrayMap(arrHandle, fnHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineArray("filter", func(arrHandle *Value, fnHandle *Value) *Value {
-		return must(r.arrayFilter(arrHandle, fnHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineArray("reduce", func(arrHandle *Value, fnHandle *Value, initialHandle *Value) *Value {
-		return must(r.arrayReduce(arrHandle, fnHandle, initialHandle))
-	}); err != nil {
-		return err
-	}
 	if err := define("val_eq", func(a *Value, b *Value) int32 {
 		return must(r.valEq(a, b))
 	}); err != nil {
@@ -490,11 +455,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineSQLite("db_open", func(strHandle *Value) *Value {
-		return r.resultError(r.dbOpenHandle(strHandle))
-	}); err != nil {
-		return err
-	}
 	if err := defineServer("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
 		return must(r.sqlExec(caller, ptr, length))
 	}); err != nil {
@@ -526,30 +486,9 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineFile("read_text", func(pathHandle *Value) *Value {
-		value, err := r.fileReadText(pathHandle)
+	if err := defineRuntime("run_sandbox", func(sourceHandle *Value) *Value {
+		value, err := r.run_sandbox(sourceHandle)
 		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineFile("write_text", func(pathHandle *Value, contentHandle *Value) *Value {
-		return r.resultError(r.fileWriteText(pathHandle, contentHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineFile("append_text", func(pathHandle *Value, contentHandle *Value) *Value {
-		return r.resultError(r.fileAppendText(pathHandle, contentHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineFile("read_dir", func(pathHandle *Value) *Value {
-		value, err := r.fileReadDir(pathHandle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineFile("exists", func(pathHandle *Value) int32 {
-		return r.fileExists(pathHandle)
 	}); err != nil {
 		return err
 	}
@@ -748,63 +687,100 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	// HTTP server functions
-	if err := defineHTTP("http_create_server", func() *Value {
+	if err := defineHost("runtime_run_sandbox", func(sourceHandle *Value) *Value {
+		value, err := r.run_sandbox(sourceHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("sqlite_db_open", func(strHandle *Value) *Value {
+		return r.resultError(r.dbOpenHandle(strHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("file_read_text", func(pathHandle *Value) *Value {
+		value, err := r.fileReadText(pathHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("file_write_text", func(pathHandle *Value, contentHandle *Value) *Value {
+		return r.resultError(r.fileWriteText(pathHandle, contentHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("file_append_text", func(pathHandle *Value, contentHandle *Value) *Value {
+		return r.resultError(r.fileAppendText(pathHandle, contentHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("file_read_dir", func(pathHandle *Value) *Value {
+		value, err := r.fileReadDir(pathHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("file_exists", func(pathHandle *Value) int32 {
+		return r.fileExists(pathHandle)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("http_create_server", func() *Value {
 		return must(r.httpCreateServer())
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_add_route", func(caller *wasmtime.Caller, serverHandle *Value, methodHandle *Value, pathPtr int32, pathLen int32, handlerHandle *Value) {
+	if err := defineHost("http_add_route", func(caller *wasmtime.Caller, serverHandle *Value, methodHandle *Value, pathPtr int32, pathLen int32, handlerHandle *Value) {
 		must0(r.httpAddRoute(caller, serverHandle, methodHandle, pathPtr, pathLen, handlerHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_listen", func(caller *wasmtime.Caller, serverHandle *Value, portHandle *Value) {
+	if err := defineHost("http_listen", func(caller *wasmtime.Caller, serverHandle *Value, portHandle *Value) {
 		must0(r.httpListen(caller, serverHandle, portHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) *Value {
+	if err := defineHost("http_response_text", func(caller *wasmtime.Caller, textPtr int32, textLen int32) *Value {
 		return must(r.httpResponseText(caller, textPtr, textLen))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) *Value {
+	if err := defineHost("http_response_html", func(caller *wasmtime.Caller, htmlPtr int32, htmlLen int32) *Value {
 		return must(r.httpResponseHtml(caller, htmlPtr, htmlLen))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_text_str", func(strHandle *Value) *Value {
+	if err := defineHost("http_response_text_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseTextStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_html_str", func(strHandle *Value) *Value {
+	if err := defineHost("http_response_html_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseHtmlStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_json", func(dataHandle *Value) *Value {
+	if err := defineHost("http_response_json", func(dataHandle *Value) *Value {
 		return must(r.httpResponseJson(dataHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) *Value {
+	if err := defineHost("http_response_redirect", func(caller *wasmtime.Caller, urlPtr int32, urlLen int32) *Value {
 		return must(r.httpResponseRedirect(caller, urlPtr, urlLen))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_response_redirect_str", func(strHandle *Value) *Value {
+	if err := defineHost("http_response_redirect_str", func(strHandle *Value) *Value {
 		return must(r.httpResponseRedirectStr(strHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_get_path", func(reqHandle *Value) *Value {
+	if err := defineHost("http_get_path", func(reqHandle *Value) *Value {
 		return must(r.httpGetPath(reqHandle))
 	}); err != nil {
 		return err
 	}
-	if err := defineHTTP("http_get_method", func(reqHandle *Value) *Value {
+	if err := defineHost("http_get_method", func(reqHandle *Value) *Value {
 		return must(r.httpGetMethod(reqHandle))
 	}); err != nil {
 		return err
@@ -1005,6 +981,57 @@ func (r *Runtime) run_formatter(sourceHandle *Value) (*Value, error) {
 		return nil, err
 	}
 	return r.newValue(Value{Kind: KindString, Str: formatted}), nil
+}
+
+func (r *Runtime) sandboxResultValue(stdout string, htmlOut string) *Value {
+	props := map[string]*Value{
+		"stdout": r.newValue(Value{Kind: KindString, Str: stdout}),
+		"html":   r.newValue(Value{Kind: KindString, Str: htmlOut}),
+	}
+	return r.newValue(Value{
+		Kind: KindObject,
+		Obj: &Object{
+			Order: []string{"stdout", "html"},
+			Props: props,
+		},
+	})
+}
+
+func (r *Runtime) run_sandbox(sourceHandle *Value) (*Value, error) {
+	sourceValue, err := r.getValue(sourceHandle)
+	if err != nil {
+		return nil, err
+	}
+	if sourceValue.Kind != KindString {
+		return nil, errors.New("run_sandbox expects string")
+	}
+
+	dir, err := os.MkdirTemp("", "tunascript-sandbox-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	entry := filepath.Join(dir, "main.tuna")
+	if err := os.WriteFile(entry, []byte(sourceValue.Str), 0644); err != nil {
+		return nil, err
+	}
+
+	comp := compiler.New()
+	if err := comp.SetBackend(compiler.BackendGC); err != nil {
+		return nil, err
+	}
+	res, err := comp.Compile(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	runner := NewRunner()
+	rt, err := runner.runWithArgs(res.Wasm, nil)
+	if err != nil {
+		return nil, err
+	}
+	return r.sandboxResultValue(rt.Output(), rt.htmlOutput.String()), nil
 }
 
 // internString は文字列リテラル（offset, length）をヒープハンドルに変換します。
@@ -2798,8 +2825,9 @@ func (r *Runtime) httpCreateServer() (*Value, error) {
 		mux:    http.NewServeMux(),
 		routes: make(map[string]map[string]*Value),
 	}
-	handle := r.newValue(Value{Kind: KindI64, I64: int64(len(r.httpServers))})
-	r.httpServers[handle] = server
+	serverID := int64(len(r.httpServers))
+	handle := r.newValue(Value{Kind: KindI64, I64: serverID})
+	r.httpServers[serverID] = server
 	return handle, nil
 }
 
@@ -2808,7 +2836,11 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle *Value, met
 	r.httpMu.Lock()
 	defer r.httpMu.Unlock()
 
-	server, ok := r.httpServers[serverHandle]
+	serverVal, err := r.getValue(serverHandle)
+	if err != nil || serverVal.Kind != KindI64 {
+		return errors.New("invalid server handle")
+	}
+	server, ok := r.httpServers[serverVal.I64]
 	if !ok {
 		return errors.New("invalid server handle")
 	}
@@ -2855,8 +2887,13 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle *Value, met
 // WASM実行完了後にStartPendingServer()で起動する。
 // 詳細はpendingHTTPServer構造体のコメントを参照。
 func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle *Value, portHandle *Value) error {
+	serverVal, err := r.getValue(serverHandle)
+	if err != nil || serverVal.Kind != KindI64 {
+		return errors.New("invalid server handle")
+	}
+
 	r.httpMu.Lock()
-	server, ok := r.httpServers[serverHandle]
+	server, ok := r.httpServers[serverVal.I64]
 	r.httpMu.Unlock()
 
 	if !ok {

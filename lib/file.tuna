@@ -2,21 +2,26 @@
 //   - `path` のテキストファイルをUTF-8として読み込みます。BOMがある場合は取り除きます。
 //   - UTF-8として不正なバイト列の場合は `error` を返します。
 //   - GCバックエンドでは常に `error` を返します。
+//   - `--backend=host` では実際のファイルを読み込みます。
 export extern function read_text(path: string): string | error
 
 //   - `path` にUTF-8テキストを書き込みます（既存ファイルは上書き）。
 //   - GCバックエンドでは常に `error` を返します。
+//   - `--backend=host` では実際に書き込みます。
 export extern function write_text(path: string, content: string): undefined | error
 
 //   - `path` の末尾にUTF-8テキストを追記します。ファイルが無ければ作成します。
 //   - GCバックエンドでは常に `error` を返します。
+//   - `--backend=host` では実際に追記します。
 export extern function append_text(path: string, content: string): undefined | error
 
 //   - `path` 直下のエントリ名を配列で返します（ファイル・ディレクトリ混在）。
 //   - 返却順序は名前順にソートされます。
 //   - GCバックエンドでは常に `error` を返します。
+//   - `--backend=host` では実際のディレクトリ一覧を返します。
 export extern function read_dir(path: string): string[] | error
 
 //   - `path` が存在すれば `true`、存在しないかアクセスできなければ `false` を返します。
 //   - GCバックエンドでは常に `false` を返します。
+//   - `--backend=host` では実際の存在判定を返します。
 export extern function exists(path: string): boolean

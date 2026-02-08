@@ -35,8 +35,9 @@ export extern function create_server(): Server
 //   - メソッド指定ルートが優先され、見つからない場合は `method` 省略（全メソッド）ルートにフォールバックします。
 export extern function add_route(server: Server, path: string, handler: (req: Request) => Response | error): void
 
-//   - ソケットサーバーは起動しません。`GET /` のハンドラーを1回だけ実行します。
-//   - `Response.body` は `wasi.fd_write` のファイルディスクリプタ3へ出力されます。
+//   - `--backend=gc` ではソケットサーバーは起動せず、`GET /` のハンドラーを1回だけ実行します。
+//   - `--backend=gc` では `Response.body` は `wasi.fd_write` のファイルディスクリプタ3へ出力されます。
+//   - `--backend=host` では実際のソケットサーバーを起動し、HTTPリクエストを処理します。
 export extern function listen(server: Server, port: string): void
 
 //   - テキストレスポンスを作成します。

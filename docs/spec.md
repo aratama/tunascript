@@ -492,7 +492,7 @@ line2`;
 - `import { get_args, get_env, sqlQuery, gc } from "server"` です（ホスト依存）。
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
-- `import { run_formatter } from "runtime"` です。
+- `import { run_formatter, run_sandbox } from "runtime"` です。
 - `import style from "./style.css"` のようにテキストファイルを `string` として読み込めます。
 - `export const name = ...` です。
 - 相対パスは `.ts` を省略可能です（テキストファイルの import は拡張子の省略不可）。
@@ -602,7 +602,8 @@ const { id, name } = rows[0]
 ### 11.5 データベース
 
 - SQLiteを内蔵しています。デフォルトでインメモリーデータベース（`:memory:`）が自動で開かれます。
-- `db_open` は通常モード（GC バックエンド）では no-op で、`undefined` を返します（既定の `:memory:` を継続）。
+- `db_open`（`gc_open` はその別名）は `--backend=gc` では no-op で、`undefined` を返します（既定の `:memory:` を継続）。
+- `--backend=host` では `db_open` / `gc_open` が実際のSQLiteファイルを開きます。
 - 複数のSQLデータベース接続は未対応です。
 
 ### 11.6 パラメータ埋め込み
@@ -809,8 +810,10 @@ function Page(): JSX {
 
 - コンパイラは WAT を生成し、wasmtime-go の `Wat2Wasm` で WASM を生成します。
 - 実行は同梱 CLI の `run` で行います。
+- `run` / `build` は `--backend=gc|host` を受け取ります（既定は `gc`）。
 - エントリポイントは `export function main(): void` または `export function main(): void | error` です。
 - `--sandbox` オプションはありません。
+- `run_sandbox(source)` は現在のバックエンド設定に関わらず、常に `gc` バックエンドで `source` を実行します。
 - **CGO と C コンパイラが必要**です（wasmtime-go が C 依存）。
 
 ### 13.1 GCポリシー（wasmtime externref）

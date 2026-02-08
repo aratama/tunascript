@@ -2,3 +2,8 @@
 //   - この関数は `import { db_open } from "sqlite";` でインポートしてください。
 //   - 通常モード（GCバックエンド）では no-op で、常に `undefined` を返します（デフォルトの `:memory:` を継続）。
 export extern function db_open(filename: string): undefined | error
+
+//   - `db_open` の別名です。`--backend=host` では実ファイルを開きます。
+export function gc_open(filename: string): undefined | error {
+  return db_open(filename)
+}
