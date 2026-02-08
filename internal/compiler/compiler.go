@@ -240,11 +240,22 @@ func (c *Compiler) loadRecursive(path string) error {
 }
 
 func findLibDir(startDir string) (string, bool) {
+	isLibDir := func(dir string) bool {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			return false
+		}
+		preludePath := filepath.Join(dir, "prelude.tuna")
+		if _, err := os.Stat(preludePath); err != nil {
+			return false
+		}
+		return true
+	}
 	searchUp := func(dir string) (string, bool) {
 		cur := dir
 		for {
 			candidate := filepath.Join(cur, "lib")
-			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			if isLibDir(candidate) {
 				return candidate, true
 			}
 			parent := filepath.Dir(cur)
@@ -256,8 +267,13 @@ func findLibDir(startDir string) (string, bool) {
 		return "", false
 	}
 	if env := os.Getenv("TUNASCRIPT_LIB_DIR"); env != "" {
-		if info, err := os.Stat(env); err == nil && info.IsDir() {
+		if isLibDir(env) {
 			return env, true
+		}
+	}
+	if exe, err := os.Executable(); err == nil {
+		if path, ok := searchUp(filepath.Dir(exe)); ok {
+			return path, true
 		}
 	}
 	if pwd := os.Getenv("PWD"); pwd != "" {

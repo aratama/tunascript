@@ -30,6 +30,7 @@ WORKDIR /app
 # builder で作った実行物のみをコピーする。
 COPY --from=builder /workspace/tuna /app/tuna
 COPY --from=builder /workspace/example /app/example
+COPY --from=builder /workspace/lib /app/lib
 
 # コンテナが待ち受ける想定ポート（Cloud Run の --port と合わせる）。
 EXPOSE 8888
