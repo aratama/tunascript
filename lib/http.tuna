@@ -33,11 +33,10 @@ export extern function create_server(): Server
 //   - `path` は `/:id` や `/run/:id` のようなパスパラメータにも対応しています。マッチした値は `req.query.id` のように `query` に展開されます。
 //   - 同じメソッドの中では完全一致ルートが優先され、完全一致が無い場合にパスパラメータルートが解決されます。
 //   - メソッド指定ルートが優先され、見つからない場合は `method` 省略（全メソッド）ルートにフォールバックします。
-//   - `tuna run --sandbox` では `add_route(server, "/", handler)` の重複登録はエラーになります。
 export extern function add_route(server: Server, path: string, handler: (req: Request) => Response | error): void
 
-//   - サーバーを指定したポートで起動します。この関数はブロッキングで、サーバーが終了するまで戻りません。
-//   - `tuna run --sandbox` ではソケットは開かず、`GET /` を1回だけ仮想実行して直ちに終了します。`Response.body` は最終JSONの `html` フィールドに入ります。
+//   - ソケットサーバーは起動しません。`GET /` のハンドラーを1回だけ実行します。
+//   - `Response.body` は `wasi.fd_write` のファイルディスクリプタ3へ出力されます。
 export extern function listen(server: Server, port: string): void
 
 //   - テキストレスポンスを作成します。

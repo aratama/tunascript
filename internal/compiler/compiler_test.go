@@ -24,7 +24,7 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 
 func compileAndRun(t *testing.T, files map[string]string, entry string) string {
 	t.Helper()
-	return compileAndRunWithBackend(t, files, entry, compiler.BackendHostref)
+	return compileAndRunWithBackend(t, files, entry, compiler.BackendGC)
 }
 
 func compileAndRunWithBackend(t *testing.T, files map[string]string, entry string, backend compiler.Backend) string {

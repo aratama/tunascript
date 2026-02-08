@@ -15,7 +15,7 @@ export function main(): void {
 
   const opened = db_open(":memory:")
   if (opened as error) {
-    log("db open error: " + opened.message)
+    log("db open error")
     return
   }
   log("db open ok")

@@ -42,7 +42,7 @@ type Generator struct {
 	httpHandlerLambdas map[*ast.ArrowFunc]bool
 }
 
-var activeCodegenBackend = BackendHostref
+var activeCodegenBackend = BackendGC
 
 type stringDatum struct {
 	value  string
@@ -60,7 +60,7 @@ type lambdaInfo struct {
 func NewGenerator(checker *types.Checker) *Generator {
 	return &Generator{
 		checker:            checker,
-		backend:            BackendHostref,
+		backend:            BackendGC,
 		lambdaFuncs:        map[*ast.ArrowFunc]*lambdaInfo{},
 		httpHandlerFuncs:   map[*types.Symbol]bool{},
 		httpHandlerLambdas: map[*ast.ArrowFunc]bool{},
@@ -1070,15 +1070,15 @@ func (g *Generator) moduleHostImports(mod *types.ModuleInfo) []importInfo {
 		if !ok {
 			continue
 		}
+		if definedInWAT != nil && definedInWAT[ext.Name] {
+			continue
+		}
 		if mod.AST.Path == "json" && ext.Name == "decode" {
 			sig := externFuncImportSig(mod.AST.Path, ext.Name, types.NewFunc([]*types.Type{types.JSON(), types.String()}, types.JSON()))
 			imports = append(imports, importInfo{
 				name: ext.Name,
 				sig:  sig,
 			})
-			continue
-		}
-		if definedInWAT != nil && definedInWAT[ext.Name] {
 			continue
 		}
 		if noImportIntrinsicNames[ext.Name] {
@@ -3051,10 +3051,6 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emit(fmt.Sprintf("(call $%s.get_env)", module))
 	case "gc":
 		f.emit(fmt.Sprintf("(call $%s.gc)", module))
-	case "run_sandbox":
-		arg := call.Args[0]
-		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
-		f.emit(fmt.Sprintf("(call $%s.run_sandbox)", module))
 	case "run_formatter":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -3248,7 +3244,7 @@ func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 	if ident, ok := handlerArg.(*ast.IdentExpr); ok {
 		sym := f.g.checker.IdentSymbols[ident]
 		if sym != nil {
-			funcName := f.g.funcImplName(sym)
+			funcName := f.g.funcValueExportName(sym)
 			// Intern the function name as a string
 			f.g.internString(funcName)
 			datum := f.g.stringDataByValue(funcName)
@@ -3260,7 +3256,7 @@ func (f *funcEmitter) emitHttpAddRoute(call *ast.CallExpr, module string) {
 		}
 	} else if arrow, ok := handlerArg.(*ast.ArrowFunc); ok {
 		// Handle anonymous function
-		lambdaName := f.g.lambdaName(arrow)
+		lambdaName := f.g.lambdaValueExportName(arrow)
 		f.g.internString(lambdaName)
 		datum := f.g.stringDataByValue(lambdaName)
 		if datum != nil {
@@ -4103,7 +4099,6 @@ var intrinsicFuncNames = map[string]bool{
 	"get_args":          true,
 	"get_env":           true,
 	"gc":                true,
-	"run_sandbox":       true,
 	"run_formatter":     true,
 	"read_text":         true,
 	"write_text":        true,

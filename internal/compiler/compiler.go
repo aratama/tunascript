@@ -21,8 +21,7 @@ type Result struct {
 type Backend string
 
 const (
-	BackendHostref Backend = "hostref"
-	BackendGC      Backend = "gc"
+	BackendGC Backend = "gc"
 )
 
 type Compiler struct {
@@ -36,13 +35,13 @@ type Compiler struct {
 func New() *Compiler {
 	return &Compiler{
 		Modules: map[string]*ast.Module{},
-		backend: BackendHostref,
+		backend: BackendGC,
 	}
 }
 
 func (c *Compiler) SetBackend(backend Backend) error {
 	switch backend {
-	case BackendHostref, BackendGC:
+	case BackendGC:
 		c.backend = backend
 		return nil
 	default:
@@ -123,7 +122,7 @@ func (c *Compiler) loadBuiltinModule(name string) error {
 	if _, ok := c.Modules[name]; ok {
 		return nil
 	}
-	if name == "server" {
+	if name == "server" || ((name == "json" || name == "runtime") && c.backend == BackendGC) {
 		if err := c.loadBuiltinModule("host"); err != nil {
 			return err
 		}

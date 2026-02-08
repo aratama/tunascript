@@ -387,7 +387,6 @@ if (opened as error) {
   log("db open error: " + opened.message);
   return;
 }
-log("db opened");
 ```
 
 ```typescript
@@ -493,7 +492,7 @@ line2`;
 - `import { get_args, get_env, sqlQuery, gc } from "server"` です（ホスト依存）。
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
-- `import { run_sandbox, run_formatter } from "runtime"` です。
+- `import { run_formatter } from "runtime"` です。
 - `import style from "./style.css"` のようにテキストファイルを `string` として読み込めます。
 - `export const name = ...` です。
 - 相対パスは `.ts` を省略可能です（テキストファイルの import は拡張子の省略不可）。
@@ -600,11 +599,11 @@ const rows = fetch_all { SELECT id, name FROM users }?
 const { id, name } = rows[0]
 ```
 
-### 11.5 データベースの永続化
+### 11.5 データベース
 
-- SQLiteを内蔵しています。デフォルトではインメモリーデータベースが自動で開かれますが、`db_open`でデータベースファイルを開くこともできます。
-- 単一のSQLiteファイル接続しか提供していないため、並列プロセスや複数の接続から同時に書き込むケースではSQLiteのロックに注意する必要があります。
-- 複数のSQLデータベース接続は未対応
+- SQLiteを内蔵しています。デフォルトでインメモリーデータベース（`:memory:`）が自動で開かれます。
+- `db_open` は通常モード（GC バックエンド）では no-op で、`undefined` を返します（既定の `:memory:` を継続）。
+- 複数のSQLデータベース接続は未対応です。
 
 ### 11.6 パラメータ埋め込み
 
@@ -635,7 +634,7 @@ create_table todos {
 テーブル定義には以下の効果があります:
 
 1. **コンパイル時検証**: `execute`, `fetch_one`, `fetch_all` 等の SQL ブロック内で参照されるテーブル名とカラム名が `create_table` 定義と一致するか検証します
-2. **自動テーブル作成**: `db_open` プログラム起動時に、テーブルが存在しない場合は自動的に作成します
+2. **自動テーブル作成**: プログラム起動時に、テーブルが存在しない場合はインメモリDB上に自動作成します
 3. **スキーマ検証**: プログラム起動時に、テーブルが存在する場合、カラム名と型が定義と一致するか検証します（不一致の場合はエラーになります）
 4. **行型エイリアスの自動生成**: テーブル名が行のオブジェクト型のエイリアスとして自動的に定義されます。各カラムは `string` 型として扱われます
 
@@ -811,8 +810,7 @@ function Page(): JSX {
 - コンパイラは WAT を生成し、wasmtime-go の `Wat2Wasm` で WASM を生成します。
 - 実行は同梱 CLI の `run` で行います。
 - エントリポイントは `export function main(): void` または `export function main(): void | error` です。
-- `main` が `void | error` を返し、戻り値が `error` の場合は、その `message` をエラーとして扱って終了します。
-- `run --sandbox` では通常の標準出力ではなく、`{ stdout: string, html: string, exitCode: integer, error: string }` 形式のJSON文字列1件を標準出力に返します。
+- `--sandbox` オプションはありません。
 - **CGO と C コンパイラが必要**です（wasmtime-go が C 依存）。
 
 ### 13.1 GCポリシー（wasmtime externref）

@@ -4,26 +4,12 @@
 package runtime
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
 )
-
-const (
-	sandboxTimeout        = 2 * time.Second
-	sandboxMaxOutputBytes = 1 << 20
-)
-
-type SandboxResult struct {
-	Stdout   string `json:"stdout"`
-	HTML     string `json:"html"`
-	ExitCode int    `json:"exitCode"`
-	Error    string `json:"error"`
-}
 
 type Runner struct {
 	engine *wasmtime.Engine
@@ -42,7 +28,7 @@ func (r *Runner) Run(wasm []byte) (string, error) {
 }
 
 func (r *Runner) RunWithArgs(wasm []byte, args []string) (string, error) {
-	rt, err := r.runWithArgs(wasm, args, false)
+	rt, err := r.runWithArgs(wasm, args)
 	if err != nil {
 		if rt == nil {
 			return "", err
@@ -52,48 +38,7 @@ func (r *Runner) RunWithArgs(wasm []byte, args []string) (string, error) {
 	return rt.Output(), nil
 }
 
-func (r *Runner) RunSandboxWithArgs(wasm []byte, args []string) SandboxResult {
-	done := make(chan SandboxResult, 1)
-	go func() {
-		done <- r.runSandboxWithArgsNoTimeout(wasm, args)
-	}()
-	select {
-	case result := <-done:
-		return result
-	case <-time.After(sandboxTimeout):
-		return SandboxResult{
-			ExitCode: 1,
-			Error:    fmt.Sprintf("sandbox execution timed out after %dms", sandboxTimeout.Milliseconds()),
-		}
-	}
-}
-
-func (r *Runner) runSandboxWithArgsNoTimeout(wasm []byte, args []string) SandboxResult {
-	rt, err := r.runWithArgs(wasm, args, true)
-	if err != nil {
-		return sandboxFailure(rt, err)
-	}
-	stdout, html := rt.SandboxOutput()
-	return SandboxResult{
-		Stdout:   stdout,
-		HTML:     html,
-		ExitCode: 0,
-		Error:    "",
-	}
-}
-
-func sandboxFailure(rt *Runtime, err error) SandboxResult {
-	result := SandboxResult{
-		ExitCode: 1,
-		Error:    err.Error(),
-	}
-	if rt != nil {
-		result.Stdout, result.HTML = rt.SandboxOutput()
-	}
-	return result
-}
-
-func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runtime, err error) {
+func (r *Runner) runWithArgs(wasm []byte, args []string) (rt *Runtime, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			if recoveredErr, ok := recovered.(error); ok {
@@ -106,19 +51,12 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 
 	store := wasmtime.NewStore(r.engine)
 	linker := wasmtime.NewLinker(r.engine)
-	stdoutPath, cleanup, err := prepareWASIStdoutCapture()
-	if err != nil {
-		return nil, err
-	}
-	defer cleanup()
-	if err := configureWASI(store, linker, stdoutPath, args); err != nil {
-		return nil, err
-	}
+
 	rt = NewRuntime()
-	if sandbox {
-		rt.ConfigureSandbox(sandboxMaxOutputBytes)
-	}
 	rt.SetArgs(args)
+	if err := defineWASIFDWrite(linker, store, rt); err != nil {
+		return rt, err
+	}
 	if err := rt.Define(linker, store); err != nil {
 		return rt, err
 	}
@@ -130,7 +68,7 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 	if err != nil {
 		return rt, err
 	}
-	// Set WASM context for HTTP server callbacks
+	// Set WASM context for optional host callbacks.
 	rt.SetWasmContext(store, instance)
 	if err := rt.ensureDefaultDB(); err != nil {
 		return rt, err
@@ -142,76 +80,57 @@ func (r *Runner) runWithArgs(wasm []byte, args []string, sandbox bool) (rt *Runt
 	if _, err := start.Call(store); err != nil {
 		return rt, err
 	}
-	if mainResult := instance.GetFunc(store, "__main_result"); mainResult != nil {
-		result, err := mainResult.Call(store)
-		if err != nil {
-			return rt, err
-		}
-		if result != nil {
-			handle, ok := result.(*Value)
-			if !ok {
-				return rt, fmt.Errorf("__main_result is not externref: %T", result)
-			}
-			if msg, isErr, err := rt.resultErrorMessage(handle); err != nil {
-				return rt, err
-			} else if isErr {
-				return rt, errors.New(msg)
-			}
-		}
-	}
-	// _start終了時は1回強制GCして短命なexternrefを回収する。
+
+	// _start終了時は1回強制GCして短命な参照を回収する。
 	rt.maybeStoreGC(true)
-	if err := flushWASIStdout(rt, stdoutPath); err != nil {
-		return rt, err
-	}
-	if sandbox {
-		return rt, nil
-	}
-	// Start pending HTTP server if one was registered
-	//
-	// 重要: この呼び出しはWASM実行(_start.Call)が完了した後でなければならない。
-	// WASM実行中にHTTPサーバーを起動すると、HTTPハンドラーからWASM関数を
-	// 呼び出す際にスタックの再入(reentrant)が発生し、
-	// "wasm trap: call stack exhausted"エラーとなる。
-	//
-	// 詳細はruntime.goのpendingHTTPServer構造体のコメントを参照。
 	if err := rt.StartPendingServer(); err != nil {
 		return rt, err
 	}
 	return rt, nil
 }
 
-func prepareWASIStdoutCapture() (string, func(), error) {
-	dir, err := os.MkdirTemp("", "tuna-wasi-*")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(dir)
-	}
-	return filepath.Join(dir, "stdout"), cleanup, nil
-}
-
-func configureWASI(store *wasmtime.Store, linker *wasmtime.Linker, stdoutPath string, args []string) error {
-	wasiConfig := wasmtime.NewWasiConfig()
-	argv := make([]string, 0, len(args)+1)
-	argv = append(argv, "tuna")
-	argv = append(argv, args...)
-	wasiConfig.SetArgv(argv)
-	if err := wasiConfig.SetStdoutFile(stdoutPath); err != nil {
-		return err
-	}
-	store.SetWasi(wasiConfig)
-	return linker.DefineWasi()
-}
-
-func flushWASIStdout(rt *Runtime, stdoutPath string) error {
-	data, err := os.ReadFile(stdoutPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
+func defineWASIFDWrite(linker *wasmtime.Linker, store *wasmtime.Store, rt *Runtime) error {
+	return linker.DefineFunc(store, "wasi_snapshot_preview1", "fd_write", func(caller *wasmtime.Caller, fd int32, iovs int32, iovsLen int32, nwritten int32) int32 {
+		ext := caller.GetExport("memory")
+		if ext == nil {
+			return 21
 		}
-		return err
-	}
-	return rt.appendOutputChunk(string(data))
+		memory := ext.Memory()
+		if memory == nil {
+			return 21
+		}
+		data := memory.UnsafeData(caller)
+		total := 0
+
+		for i := int32(0); i < iovsLen; i++ {
+			base := int(iovs + i*8)
+			if base < 0 || base+8 > len(data) {
+				return 21
+			}
+			ptr := int(binary.LittleEndian.Uint32(data[base : base+4]))
+			length := int(binary.LittleEndian.Uint32(data[base+4 : base+8]))
+			if ptr < 0 || ptr+length > len(data) {
+				return 21
+			}
+			chunk := string(data[ptr : ptr+length])
+			switch fd {
+			case 1:
+				if err := rt.appendOutputChunk(chunk); err != nil {
+					return 1
+				}
+			case 3:
+				if err := rt.appendHTMLChunk(chunk); err != nil {
+					return 1
+				}
+			}
+			total += length
+		}
+
+		nw := int(nwritten)
+		if nw < 0 || nw+4 > len(data) {
+			return 21
+		}
+		binary.LittleEndian.PutUint32(data[nw:nw+4], uint32(total))
+		return 0
+	})
 }

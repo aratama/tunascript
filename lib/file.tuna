@@ -1,22 +1,22 @@
 
 //   - `path` のテキストファイルをUTF-8として読み込みます。BOMがある場合は取り除きます。
 //   - UTF-8として不正なバイト列の場合は `error` を返します。
-//   - `tuna run --sandbox` では `error` を返します。
+//   - GCバックエンドでは常に `error` を返します。
 export extern function read_text(path: string): string | error
 
 //   - `path` にUTF-8テキストを書き込みます（既存ファイルは上書き）。
-//   - `tuna run --sandbox` では `error` を返します。
+//   - GCバックエンドでは常に `error` を返します。
 export extern function write_text(path: string, content: string): undefined | error
 
 //   - `path` の末尾にUTF-8テキストを追記します。ファイルが無ければ作成します。
-//   - `tuna run --sandbox` では `error` を返します。
+//   - GCバックエンドでは常に `error` を返します。
 export extern function append_text(path: string, content: string): undefined | error
 
 //   - `path` 直下のエントリ名を配列で返します（ファイル・ディレクトリ混在）。
 //   - 返却順序は名前順にソートされます。
-//   - `tuna run --sandbox` では `error` を返します。
+//   - GCバックエンドでは常に `error` を返します。
 export extern function read_dir(path: string): string[] | error
 
 //   - `path` が存在すれば `true`、存在しないかアクセスできなければ `false` を返します。
-//   - `tuna run --sandbox` では常に `false` を返します。
+//   - GCバックエンドでは常に `false` を返します。
 export extern function exists(path: string): boolean

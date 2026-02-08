@@ -3,7 +3,6 @@ package tests
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"tuna/internal/compiler"
@@ -49,48 +48,5 @@ export function main(): void | error {
 	}
 	if out != "ok\n" {
 		t.Fatalf("unexpected output: %q", out)
-	}
-}
-
-func TestMainResultErrorFailsProcess(t *testing.T) {
-	if !runtimeAvailable() {
-		t.Skip("CGO が無効なためテストをスキップします")
-	}
-
-	src := `
-export function main(): void | error {
-  return { "type": "error", "message": "boom-from-main" }
-}
-`
-
-	out, err := compileAndRunWithRuntimeError(t, src, nil)
-	if out != "" {
-		t.Fatalf("unexpected output: %q", out)
-	}
-	if err == nil {
-		t.Fatalf("runtime error expected")
-	}
-	if !strings.Contains(err.Error(), "boom-from-main") {
-		t.Fatalf("unexpected runtime error: %v", err)
-	}
-}
-
-func TestMainResultErrorFailsSandbox(t *testing.T) {
-	if !runtimeAvailable() {
-		t.Skip("CGO が無効なためテストをスキップします")
-	}
-
-	src := `
-export function main(): void | error {
-  return { "type": "error", "message": "sandbox-main-error" }
-}
-`
-
-	result := compileAndRunSandbox(t, src, nil)
-	if result.ExitCode != 1 {
-		t.Fatalf("expected exitCode=1, got %d", result.ExitCode)
-	}
-	if !strings.Contains(result.Error, "sandbox-main-error") {
-		t.Fatalf("unexpected sandbox error: %q", result.Error)
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"path/filepath"
 	goruntime "runtime"
 	"sort"
 	"strconv"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/bytecodealliance/wasmtime-go/v41"
 	_ "modernc.org/sqlite"
-	"tuna/internal/compiler"
 	"tuna/internal/formatter"
 )
 
@@ -124,10 +122,7 @@ type HTTPResponse struct {
 
 type Runtime struct {
 	output          bytes.Buffer
-	sandboxStdout   bytes.Buffer
-	sandboxHTML     string
-	sandbox         bool
-	maxOutputBytes  int
+	htmlOutput      bytes.Buffer
 	db              *sql.DB
 	handlerMu       sync.Mutex
 	currentTx       *sql.Tx
@@ -265,24 +260,16 @@ func (r *Runtime) appendOutputChunk(chunk string) error {
 	if chunk == "" {
 		return nil
 	}
-	if r.sandbox {
-		if err := r.checkSandboxOutputSize(len(chunk)); err != nil {
-			return err
-		}
-		r.sandboxStdout.WriteString(chunk)
-		return nil
-	}
 	r.output.WriteString(chunk)
 	return nil
 }
 
-func (r *Runtime) ConfigureSandbox(maxOutputBytes int) {
-	r.sandbox = true
-	r.maxOutputBytes = maxOutputBytes
-}
-
-func (r *Runtime) SandboxOutput() (string, string) {
-	return r.sandboxStdout.String(), r.sandboxHTML
+func (r *Runtime) appendHTMLChunk(chunk string) error {
+	if chunk == "" {
+		return nil
+	}
+	r.htmlOutput.WriteString(chunk)
+	return nil
 }
 
 func (r *Runtime) SetArgs(args []string) {
@@ -533,11 +520,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
-	if err := defineRuntime("run_sandbox", func(sourceHandle *Value) *Value {
-		return must(r.run_sandbox(sourceHandle))
-	}); err != nil {
-		return err
-	}
 	if err := defineRuntime("run_formatter", func(sourceHandle *Value) *Value {
 		value, err := r.run_formatter(sourceHandle)
 		return r.resultValue(value, err)
@@ -744,6 +726,28 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}); err != nil {
 		return err
 	}
+	if err := defineHost("json_stringify", func(handle *Value) *Value {
+		return must(r.stringify(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("json_parse", func(handle *Value) *Value {
+		value, err := r.parse(handle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("json_decode", func(jsonHandle *Value, schemaHandle *Value) *Value {
+		return must(r.decode(jsonHandle, schemaHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineHost("runtime_run_formatter", func(sourceHandle *Value) *Value {
+		value, err := r.run_formatter(sourceHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
 	// HTTP server functions
 	if err := defineHTTP("http_create_server", func() *Value {
 		return must(r.httpCreateServer())
@@ -836,28 +840,6 @@ func (r *Runtime) resultError(err error) *Value {
 	return undefinedValue
 }
 
-func (r *Runtime) checkSandboxOutputSize(extra int) error {
-	if !r.sandbox || r.maxOutputBytes <= 0 {
-		return nil
-	}
-	total := r.sandboxStdout.Len() + len(r.sandboxHTML) + extra
-	if total > r.maxOutputBytes {
-		return fmt.Errorf("sandbox output limit exceeded: %d bytes", r.maxOutputBytes)
-	}
-	return nil
-}
-
-func (r *Runtime) setSandboxHTML(html string) error {
-	delta := len(html) - len(r.sandboxHTML)
-	if delta > 0 {
-		if err := r.checkSandboxOutputSize(delta); err != nil {
-			return err
-		}
-	}
-	r.sandboxHTML = html
-	return nil
-}
-
 func (r *Runtime) newValue(v Value) *Value {
 	switch v.Kind {
 	case KindNull:
@@ -903,17 +885,11 @@ func (r *Runtime) get_env(nameHandle *Value) (*Value, error) {
 	if valueHandle.Kind != KindString {
 		return nil, errors.New("get_env expects string")
 	}
-	if r.sandbox {
-		return r.newValue(Value{Kind: KindString, Str: ""}), nil
-	}
 	value := os.Getenv(valueHandle.Str)
 	return r.newValue(Value{Kind: KindString, Str: value}), nil
 }
 
 func (r *Runtime) fileReadText(pathHandle *Value) (*Value, error) {
-	if r.sandbox {
-		return nil, errors.New("read_text is not available in sandbox mode")
-	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return nil, err
@@ -934,9 +910,6 @@ func (r *Runtime) fileReadText(pathHandle *Value) (*Value, error) {
 }
 
 func (r *Runtime) fileWriteText(pathHandle *Value, contentHandle *Value) error {
-	if r.sandbox {
-		return errors.New("write_text is not available in sandbox mode")
-	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return err
@@ -958,9 +931,6 @@ func (r *Runtime) fileWriteText(pathHandle *Value, contentHandle *Value) error {
 }
 
 func (r *Runtime) fileAppendText(pathHandle *Value, contentHandle *Value) error {
-	if r.sandbox {
-		return errors.New("append_text is not available in sandbox mode")
-	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return err
@@ -988,9 +958,6 @@ func (r *Runtime) fileAppendText(pathHandle *Value, contentHandle *Value) error 
 }
 
 func (r *Runtime) fileReadDir(pathHandle *Value) (*Value, error) {
-	if r.sandbox {
-		return nil, errors.New("read_dir is not available in sandbox mode")
-	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil {
 		return nil, err
@@ -1015,9 +982,6 @@ func (r *Runtime) fileReadDir(pathHandle *Value) (*Value, error) {
 }
 
 func (r *Runtime) fileExists(pathHandle *Value) int32 {
-	if r.sandbox {
-		return 0
-	}
 	pathValue, err := r.getValue(pathHandle)
 	if err != nil || pathValue.Kind != KindString {
 		return 0
@@ -1026,47 +990,6 @@ func (r *Runtime) fileExists(pathHandle *Value) int32 {
 		return 1
 	}
 	return 0
-}
-
-func (r *Runtime) run_sandbox(sourceHandle *Value) (*Value, error) {
-	sourceValue, err := r.getValue(sourceHandle)
-	if err != nil {
-		return nil, err
-	}
-	if sourceValue.Kind != KindString {
-		return nil, errors.New("run_sandbox expects string")
-	}
-	if r.sandbox {
-		return nil, errors.New("run_sandbox is not available in sandbox mode")
-	}
-
-	result := SandboxResult{}
-	tmpDir, err := os.MkdirTemp("", "tunascript-playground-*")
-	if err != nil {
-		result.ExitCode = 1
-		result.Error = fmt.Sprintf("temp dir error: %v", err)
-		return r.sandboxResultString(result)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	entry := filepath.Join(tmpDir, "main.tuna")
-	if err := os.WriteFile(entry, []byte(sourceValue.Str), 0644); err != nil {
-		result.ExitCode = 1
-		result.Error = fmt.Sprintf("write source error: %v", err)
-		return r.sandboxResultString(result)
-	}
-
-	comp := compiler.New()
-	compiled, err := comp.Compile(entry)
-	if err != nil {
-		result.ExitCode = 1
-		result.Error = err.Error()
-		return r.sandboxResultString(result)
-	}
-
-	runner := NewRunner()
-	result = runner.RunSandboxWithArgs(compiled.Wasm, nil)
-	return r.sandboxResultString(result)
 }
 
 func (r *Runtime) run_formatter(sourceHandle *Value) (*Value, error) {
@@ -1082,14 +1005,6 @@ func (r *Runtime) run_formatter(sourceHandle *Value) (*Value, error) {
 		return nil, err
 	}
 	return r.newValue(Value{Kind: KindString, Str: formatted}), nil
-}
-
-func (r *Runtime) sandboxResultString(result SandboxResult) (*Value, error) {
-	data, err := json.Marshal(result)
-	if err != nil {
-		return nil, err
-	}
-	return r.newValue(Value{Kind: KindString, Str: string(data)}), nil
 }
 
 // internString は文字列リテラル（offset, length）をヒープハンドルに変換します。
@@ -2299,9 +2214,6 @@ func (r *Runtime) execModifyQuery(query string) (*Value, error) {
 
 // dbOpenHandle opens a database file using a string handle from the heap
 func (r *Runtime) dbOpenHandle(strHandle *Value) error {
-	if r.sandbox {
-		return nil
-	}
 	val, err := r.getValue(strHandle)
 	if err != nil {
 		return err
@@ -2930,12 +2842,6 @@ func (r *Runtime) httpAddRoute(caller *wasmtime.Caller, serverHandle *Value, met
 	}
 	path := string(data[start:end])
 
-	if r.sandbox && path == "/" && (routeMethod == routeMethodAny || routeMethod == http.MethodGet) {
-		if hasRootRouteForSandbox(server.routes) {
-			return errors.New(`add_route(server, "/", handler) may only be called once in sandbox mode`)
-		}
-	}
-
 	if _, exists := server.routes[routeMethod]; !exists {
 		server.routes[routeMethod] = map[string]*Value{}
 	}
@@ -2965,14 +2871,6 @@ func (r *Runtime) httpListen(caller *wasmtime.Caller, serverHandle *Value, portH
 		return errors.New("port must be string")
 	}
 	port := portVal.Str
-
-	if r.sandbox {
-		response, err := r.invokeRouteHandler(server, "/", "GET", map[string]string{}, map[string]string{})
-		if err != nil {
-			return err
-		}
-		return r.setSandboxHTML(response.Body)
-	}
 
 	// Store pending server info - actual startup happens after WASM execution completes
 	r.pendingServer = &pendingHTTPServer{
@@ -3075,20 +2973,6 @@ func resolveRouteByMethod(path string, method string, routes map[string]map[stri
 		return resolveRoute(path, wildcardRoutes)
 	}
 	return nil, nil, false
-}
-
-func hasRootRouteForSandbox(routes map[string]map[string]*Value) bool {
-	if wildcardRoutes, ok := routes[routeMethodAny]; ok {
-		if _, exists := wildcardRoutes["/"]; exists {
-			return true
-		}
-	}
-	if getRoutes, ok := routes[http.MethodGet]; ok {
-		if _, exists := getRoutes["/"]; exists {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeRouteMethod(method string) (string, error) {

@@ -1,7 +1,3 @@
-//   - `source`（TunaScriptコード文字列）をサンドボックス実行し、`{ stdout, html, exitCode, error }` 形式のJSON文字列を返します。
-//   - この関数はサンドボックスモード内（`tuna run --sandbox`）では使用できません。
-export extern function run_sandbox(source: string): string
-
 //   - `source`（TunaScriptコード文字列）をフォーマットします。
 //   - フォーマット成功時は整形済みコード文字列、失敗時は `error` を返します。
 export extern function run_formatter(source: string): string | error

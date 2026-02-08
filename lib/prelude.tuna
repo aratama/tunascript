@@ -27,7 +27,6 @@ export function error(message: string): error {
 }
 
 // A2: GCバックエンドでは純粋Wasm実装されるextern境界
-// （hostrefバックエンドでは互換実装としてGo側が提供）
 
 export extern function log<T>(value: T): void
 export extern function to_string(value: integer | number | boolean | string): string

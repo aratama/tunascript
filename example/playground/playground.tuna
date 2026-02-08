@@ -1,21 +1,13 @@
-import { log, to_string, fallback } from "prelude"
+import { log, fallback } from "prelude"
 import { get_args, get_env } from "server"
-import { parse, decode } from "json"
 import { length } from "array"
-import { run_sandbox, run_formatter } from "runtime"
+import { run_formatter } from "runtime"
 import { create_server, add_route, listen, response_html, response_redirect, type JSX, type Request, type Response } from "http"
 import { db_open } from "sqlite"
 import { read_text } from "file"
 import style from "./style.css"
 import PLAYGROUND_EDITOR_JS from "./editor_script.js"
 import TUNASCRIPT_LEZER_GRAMMAR from "./tunascript.grammar"
-
-type RunResult = {
-  stdout: string,
-  html: string,
-  exitCode: integer,
-  error: string
-}
 
 create_table playground_sources {
   id TEXT PRIMARY KEY,
@@ -172,17 +164,7 @@ function handle_run_by_id(req: Request): Response {
 }
 
 function run_source(source: string, run_path: string, page_path: string): Response {
-  const parsed = parse(run_sandbox(source))
-  const raw = switch (parsed) {
-    case e as error: return response_html(layout(source, "", "", "parse error: " + e.message, "1", run_path, page_path))
-    case raw as json: raw
-  }
-
-  const decoded: RunResult | error = decode<RunResult>(raw)
-  return switch (decoded) {
-    case ok as RunResult: response_html(layout(source, ok.stdout, ok.html, ok.error, to_string(ok.exitCode), run_path, page_path))
-    case e as error: response_html(layout(source, "", "", e.message, "1", run_path, page_path))
-  }  
+  return response_html(layout(source, "", "", "runtime execution is unavailable", "1", run_path, page_path))
 }
 
 export function main(): void {

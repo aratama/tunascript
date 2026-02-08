@@ -1,0 +1,93 @@
+;; File module functions implemented in WAT for GC backend.
+;; read/write APIs always return error, exists always returns false.
+
+(data $file_d_type "type")
+(data $file_d_error "error")
+(data $file_d_message "message")
+(data $file_d_read_text_msg "read_text is disabled in gc backend")
+(data $file_d_write_text_msg "write_text is disabled in gc backend")
+(data $file_d_append_text_msg "append_text is disabled in gc backend")
+(data $file_d_read_dir_msg "read_dir is disabled in gc backend")
+
+(func $file._new_lit (param $len i32) (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (local.get $len)))
+  (call $prelude._new_string_owned (local.get $ptr) (local.get $len))
+)
+
+(func $file._str_type (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 4)))
+  (memory.init $file_d_type (local.get $ptr) (i32.const 0) (i32.const 4))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 4))
+)
+
+(func $file._str_error (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 5)))
+  (memory.init $file_d_error (local.get $ptr) (i32.const 0) (i32.const 5))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 5))
+)
+
+(func $file._str_message (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 7)))
+  (memory.init $file_d_message (local.get $ptr) (i32.const 0) (i32.const 7))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 7))
+)
+
+(func $file._msg_read_text (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 35)))
+  (memory.init $file_d_read_text_msg (local.get $ptr) (i32.const 0) (i32.const 35))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 35))
+)
+
+(func $file._msg_write_text (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 36)))
+  (memory.init $file_d_write_text_msg (local.get $ptr) (i32.const 0) (i32.const 36))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 36))
+)
+
+(func $file._msg_append_text (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 37)))
+  (memory.init $file_d_append_text_msg (local.get $ptr) (i32.const 0) (i32.const 37))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 37))
+)
+
+(func $file._msg_read_dir (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 34)))
+  (memory.init $file_d_read_dir_msg (local.get $ptr) (i32.const 0) (i32.const 34))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 34))
+)
+
+(func $file._error (param $msg anyref) (result anyref)
+  (local $obj anyref)
+  (local.set $obj (call $prelude.obj_new (i32.const 2)))
+  (call $prelude.obj_set (local.get $obj) (call $file._str_type) (call $file._str_error))
+  (call $prelude.obj_set (local.get $obj) (call $file._str_message) (local.get $msg))
+  (local.get $obj)
+)
+
+(func $file.read_text (param $path anyref) (result anyref)
+  (call $file._error (call $file._msg_read_text))
+)
+
+(func $file.write_text (param $path anyref) (param $content anyref) (result anyref)
+  (call $file._error (call $file._msg_write_text))
+)
+
+(func $file.append_text (param $path anyref) (param $content anyref) (result anyref)
+  (call $file._error (call $file._msg_append_text))
+)
+
+(func $file.read_dir (param $path anyref) (result anyref)
+  (call $file._error (call $file._msg_read_dir))
+)
+
+(func $file.exists (param $path anyref) (result i32)
+  (i32.const 0)
+)
