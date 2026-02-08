@@ -1,0 +1,11 @@
+import { log, to_string } from "prelude"
+import { parse, decode } from "json"
+
+type Pair = { a: number, b: number }
+
+export function main(): void | error {
+  const parsed = parse(`{"a":10,"b":20}`)?
+  const pair = decode<Pair>(parsed)?
+  const sum = pair.a + pair.b
+  log(to_string(sum))
+}

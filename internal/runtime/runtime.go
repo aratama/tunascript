@@ -278,8 +278,95 @@ func (r *Runtime) SetArgs(args []string) {
 }
 
 func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
+	defineJSON := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "json", name, fn)
+	}
+	defineRuntime := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "runtime", name, fn)
+	}
+	defineServer := func(name string, fn interface{}) error {
+		return linker.DefineFunc(store, "server", name, fn)
+	}
 	defineHost := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "host", name, fn)
+	}
+
+	// GC モジュール向けホスト関数
+	if err := defineJSON("stringify", func(handle *Value) *Value {
+		return must(r.stringify(handle))
+	}); err != nil {
+		return err
+	}
+	if err := defineJSON("parse", func(handle *Value) *Value {
+		value, err := r.parse(handle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineJSON("decode", func(jsonHandle *Value, schemaHandle *Value) *Value {
+		return must(r.decode(jsonHandle, schemaHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineRuntime("run_formatter", func(sourceHandle *Value) *Value {
+		value, err := r.run_formatter(sourceHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineRuntime("run_sandbox", func(sourceHandle *Value) *Value {
+		value, err := r.run_sandbox(sourceHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
+		return must(r.sqlExec(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("register_tables", func(caller *wasmtime.Caller, ptr int32, length int32) {
+		must0(r.registerTables(caller, ptr, length))
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
+		return r.resultValue(value, err)
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
+		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("get_args", func() *Value {
+		return must(r.get_args())
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("get_env", func(nameHandle *Value) *Value {
+		return must(r.get_env(nameHandle))
+	}); err != nil {
+		return err
+	}
+	if err := defineServer("gc", func() {
+		r.maybeStoreGC(true)
+	}); err != nil {
+		return err
 	}
 
 	// Host bridge functions (externref-based)
@@ -380,82 +467,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 	}
 	if err := defineHost("obj_keys", func(objHandle *Value) *Value {
 		return must(r.objKeys(objHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("get_args", func() *Value {
-		return must(r.get_args())
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("get_env", func(nameHandle *Value) *Value {
-		return must(r.get_env(nameHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("gc", func() {
-		r.maybeStoreGC(true)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("sql_exec", func(caller *wasmtime.Caller, ptr int32, length int32) *Value {
-		return must(r.sqlExec(caller, ptr, length))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("register_tables", func(caller *wasmtime.Caller, ptr int32, length int32) {
-		must0(r.registerTables(caller, ptr, length))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("sql_query", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
-		value, err := r.sqlQuery(caller, ptr, length, paramsHandle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("sql_fetch_one", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
-		value, err := r.sqlFetchOne(caller, ptr, length, paramsHandle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("sql_fetch_optional", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
-		value, err := r.sqlFetchOptional(caller, ptr, length, paramsHandle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("sql_execute", func(caller *wasmtime.Caller, ptr int32, length int32, paramsHandle *Value) *Value {
-		return r.resultError(r.sqlExecute(caller, ptr, length, paramsHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("json_stringify", func(handle *Value) *Value {
-		return must(r.stringify(handle))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("json_parse", func(handle *Value) *Value {
-		value, err := r.parse(handle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("json_decode", func(jsonHandle *Value, schemaHandle *Value) *Value {
-		return must(r.decode(jsonHandle, schemaHandle))
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("runtime_run_formatter", func(sourceHandle *Value) *Value {
-		value, err := r.run_formatter(sourceHandle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineHost("runtime_run_sandbox", func(sourceHandle *Value) *Value {
-		value, err := r.run_sandbox(sourceHandle)
-		return r.resultValue(value, err)
 	}); err != nil {
 		return err
 	}

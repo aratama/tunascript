@@ -239,6 +239,55 @@ export function main(): void {
 	}
 }
 
+func TestBackendGCJSONBridgeDoesNotImportHostJSONFuncs(t *testing.T) {
+	ensureLibDirEnv(t)
+	dir := t.TempDir()
+	entryPath := filepath.Join(dir, "main.tuna")
+	src := `import { parse, decode } from "json"
+import { log } from "prelude"
+
+type User = { name: string }
+
+export function main(): void {
+  const p = parse("{\"name\":\"ok\"}")
+  switch (p) {
+    case e as error: {
+      log(e.message)
+    }
+    case j as json: {
+      const d = decode<User>(j)
+      switch (d) {
+        case de as error: {
+          log(de.message)
+        }
+        case u as User: {
+          log(u.name)
+        }
+      }
+    }
+  }
+}
+`
+	if err := os.WriteFile(entryPath, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	comp := compiler.New()
+	res, err := comp.Compile(entryPath)
+	if err != nil {
+		t.Fatalf("compile failed: %v", err)
+	}
+
+	if strings.Contains(res.Wat, `(import "host" "json_stringify"`) ||
+		strings.Contains(res.Wat, `(import "host" "json_parse"`) ||
+		strings.Contains(res.Wat, `(import "host" "json_decode"`) {
+		t.Fatalf("json bridge should not import host::json_* directly")
+	}
+	if !strings.Contains(res.Wat, `(import "json" "decode"`) {
+		t.Fatalf("expected json::decode import in generated WAT")
+	}
+}
+
 func TestBackendGCTupleIndex(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"

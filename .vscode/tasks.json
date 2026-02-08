@@ -27,6 +27,20 @@
       "problemMatcher": []
     },
     {
+      "label": "Build JSON Example",
+      "type": "shell",
+      "command": "go run ./cmd/tuna/ build example/browser-test/browser-test.tuna",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "Run Go Tests",
       "type": "shell",
       "command": "go test ./...",

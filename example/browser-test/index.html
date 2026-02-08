@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TunaScript Browser Parse Test</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "M PLUS 1 Code", "Fira Code", monospace;
+        background: #f6f3ef;
+        color: #1b1b1b;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: #3b3b3b;
+      }
+      pre {
+        background: #111;
+        color: #f0f0f0;
+        padding: 16px;
+        border-radius: 8px;
+        min-height: 120px;
+        white-space: pre-wrap;
+      }
+      .note {
+        margin-top: 16px;
+        font-size: 13px;
+        color: #5b5b5b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>JSON.parse ブラウザ実行テスト</h1>
+    <p>
+      TunaScriptでJSON文字列をparseし、<code>a + b</code> を計算して
+      <code>console.log</code> と標準出力に出します。
+    </p>
+    <pre id="output">(実行中...)</pre>
+    <p class="note">
+      先に <code>go run ./cmd/tuna/ build example/browser-test/browser-test.tuna</code>
+      を実行して <code>browser-test.wasm</code> を生成してください。
+    </p>
+    <script type="module">
+      const output = document.getElementById("output");
+      const decoder = new TextDecoder("utf-8");
+      const encoder = new TextEncoder();
+      let memory = null;
+      let stdoutBuffer = "";
+
+      function readMemory(ptr, len) {
+        return new Uint8Array(memory.buffer, ptr, len);
+      }
+
+      function writeMemory(ptr, bytes) {
+        new Uint8Array(memory.buffer, ptr, bytes.length).set(bytes);
+      }
+
+      function valKind(value) {
+        if (value === null) {
+          return 6;
+        }
+        if (value === undefined) {
+          return 7;
+        }
+        if (typeof value === "bigint") {
+          return 0;
+        }
+        if (typeof value === "number") {
+          return 1;
+        }
+        if (typeof value === "boolean") {
+          return 2;
+        }
+        if (typeof value === "string") {
+          return 3;
+        }
+        if (Array.isArray(value)) {
+          return 5;
+        }
+        if (typeof value === "object") {
+          return 4;
+        }
+        return 7;
+      }
+
+      function flushStdout(text) {
+        stdoutBuffer += text;
+        const lines = stdoutBuffer.split("\n");
+        stdoutBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          console.log(line);
+        }
+      }
+
+      const wasi = {
+        fd_write(fd, iovs, iovsLen, nwritten) {
+          if (!memory) {
+            return 0;
+          }
+          const view = new DataView(memory.buffer);
+          let written = 0;
+          let text = "";
+          for (let i = 0; i < iovsLen; i++) {
+            const ptr = view.getUint32(iovs + i * 8, true);
+            const len = view.getUint32(iovs + i * 8 + 4, true);
+            text += decoder.decode(readMemory(ptr, len), { stream: true });
+            written += len;
+          }
+          view.setUint32(nwritten, written, true);
+          if (fd === 1 || fd === 2) {
+            output.textContent += text;
+            flushStdout(text);
+          }
+          return 0;
+        },
+      };
+
+      const host = {
+        val_from_i64(v) {
+          return BigInt(v);
+        },
+        val_from_f64(v) {
+          return v;
+        },
+        val_from_bool(v) {
+          return v !== 0;
+        },
+        val_null() {
+          return null;
+        },
+        val_undefined() {
+          return undefined;
+        },
+        val_to_i64(value) {
+          if (typeof value === "bigint") {
+            return value;
+          }
+          if (typeof value === "number") {
+            return BigInt(Math.trunc(value));
+          }
+          return 0n;
+        },
+        val_to_f64(value) {
+          if (typeof value === "number") {
+            return value;
+          }
+          if (typeof value === "bigint") {
+            return Number(value);
+          }
+          return 0;
+        },
+        val_to_bool(value) {
+          return value ? 1 : 0;
+        },
+        val_kind(value) {
+          return valKind(value);
+        },
+        str_from_utf8(ptr, length) {
+          return decoder.decode(readMemory(ptr, length));
+        },
+        str_byte_len(value) {
+          return encoder.encode(String(value)).length;
+        },
+        str_copy(value, ptr, length) {
+          const bytes = encoder.encode(String(value));
+          if (bytes.length !== length) {
+            throw new Error("str_copy length mismatch");
+          }
+          writeMemory(ptr, bytes);
+        },
+        arr_new(length) {
+          return new Array(length);
+        },
+        arr_len(arr) {
+          return Array.isArray(arr) ? arr.length : 0;
+        },
+        arr_get(arr, index) {
+          return Array.isArray(arr) ? arr[index] : undefined;
+        },
+        arr_set(arr, index, value) {
+          if (Array.isArray(arr)) {
+            arr[index] = value;
+          }
+        },
+        obj_new() {
+          return {};
+        },
+        obj_get(obj, key) {
+          if (obj && typeof obj === "object") {
+            return obj[String(key)];
+          }
+          return undefined;
+        },
+        obj_set(obj, key, value) {
+          if (obj && typeof obj === "object") {
+            obj[String(key)] = value;
+          }
+        },
+        obj_keys(obj) {
+          if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+            return Object.keys(obj);
+          }
+          return [];
+        },
+      };
+
+      const json = {
+        stringify(value) {
+          try {
+            return JSON.stringify(value);
+          } catch (err) {
+            return JSON.stringify({
+              type: "error",
+              message: String(err && err.message ? err.message : err),
+            });
+          }
+        },
+        parse(text) {
+          try {
+            return JSON.parse(String(text));
+          } catch (err) {
+            return {
+              type: "error",
+              message: String(err && err.message ? err.message : err),
+            };
+          }
+        },
+        decode(value) {
+          return value;
+        },
+      };
+
+      async function main() {
+        try {
+          const response = await fetch("./browser-test.wasm");
+          if (!response.ok) {
+            throw new Error("failed to fetch browser-test.wasm");
+          }
+          const wasmBytes = await response.arrayBuffer();
+          const { instance } = await WebAssembly.instantiate(wasmBytes, {
+            wasi_snapshot_preview1: wasi,
+            host,
+            json,
+          });
+          memory = instance.exports.memory;
+          if (!memory) {
+            throw new Error("memory export not found");
+          }
+          if (typeof instance.exports._start !== "function") {
+            throw new Error("_start export not found");
+          }
+          output.textContent = "";
+          instance.exports._start();
+        } catch (err) {
+          output.textContent = String(err);
+          console.error(err);
+        }
+      }
+
+      main();
+    </script>
+  </body>
+</html>
