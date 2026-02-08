@@ -107,3 +107,39 @@ export function main(): void {
 		t.Fatalf("output mismatch: got %q, want %q", out, want)
 	}
 }
+
+func TestBackendHostArrayMapFilterReduce(t *testing.T) {
+	src := `import { log, to_string } from "prelude"
+import { map, filter, reduce, length } from "array"
+
+function double(n: integer): integer {
+  return n * 2
+}
+
+function atLeastSix(n: integer): boolean {
+  return n >= 6
+}
+
+function sumValues(acc: integer, v: integer): integer {
+  return acc + v
+}
+
+export function main(): void {
+  const xs: integer[] = [1, 2, 3, 4]
+  const doubled: integer[] = map(xs, double)
+  const filtered: integer[] = filter(doubled, atLeastSix)
+  const total: integer = reduce(filtered, sumValues, 0)
+  const size: integer = length(filtered)
+  log(to_string(total))
+  log(to_string(size))
+}
+`
+
+	out := compileAndRunWithBackend(t, map[string]string{
+		"main.tuna": src,
+	}, "main.tuna", compiler.BackendHost)
+
+	if out != "14\n2\n" {
+		t.Fatalf("output mismatch: got %q, want %q", out, "14\n2\n")
+	}
+}
