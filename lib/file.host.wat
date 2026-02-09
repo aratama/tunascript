@@ -8,32 +8,32 @@
 (import "host" "file_exists" (func $host.file_exists (param externref) (result i32)))
 
 (func $file.read_text (param $path anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.file_read_text
-      (call $host.to_host (local.get $path))))
+      (call $interop.to_host (local.get $path))))
 )
 
 (func $file.write_text (param $path anyref) (param $content anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.file_write_text
-      (call $host.to_host (local.get $path))
-      (call $host.to_host (local.get $content))))
+      (call $interop.to_host (local.get $path))
+      (call $interop.to_host (local.get $content))))
 )
 
 (func $file.append_text (param $path anyref) (param $content anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.file_append_text
-      (call $host.to_host (local.get $path))
-      (call $host.to_host (local.get $content))))
+      (call $interop.to_host (local.get $path))
+      (call $interop.to_host (local.get $content))))
 )
 
 (func $file.read_dir (param $path anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.file_read_dir
-      (call $host.to_host (local.get $path))))
+      (call $interop.to_host (local.get $path))))
 )
 
 (func $file.exists (param $path anyref) (result i32)
   (call $host.file_exists
-    (call $host.to_host (local.get $path)))
+    (call $interop.to_host (local.get $path)))
 )

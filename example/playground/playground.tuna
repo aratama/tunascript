@@ -17,7 +17,18 @@ create_table playground_sources {
 
 const MAX_SOURCE_SIZE_BYTES: integer = 10240
 const DEFAULT_SOURCE_PATH: string = "example/playground/default_source.tuna"
+const SAMPLE_JSON_DECODE_SOURCE_PATH: string = "example/playground/sample_json_decode.tuna"
+const SAMPLE_UNION_SWITCH_SOURCE_PATH: string = "example/playground/sample_union_switch.tuna"
+const SAMPLE_ERROR_PROPAGATION_SOURCE_PATH: string = "example/playground/sample_error_propagation.tuna"
+
 const DEFAULT_SOURCE: string = read_text(DEFAULT_SOURCE_PATH).fallback("")
+const SAMPLE_JSON_DECODE_SOURCE: string = read_text(SAMPLE_JSON_DECODE_SOURCE_PATH).fallback("")
+const SAMPLE_UNION_SWITCH_SOURCE: string = read_text(SAMPLE_UNION_SWITCH_SOURCE_PATH).fallback("")
+const SAMPLE_ERROR_PROPAGATION_SOURCE: string = read_text(SAMPLE_ERROR_PROPAGATION_SOURCE_PATH).fallback("")
+
+const SAMPLE_JSON_DECODE_PAGE_PATH: string = "/sample/json-decode"
+const SAMPLE_UNION_SWITCH_PAGE_PATH: string = "/sample/union-switch"
+const SAMPLE_ERROR_PROPAGATION_PAGE_PATH: string = "/sample/error-propagation"
 
 function layout(source: string, stdout: string, html: string, error: string, exitCode: string, run_path: string, page_path: string): JSX {
   return (
@@ -33,8 +44,19 @@ function layout(source: string, stdout: string, html: string, error: string, exi
         <main class="layout">
           <section class="panel">
             <form method="POST" action={run_path} class="editor-form">
-              <header class="bar">
-                <span class="title">TunaScript Playground</span>
+              <header class="bar editor-bar">
+                <span class="title-wrap">
+                  <span class="title">🐟TunaScript Playground🍣</span>
+                  <span class="sample-row">
+                    <span class="sample-label">Sample</span>
+                    <select class="sample-select" onchange="window.location.href=this.value">
+                      <option value="/" selected={page_path == "/"}>TODOリスト</option>
+                      <option value={SAMPLE_JSON_DECODE_PAGE_PATH} selected={page_path == SAMPLE_JSON_DECODE_PAGE_PATH}>JSONのパースとデコード</option>
+                      <option value={SAMPLE_UNION_SWITCH_PAGE_PATH} selected={page_path == SAMPLE_UNION_SWITCH_PAGE_PATH}>ユニオン型 + switch</option>
+                      <option value={SAMPLE_ERROR_PROPAGATION_PAGE_PATH} selected={page_path == SAMPLE_ERROR_PROPAGATION_PAGE_PATH}>?演算子のエラーハンドリング</option>
+                    </select>
+                  </span>
+                </span>
                 <span class="actions">
                   <button class="button" type="submit">Format & Run</button>
                 </span>
@@ -66,6 +88,15 @@ function layout(source: string, stdout: string, html: string, error: string, exi
   )
 }
 
+function get_sample_source(sample: string): string | undefined {
+  return switch (sample) {
+    case "json-decode": SAMPLE_JSON_DECODE_SOURCE
+    case "union-switch": SAMPLE_UNION_SWITCH_SOURCE
+    case "error-propagation": SAMPLE_ERROR_PROPAGATION_SOURCE
+    default: undefined
+  }
+}
+
 function validate_source_size(source: string): string {
   const checked = fetch_one {
     SELECT length(hex({source})) / 2 > {MAX_SOURCE_SIZE_BYTES} AS too_large
@@ -82,6 +113,17 @@ function handle_root(req: Request): Response {
 
 function handle_grammar(req: Request): Response {
   return response_html(TUNASCRIPT_LEZER_GRAMMAR)
+}
+
+function handle_sample(req: Request): Response {
+  const sample = req.query.sample
+  const page_path = "/sample/" + sample
+  const run_path = "/run/sample/" + sample
+  const source = get_sample_source(sample)
+  return switch (source) {
+    case source as string: run_source(source, run_path, page_path)
+    case none as undefined: response_html(layout(DEFAULT_SOURCE, "", "", "sample not found: " + sample, "1", run_path, page_path))
+  }
 }
 
 function handle_snippet(req: Request): Response {
@@ -130,6 +172,29 @@ function handle_run_root(req: Request): Response {
   return switch (inserted) {
     case e as error: response_html(layout(source, "", "", "db error: " + e.message, "1", "/run", "/"))
     case ok as undefined: response_redirect("/" + id)
+  }
+}
+
+function handle_run_sample(req: Request): Response {
+  const sample = req.query.sample
+  const page_path = "/sample/" + sample
+  const run_path = "/run/sample/" + sample
+  const source = req.form.source
+  const sample_source = get_sample_source(sample)
+  return switch (sample_source) {
+    case none as undefined: response_html(layout(source, "", "", "sample not found: " + sample, "1", run_path, page_path))
+    case sample_source as string: {
+      const size_error = validate_source_size(source)
+      if (size_error != "") {
+        return response_html(layout(source, "", "", size_error, "1", run_path, page_path))
+      }
+      const formatted = run_formatter(source)
+      const formatted_source = switch (formatted) {
+        case e as error: return response_html(layout(source, "", "", "format error: " + e.message, "1", run_path, page_path))
+        case formatted as string: formatted
+      }
+      run_source(formatted_source, run_path, page_path)
+    }
   }
 }
 
@@ -189,6 +254,8 @@ export function main(): void {
   server.add_route("get", "/", handle_root)
   server.add_route("post", "/run", handle_run_root)
   server.add_route("get", "/assets/tunascript.grammar", handle_grammar)
+  server.add_route("get", "/sample/:sample", handle_sample)
+  server.add_route("post", "/run/sample/:sample", handle_run_sample)
   server.add_route("get", "/:id", handle_snippet)
   server.add_route("post", "/run/:id", handle_run_by_id)
   const port_env = get_env("PORT")

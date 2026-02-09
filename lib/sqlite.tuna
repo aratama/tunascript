@@ -1,3 +1,14 @@
+type RawValue = integer | number | boolean | string | json | null | undefined
+type SQLRows = Map<string>[]
+
+extern function sql_exec(queryPtr: short, queryLen: short): SQLRows
+extern function register_tables(schemaPtr: short, schemaLen: short): void
+extern function sql_query(queryPtr: short, queryLen: short, params: RawValue): SQLRows | error
+extern function sql_fetch_one(queryPtr: short, queryLen: short, params: RawValue): Map<string> | error
+extern function sql_fetch_optional(queryPtr: short, queryLen: short, params: RawValue): Map<string> | null | error
+extern function sql_execute(queryPtr: short, queryLen: short, params: RawValue): undefined | error
+export extern function sqlQuery(query: string, params: RawValue[]): SQLRows | error
+
 //   - 指定したSQLiteファイルを直接開きます。ファイルが存在しない場合は新規作成され、書き込みはそのままファイルに反映されます。`create_table` 定義がある場合、テーブルの自動作成と検証が行われます。
 //   - この関数は `import { db_open } from "sqlite";` でインポートしてください。
 //   - 通常モード（GCバックエンド）では no-op で、常に `undefined` を返します（デフォルトの `:memory:` を継続）。

@@ -1,7 +1,7 @@
 import { log } from "prelude"
 import { get_args, get_env } from "server"
 import { length, map } from "array"
-import { create_server, add_route, listen, response_html, responseJson, response_redirect, type JSX, type Request, type Response } from "http"
+import { create_server, add_route, listen, response_html, response_json, response_redirect, type JSX, type Request, type Response } from "http"
 import { db_open } from "sqlite"
 import { Styles } from "./style.tuna"
 

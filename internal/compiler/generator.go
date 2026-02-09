@@ -1222,7 +1222,7 @@ func (g *Generator) emitInit(w *watBuilder) {
 		datum := g.stringData[g.stringIDs[jsonStr]]
 		emitter.emit(fmt.Sprintf("(i32.const %d)", datum.offset))
 		emitter.emit(fmt.Sprintf("(i32.const %d)", datum.length))
-		emitter.emit("(call $server.register_tables)")
+		emitter.emit("(call $sqlite.register_tables)")
 	}
 
 	emitter.emit("(i32.const 1)")
@@ -1451,12 +1451,12 @@ func (g *Generator) emitHttpHandlerWrapper(w *watBuilder, sym *types.Symbol, fun
 	for i, p := range funcType.Params {
 		w.line(fmt.Sprintf("(local.get $p%d)", i))
 		if g.backend == BackendHost && isRefWasmType(wasmType(p)) {
-			w.line("(call $host.to_gc)")
+			w.line("(call $interop.to_gc)")
 		}
 	}
 	w.line(fmt.Sprintf("(call %s)", internalImplName))
 	if funcType.Ret.Kind != types.KindVoid && g.backend == BackendHost && isRefWasmType(wasmType(funcType.Ret)) {
-		w.line("(call $host.to_host)")
+		w.line("(call $interop.to_host)")
 	}
 	w.indent--
 	w.line(")")
@@ -1766,12 +1766,12 @@ func (g *Generator) emitHttpLambdaWrapper(w *watBuilder, info *lambdaInfo) {
 	for i, p := range funcType.Params {
 		w.line(fmt.Sprintf("(local.get $p%d)", i))
 		if g.backend == BackendHost && isRefWasmType(wasmType(p)) {
-			w.line("(call $host.to_gc)")
+			w.line("(call $interop.to_gc)")
 		}
 	}
 	w.line(fmt.Sprintf("(call %s)", info.name))
 	if funcType.Ret.Kind != types.KindVoid && g.backend == BackendHost && isRefWasmType(wasmType(funcType.Ret)) {
-		w.line("(call $host.to_host)")
+		w.line("(call $interop.to_host)")
 	}
 	w.indent--
 	w.line(")")
@@ -3098,24 +3098,24 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.exists)", module))
 	case "sqlQuery":
-		f.emitSqlQuery(call)
+		f.emitSqlQuery(call, module)
 	case "create_server":
 		f.emit(fmt.Sprintf("(call $%s.http_create_server)", module))
 	case "listen":
 		f.emitHttpListen(call, module)
 	case "add_route":
 		f.emitHttpAddRoute(call, module)
-	case "responseText":
+	case "response_text":
 		f.emitHttpResponseText(call, module)
 	case "response_html":
 		f.emitHttpResponseHtml(call, module)
-	case "responseJson":
+	case "response_json":
 		f.emitHttpResponseJson(call, module)
 	case "response_redirect":
 		f.emitHttpResponseRedirect(call, module)
-	case "getPath":
+	case "get_path":
 		f.emitHttpGetPath(call, module)
-	case "getMethod":
+	case "get_method":
 		f.emitHttpGetMethod(call, module)
 	default:
 		mod := f.g.findModule(module)
@@ -3162,7 +3162,7 @@ func (f *funcEmitter) emitDbOpen(call *ast.CallExpr, module string) {
 	}
 }
 
-func (f *funcEmitter) emitSqlQuery(call *ast.CallExpr) {
+func (f *funcEmitter) emitSqlQuery(call *ast.CallExpr, module string) {
 	queryArg := call.Args[0]
 	paramsArg := call.Args[1]
 	queryType := f.g.checker.ExprTypes[queryArg]
@@ -3188,7 +3188,7 @@ func (f *funcEmitter) emitSqlQuery(call *ast.CallExpr) {
 	// Emit params array
 	f.emitExpr(paramsArg, paramsType)
 
-	f.emit("(call $server.sql_query)")
+	f.emit(fmt.Sprintf("(call $%s.sql_query)", module))
 }
 
 // HTTP Server helper methods
@@ -3877,19 +3877,19 @@ func (f *funcEmitter) emitSQLExpr(e *ast.SQLExpr, t *types.Type) {
 	switch e.Kind {
 	case ast.SQLQueryExecute:
 		// execute returns nothing
-		f.emit("(call $server.sql_execute)")
+		f.emit("(call $sqlite.sql_execute)")
 	case ast.SQLQueryFetchOne:
 		// fetch_one returns a single row object
-		f.emit("(call $server.sql_fetch_one)")
+		f.emit("(call $sqlite.sql_fetch_one)")
 	case ast.SQLQueryFetchOptional:
 		// fetch_optional returns a single row object or null
-		f.emit("(call $server.sql_fetch_optional)")
+		f.emit("(call $sqlite.sql_fetch_optional)")
 	case ast.SQLQueryFetch, ast.SQLQueryFetchAll:
 		// fetch and fetch_all return { columns: [], rows: [] }
-		f.emit("(call $server.sql_query)")
+		f.emit("(call $sqlite.sql_query)")
 	default:
 		// Default behavior (same as fetch_all)
-		f.emit("(call $server.sql_query)")
+		f.emit("(call $sqlite.sql_query)")
 	}
 }
 
@@ -4128,12 +4128,12 @@ var intrinsicFuncNames = map[string]bool{
 	"create_server":     true,
 	"listen":            true,
 	"add_route":         true,
-	"responseText":      true,
+	"response_text":     true,
 	"response_html":     true,
-	"responseJson":      true,
+	"response_json":     true,
 	"response_redirect": true,
-	"getPath":           true,
-	"getMethod":         true,
+	"get_path":          true,
+	"get_method":        true,
 }
 
 var noImportIntrinsicNames = map[string]bool{
@@ -4141,12 +4141,12 @@ var noImportIntrinsicNames = map[string]bool{
 	"create_server":     true,
 	"listen":            true,
 	"add_route":         true,
-	"responseText":      true,
+	"response_text":     true,
 	"response_html":     true,
-	"responseJson":      true,
+	"response_json":     true,
 	"response_redirect": true,
-	"getPath":           true,
-	"getMethod":         true,
+	"get_path":          true,
+	"get_method":        true,
 }
 
 var intrinsicValueDenied = map[string]bool{

@@ -37,14 +37,14 @@ Wasm GC 前提で動作し、参照型は `anyref` を使います。
 - `lib/http.wat`: `listen` は実サーバーを起動せず、`GET /` を1回実行して fd=3 へ出力
 - `lib/file.wat`: `read_text` などは常に `error`、`exists` は常に `false`
 - `lib/sqlite.wat`: `db_open` は no-op で `undefined` を返し、`:memory:` を継続
-- `lib/json.wat` / `lib/runtime.wat`: `host` ブリッジ経由でホスト実装へ委譲
-- `lib/host.wat`: `anyref` ⇔ `externref` の相互変換
+- `lib/json.wat` / `lib/runtime.wat`: `interop` ブリッジ経由でホスト実装へ委譲
+- `lib/interop.wat`: `anyref` ⇔ `externref` の相互変換
 - `lib/server.wat`: SQL/環境変数などのホスト連携 API
 
 ### `host` バックエンド
 
 - 参照型は `gc` バックエンドと同様に `anyref` を使います。
-- `lib/*.host.wat` が選択されるモジュールでは、Wasm内は `anyref` のまま保持し、Goホスト関数呼び出し直前に `host.to_host` / `host.to_gc` で相互変換します。
+- `lib/*.host.wat` が選択されるモジュールでは、Wasm内は `anyref` のまま保持し、Goホスト関数呼び出し直前に `interop.to_host` / `interop.to_gc` で相互変換します。
 - `http` は実ソケットサーバーを起動します。
 - `file` は実ファイルシステムを操作します。
 - `sqlite.db_open` / `sqlite.gc_open` は実SQLiteファイルを開きます。
@@ -72,5 +72,5 @@ Wasm GC 前提で動作し、参照型は `anyref` を使います。
 - `lib/sqlite.host.wat`
 - `lib/json.wat`
 - `lib/runtime.wat`
-- `lib/host.wat`
+- `lib/interop.wat`
 - `lib/server.wat`

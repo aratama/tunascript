@@ -1,0 +1,33 @@
+import { log, to_string, fallback } from "prelude"
+
+function pick(values: integer[], index: integer): integer | error {
+
+  // 配列インデックス演算子は T | error を返します
+  // 基本的には、switchで分岐してエラー処理を行います
+  const foo: integer = switch(values[index]){
+    case value as integer: value
+    case e as error: return e
+  }
+
+  // ?演算子は、エラー時には即座に関数から脱出してエラーを返すシンタックスシュガーです
+  const value: integer = values[index]?
+
+  // fallback関数を使うと、エラー時にデフォルト値に置き換えることもできます
+  const bar: integer = values[index].fallback(0)
+
+  return value
+}
+
+function describe_pick(values: integer[], index: integer): string {
+  const picked = pick(values, index)
+  return switch (picked) {
+    case value as integer: "value[" + to_string(index) + "] = " + to_string(value)
+    case e as error: "value[" + to_string(index) + "] error: " + e.message
+  }
+}
+
+export function main(): void {
+  const values = [10, 20, 30]
+  log(describe_pick(values, 1))
+  log(describe_pick(values, 10))
+}

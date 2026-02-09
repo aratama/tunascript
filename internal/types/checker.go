@@ -3167,12 +3167,12 @@ var intrinsicFuncNames = map[string]bool{
 	"create_server":     true,
 	"listen":            true,
 	"add_route":         true,
-	"responseText":      true,
+	"response_text":     true,
 	"response_html":     true,
-	"responseJson":      true,
+	"response_json":     true,
 	"response_redirect": true,
-	"getPath":           true,
-	"getMethod":         true,
+	"get_path":          true,
+	"get_method":        true,
 }
 
 var intrinsicValueDenied = map[string]bool{

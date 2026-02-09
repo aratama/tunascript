@@ -9,14 +9,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -73,26 +70,6 @@ type ColumnDef struct {
 	Constraints string `json:"constraints"`
 }
 
-type decodeSchema struct {
-	Kind    string           `json:"kind"`
-	Literal *decodeSchemaLit `json:"literal,omitempty"`
-	Elem    *decodeSchema    `json:"elem,omitempty"`
-	Tuple   []*decodeSchema  `json:"tuple,omitempty"`
-	Props   []decodeSchemaKV `json:"props,omitempty"`
-	Index   *decodeSchema    `json:"index,omitempty"`
-	Union   []*decodeSchema  `json:"union,omitempty"`
-}
-
-type decodeSchemaLit struct {
-	Kind  string      `json:"kind"`
-	Value interface{} `json:"value"`
-}
-
-type decodeSchemaKV struct {
-	Name string        `json:"name"`
-	Type *decodeSchema `json:"type"`
-}
-
 const (
 	routeMethodAny = "*"
 
@@ -134,7 +111,6 @@ type Runtime struct {
 	store           *wasmtime.Store
 	instance        *wasmtime.Instance
 	internedStrings map[uint64]*Value // 文字列リテラルのインターンキャッシュ
-	decodeSchemas   map[string]*decodeSchema
 	// pendingServer is set when http_listen is called, actual server starts after WASM execution
 	pendingServer *pendingHTTPServer
 	gcReqCount    uint64
@@ -196,7 +172,6 @@ func NewRuntime() *Runtime {
 	r := &Runtime{
 		httpServers:     make(map[int64]*HTTPServer),
 		internedStrings: make(map[uint64]*Value),
-		decodeSchemas:   make(map[string]*decodeSchema),
 		gcLastHeap:      currentHeapAlloc(),
 		gcLastAt:        now,
 	}
@@ -278,9 +253,6 @@ func (r *Runtime) SetArgs(args []string) {
 }
 
 func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
-	defineJSON := func(name string, fn interface{}) error {
-		return linker.DefineFunc(store, "json", name, fn)
-	}
 	defineRuntime := func(name string, fn interface{}) error {
 		return linker.DefineFunc(store, "runtime", name, fn)
 	}
@@ -291,23 +263,6 @@ func (r *Runtime) Define(linker *wasmtime.Linker, store *wasmtime.Store) error {
 		return linker.DefineFunc(store, "host", name, fn)
 	}
 
-	// GC モジュール向けホスト関数
-	if err := defineJSON("stringify", func(handle *Value) *Value {
-		return must(r.stringify(handle))
-	}); err != nil {
-		return err
-	}
-	if err := defineJSON("parse", func(handle *Value) *Value {
-		value, err := r.parse(handle)
-		return r.resultValue(value, err)
-	}); err != nil {
-		return err
-	}
-	if err := defineJSON("decode", func(jsonHandle *Value, schemaHandle *Value) *Value {
-		return must(r.decode(jsonHandle, schemaHandle))
-	}); err != nil {
-		return err
-	}
 	if err := defineRuntime("run_formatter", func(sourceHandle *Value) *Value {
 		value, err := r.run_formatter(sourceHandle)
 		return r.resultValue(value, err)
@@ -1009,32 +964,6 @@ func (r *Runtime) arrLen(arrHandle *Value) (int32, error) {
 	return int32(len(arrVal.Arr.Elems)), nil
 }
 
-func (r *Runtime) log(handle *Value) error {
-	v, err := r.getValue(handle)
-	if err != nil {
-		return err
-	}
-	appendLine := func(s string) error {
-		return r.appendOutputChunk(s + "\n")
-	}
-	if v.Kind == KindString {
-		return appendLine(v.Str)
-	}
-	text, err := r.stringifyValue(handle)
-	if err != nil {
-		return err
-	}
-	return appendLine(text)
-}
-
-func (r *Runtime) stringify(handle *Value) (*Value, error) {
-	text, err := r.stringifyValue(handle)
-	if err != nil {
-		return nil, err
-	}
-	return r.newValue(Value{Kind: KindString, Str: text}), nil
-}
-
 func (r *Runtime) strByteLen(handle *Value) (int32, error) {
 	v, err := r.getValue(handle)
 	if err != nil {
@@ -1073,64 +1002,6 @@ func (r *Runtime) strCopy(caller *wasmtime.Caller, handle *Value, ptr int32, len
 	}
 	copy(data[start:end], []byte(v.Str))
 	return nil
-}
-
-func (r *Runtime) parse(handle *Value) (*Value, error) {
-	v, err := r.getValue(handle)
-	if err != nil {
-		return nil, err
-	}
-	if v.Kind != KindString {
-		return nil, errors.New("parse expects string")
-	}
-	dec := json.NewDecoder(strings.NewReader(v.Str))
-	dec.UseNumber()
-	var data interface{}
-	if err := dec.Decode(&data); err != nil {
-		return nil, err
-	}
-	// JSON.parse と同様に、末尾に余計なトークンがあればエラーにする
-	var extra interface{}
-	if err := dec.Decode(&extra); err != io.EOF {
-		if err == nil {
-			return nil, errors.New("invalid json")
-		}
-		return nil, err
-	}
-	return r.fromInterface(data)
-}
-
-func (r *Runtime) decode(jsonHandle *Value, schemaHandle *Value) (*Value, error) {
-	sv, err := r.getValue(schemaHandle)
-	if err != nil {
-		return r.decodeError("invalid schema"), nil
-	}
-	if sv.Kind != KindString {
-		return r.decodeError("decode expects schema string"), nil
-	}
-
-	schema, err := r.getDecodeSchema(sv.Str)
-	if err != nil {
-		return r.decodeError("invalid schema"), nil
-	}
-
-	decoded, err := r.decodeWithSchema(jsonHandle, schema, "$")
-	if err != nil {
-		return r.decodeError(err.Error()), nil
-	}
-	return decoded, nil
-}
-
-func (r *Runtime) getDecodeSchema(schemaJSON string) (*decodeSchema, error) {
-	if cached, ok := r.decodeSchemas[schemaJSON]; ok {
-		return cached, nil
-	}
-	var s decodeSchema
-	if err := json.Unmarshal([]byte(schemaJSON), &s); err != nil {
-		return nil, err
-	}
-	r.decodeSchemas[schemaJSON] = &s
-	return &s, nil
 }
 
 func (r *Runtime) decodeError(message string) *Value {
@@ -1181,333 +1052,6 @@ func sortedKeys(m map[string]*Value) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func (r *Runtime) decodeWithSchema(handle *Value, schema *decodeSchema, path string) (*Value, error) {
-	if schema == nil {
-		return nil, fmt.Errorf("%s: invalid schema", path)
-	}
-	v, err := r.getValue(handle)
-	if err != nil {
-		return nil, err
-	}
-
-	switch schema.Kind {
-	case "json":
-		return handle, nil
-	case "undefined":
-		if v.Kind != KindUndefined {
-			return nil, fmt.Errorf("%s: undefined expected", path)
-		}
-		return handle, nil
-	case "null":
-		if v.Kind != KindNull {
-			return nil, fmt.Errorf("%s: null expected", path)
-		}
-		return handle, nil
-	case "string":
-		if v.Kind != KindString {
-			return nil, fmt.Errorf("%s: string expected", path)
-		}
-		if schema.Literal != nil {
-			want, _ := schema.Literal.Value.(string)
-			if v.Str != want {
-				return nil, fmt.Errorf("%s: string literal mismatch", path)
-			}
-		}
-		return handle, nil
-	case "boolean":
-		if v.Kind != KindBool {
-			return nil, fmt.Errorf("%s: boolean expected", path)
-		}
-		if schema.Literal != nil {
-			want, _ := schema.Literal.Value.(bool)
-			if v.Bool != want {
-				return nil, fmt.Errorf("%s: boolean literal mismatch", path)
-			}
-		}
-		return handle, nil
-	case "integer":
-		var out *Value
-		switch v.Kind {
-		case KindI64:
-			out = handle
-		case KindF64:
-			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-				return nil, fmt.Errorf("%s: invalid number", path)
-			}
-			if math.Trunc(v.F64) != v.F64 {
-				return nil, fmt.Errorf("%s: integer expected", path)
-			}
-			if v.F64 < float64(math.MinInt64) || v.F64 > float64(math.MaxInt64) {
-				return nil, fmt.Errorf("%s: integer out of range", path)
-			}
-			out = r.newValue(Value{Kind: KindI64, I64: int64(v.F64)})
-		default:
-			return nil, fmt.Errorf("%s: integer expected", path)
-		}
-		if schema.Literal != nil {
-			wantNum, _ := schema.Literal.Value.(float64)
-			outVal, _ := r.getValue(out)
-			if outVal.I64 != int64(wantNum) {
-				return nil, fmt.Errorf("%s: integer literal mismatch", path)
-			}
-		}
-		return out, nil
-	case "number":
-		var out *Value
-		switch v.Kind {
-		case KindF64:
-			if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-				return nil, fmt.Errorf("%s: invalid number", path)
-			}
-			out = handle
-		case KindI64:
-			out = r.newValue(Value{Kind: KindF64, F64: float64(v.I64)})
-		default:
-			return nil, fmt.Errorf("%s: number expected", path)
-		}
-		if schema.Literal != nil {
-			wantNum, _ := schema.Literal.Value.(float64)
-			outVal, _ := r.getValue(out)
-			if outVal.Kind != KindF64 || outVal.F64 != wantNum {
-				return nil, fmt.Errorf("%s: number literal mismatch", path)
-			}
-		}
-		return out, nil
-	case "array":
-		if v.Kind != KindArray {
-			return nil, fmt.Errorf("%s: array expected", path)
-		}
-		if schema.Elem == nil {
-			return nil, fmt.Errorf("%s: invalid schema", path)
-		}
-		elems := make([]*Value, len(v.Arr.Elems))
-		for i, child := range v.Arr.Elems {
-			decoded, err := r.decodeWithSchema(child, schema.Elem, fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return nil, err
-			}
-			elems[i] = decoded
-		}
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
-	case "tuple":
-		if v.Kind != KindArray {
-			return nil, fmt.Errorf("%s: array expected", path)
-		}
-		if len(v.Arr.Elems) != len(schema.Tuple) {
-			return nil, fmt.Errorf("%s: tuple length mismatch", path)
-		}
-		elems := make([]*Value, len(schema.Tuple))
-		for i, elemSchema := range schema.Tuple {
-			decoded, err := r.decodeWithSchema(v.Arr.Elems[i], elemSchema, fmt.Sprintf("%s[%d]", path, i))
-			if err != nil {
-				return nil, err
-			}
-			elems[i] = decoded
-		}
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: elems}}), nil
-	case "object":
-		if v.Kind != KindObject {
-			return nil, fmt.Errorf("%s: object expected", path)
-		}
-
-		props := map[string]*Value{}
-		for _, p := range schema.Props {
-			if p.Type == nil {
-				return nil, fmt.Errorf("%s: invalid schema", path)
-			}
-			child, ok := v.Obj.Props[p.Name]
-			if !ok {
-				if schemaAllowsUndefined(p.Type) {
-					props[p.Name] = undefinedValue
-					continue
-				}
-				return nil, fmt.Errorf("%s.%s: missing field", path, p.Name)
-			}
-			decoded, err := r.decodeWithSchema(child, p.Type, path+"."+p.Name)
-			if err != nil {
-				return nil, err
-			}
-			props[p.Name] = decoded
-		}
-
-		if schema.Index != nil {
-			for key, child := range v.Obj.Props {
-				if _, ok := props[key]; ok {
-					continue
-				}
-				decoded, err := r.decodeWithSchema(child, schema.Index, path+"."+key)
-				if err != nil {
-					return nil, err
-				}
-				props[key] = decoded
-			}
-		}
-
-		return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}}), nil
-	case "union":
-		var lastErr error
-		for _, m := range schema.Union {
-			decoded, err := r.decodeWithSchema(handle, m, path)
-			if err == nil {
-				return decoded, nil
-			}
-			lastErr = err
-		}
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, fmt.Errorf("%s: union expected", path)
-	default:
-		return nil, fmt.Errorf("%s: unsupported schema kind", path)
-	}
-}
-
-func schemaAllowsUndefined(schema *decodeSchema) bool {
-	if schema == nil {
-		return false
-	}
-	if schema.Kind == "undefined" {
-		return true
-	}
-	if schema.Kind == "union" {
-		for _, m := range schema.Union {
-			if schemaAllowsUndefined(m) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func (r *Runtime) fromInterface(v interface{}) (*Value, error) {
-	switch val := v.(type) {
-	case string:
-		return r.newValue(Value{Kind: KindString, Str: val}), nil
-	case bool:
-		return r.newValue(Value{Kind: KindBool, Bool: val}), nil
-	case json.Number:
-		str := val.String()
-		if strings.ContainsAny(str, ".eE") {
-			f, err := val.Float64()
-			if err != nil {
-				return nil, err
-			}
-			return r.newValue(Value{Kind: KindF64, F64: f}), nil
-		}
-		i, err := val.Int64()
-		if err != nil {
-			f, ferr := val.Float64()
-			if ferr != nil {
-				return nil, ferr
-			}
-			return r.newValue(Value{Kind: KindF64, F64: f}), nil
-		}
-		return r.newValue(Value{Kind: KindI64, I64: i}), nil
-	case []interface{}:
-		arr := make([]*Value, len(val))
-		for i, elem := range val {
-			child, err := r.fromInterface(elem)
-			if err != nil {
-				return nil, err
-			}
-			arr[i] = child
-		}
-		return r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: arr}}), nil
-	case map[string]interface{}:
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		props := map[string]*Value{}
-		for _, k := range keys {
-			child, err := r.fromInterface(val[k])
-			if err != nil {
-				return nil, err
-			}
-			props[k] = child
-		}
-		return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: keys, Props: props}}), nil
-	case nil:
-		return r.newValue(Value{Kind: KindNull}), nil
-	default:
-		return nil, errors.New("unsupported json")
-	}
-}
-
-func (r *Runtime) stringifyValue(handle *Value) (string, error) {
-	var buf bytes.Buffer
-	if err := r.writeJSON(handle, &buf); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
-}
-
-func (r *Runtime) writeJSON(handle *Value, buf *bytes.Buffer) error {
-	v, err := r.getValue(handle)
-	if err != nil {
-		return err
-	}
-	switch v.Kind {
-	case KindString:
-		buf.WriteString(strconv.Quote(v.Str))
-	case KindI64:
-		buf.WriteString(strconv.FormatInt(v.I64, 10))
-	case KindF64:
-		if math.IsNaN(v.F64) || math.IsInf(v.F64, 0) {
-			return errors.New("invalid number")
-		}
-		buf.WriteString(strconv.FormatFloat(v.F64, 'g', -1, 64))
-	case KindBool:
-		if v.Bool {
-			buf.WriteString("true")
-		} else {
-			buf.WriteString("false")
-		}
-	case KindArray:
-		buf.WriteByte('[')
-		for i, child := range v.Arr.Elems {
-			if i > 0 {
-				buf.WriteByte(',')
-			}
-			if err := r.writeJSON(child, buf); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte(']')
-	case KindObject:
-		buf.WriteByte('{')
-		wrote := 0
-		for _, key := range v.Obj.Order {
-			child := v.Obj.Props[key]
-			childVal, err := r.getValue(child)
-			if err != nil {
-				return err
-			}
-			if childVal.Kind == KindUndefined {
-				continue
-			}
-			if wrote > 0 {
-				buf.WriteByte(',')
-			}
-			wrote++
-			buf.WriteString(strconv.Quote(key))
-			buf.WriteByte(':')
-			if err := r.writeJSON(child, buf); err != nil {
-				return err
-			}
-		}
-		buf.WriteByte('}')
-	case KindNull:
-		buf.WriteString("null")
-	case KindUndefined:
-		buf.WriteString("null")
-	default:
-		return errors.New("unsupported type")
-	}
-	return nil
 }
 
 // sqlExec executes a SQL query and returns the result as an object with columns and rows

@@ -283,8 +283,10 @@ export function main(): void {
 		strings.Contains(res.Wat, `(import "host" "json_decode"`) {
 		t.Fatalf("json bridge should not import host::json_* directly")
 	}
-	if !strings.Contains(res.Wat, `(import "json" "decode"`) {
-		t.Fatalf("expected json::decode import in generated WAT")
+	if strings.Contains(res.Wat, `(import "json" "stringify"`) ||
+		strings.Contains(res.Wat, `(import "json" "parse"`) ||
+		strings.Contains(res.Wat, `(import "json" "decode"`) {
+		t.Fatalf("json module should be inlined WAT without json:: imports")
 	}
 }
 

@@ -489,7 +489,8 @@ line2`;
 
 - `import { foo } from "./mod"` です。
 - `import { log } from "prelude"` です。
-- `import { get_args, get_env, sqlQuery, gc } from "server"` です（ホスト依存）。
+- `import { get_args, get_env, gc } from "server"` です（ホスト依存）。
+- `import { db_open, sqlQuery } from "sqlite"` です（ホスト依存）。
 - `import { parse, stringify, decode } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
 - `import { run_formatter, run_sandbox } from "runtime"` です。
@@ -500,7 +501,7 @@ line2`;
 ## 11. SQL
 
 ソースコード内に直接SQLクエリを記述できます。Rustのsqlxライブラリに倣い、期待する結果に応じたキーワードを使用します。
-SQL機能は `server` モジュールに依存するため、ホスト機能が必要です。
+SQL機能は `sqlite` モジュールに依存するため、ホスト機能が必要です。
 
 ### 11.1 クエリキーワード
 

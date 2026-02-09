@@ -24,74 +24,74 @@
 )
 
 (func $http.http_create_server (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_create_server))
 )
 
 (func $http.http_add_route (param $server anyref) (param $method anyref) (param $path_ptr i32) (param $path_len i32) (param $handler anyref)
   (call $host.http_add_route
-    (call $host.to_host (local.get $server))
-    (call $host.to_host (local.get $method))
+    (call $interop.to_host (local.get $server))
+    (call $interop.to_host (local.get $method))
     (local.get $path_ptr)
     (local.get $path_len)
-    (call $host.to_host (local.get $handler)))
+    (call $interop.to_host (local.get $handler)))
 )
 
 (func $http.http_listen (param $server anyref) (param $port anyref)
   (call $host.http_listen
-    (call $host.to_host (local.get $server))
-    (call $host.to_host (local.get $port)))
+    (call $interop.to_host (local.get $server))
+    (call $interop.to_host (local.get $port)))
 )
 
 (func $http.http_response_text (param $text_ptr i32) (param $text_len i32) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_text (local.get $text_ptr) (local.get $text_len)))
 )
 
 (func $http.http_response_text_str (param $text anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_text_str
-      (call $host.to_host (local.get $text))))
+      (call $interop.to_host (local.get $text))))
 )
 
 (func $http.http_response_html (param $html_ptr i32) (param $html_len i32) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_html (local.get $html_ptr) (local.get $html_len)))
 )
 
 (func $http.http_response_html_str (param $html anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_html_str
-      (call $host.to_host (local.get $html))))
+      (call $interop.to_host (local.get $html))))
 )
 
 (func $http.http_response_json (param $data anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_json
-      (call $host.to_host (local.get $data))))
+      (call $interop.to_host (local.get $data))))
 )
 
 (func $http.http_response_redirect (param $url_ptr i32) (param $url_len i32) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_redirect (local.get $url_ptr) (local.get $url_len)))
 )
 
 (func $http.http_response_redirect_str (param $url anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_response_redirect_str
-      (call $host.to_host (local.get $url))))
+      (call $interop.to_host (local.get $url))))
 )
 
 (func $http.http_get_path (param $req anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_get_path
-      (call $host.to_host (local.get $req))))
+      (call $interop.to_host (local.get $req))))
 )
 
 (func $http.http_get_method (param $req anyref) (result anyref)
-  (call $host.to_gc
+  (call $interop.to_gc
     (call $host.http_get_method
-      (call $host.to_host (local.get $req))))
+      (call $interop.to_host (local.get $req))))
 )
 
 ;; Public extern wrappers so declarations in lib/http.tuna remain available.
@@ -113,7 +113,7 @@
   (call $http.http_listen (local.get $server) (local.get $port))
 )
 
-(func $http.responseText (param $text anyref) (result anyref)
+(func $http.response_text (param $text anyref) (result anyref)
   (call $http.http_response_text_str (local.get $text))
 )
 
@@ -121,7 +121,7 @@
   (call $http.http_response_html_str (local.get $html))
 )
 
-(func $http.responseJson (param $data anyref) (result anyref)
+(func $http.response_json (param $data anyref) (result anyref)
   (call $http.http_response_json (local.get $data))
 )
 
@@ -129,10 +129,10 @@
   (call $http.http_response_redirect_str (local.get $url))
 )
 
-(func $http.getPath (param $req anyref) (result anyref)
+(func $http.get_path (param $req anyref) (result anyref)
   (call $http.http_get_path (local.get $req))
 )
 
-(func $http.getMethod (param $req anyref) (result anyref)
+(func $http.get_method (param $req anyref) (result anyref)
   (call $http.http_get_method (local.get $req))
 )

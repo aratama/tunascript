@@ -1,0 +1,21 @@
+import { log, to_string } from "prelude"
+import { parse, decode, stringify } from "json"
+import { length } from "array"
+
+type Task = { title: string, done: boolean, tags: string[] }
+
+function status_text(done: boolean): string {
+  return if (done) { "done" } else { "todo" }
+}
+
+export function main(): void | error {
+  const payload = `{"title":"Write API docs","done":false,"tags":["backend","json"]}`
+  const parsed = parse(payload)?
+  const task = decode<Task>(parsed)?
+
+  log("decoded: ok")
+  log("title: " + task.title)
+  log("status: " + status_text(task.done))
+  log("tag count: " + to_string(length(task.tags)))
+  log("normalized: " + stringify(task))
+}

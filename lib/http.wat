@@ -381,7 +381,7 @@
   (call $http.http_listen (local.get $server) (local.get $port))
 )
 
-(func $http.responseText (param $text anyref) (result anyref)
+(func $http.response_text (param $text anyref) (result anyref)
   (call $http.http_response_text_str (local.get $text))
 )
 
@@ -389,7 +389,7 @@
   (call $http.http_response_html_str (local.get $html))
 )
 
-(func $http.responseJson (param $data anyref) (result anyref)
+(func $http.response_json (param $data anyref) (result anyref)
   (call $http.http_response_json (local.get $data))
 )
 
@@ -397,10 +397,10 @@
   (call $http.http_response_redirect_str (local.get $url))
 )
 
-(func $http.getPath (param $req anyref) (result anyref)
+(func $http.get_path (param $req anyref) (result anyref)
   (call $http.http_get_path (local.get $req))
 )
 
-(func $http.getMethod (param $req anyref) (result anyref)
+(func $http.get_method (param $req anyref) (result anyref)
   (call $http.http_get_method (local.get $req))
 )

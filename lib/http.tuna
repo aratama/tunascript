@@ -41,19 +41,19 @@ export extern function add_route(server: Server, path: string, handler: (req: Re
 export extern function listen(server: Server, port: string): void
 
 //   - テキストレスポンスを作成します。
-export extern function responseText(text: string): Response
+export extern function response_text(text: string): Response
 
 //   - HTML を直接返す `contentType: "text/html; charset=utf-8"` のレスポンスを作成します。
 export extern function response_html(html: string): Response
 
 //   - JSON ボディを返すレスポンス（`contentType` は `application/json`）を作成します。
-export extern function responseJson(data: string): Response
+export extern function response_json(data: string): Response
 
 //   - `Location` ヘッダーと `302 Found` をセットしたリダイレクトを作成します。
 export extern function response_redirect(url: string): Response
 
 //   - リクエストのパスを取得します。
-export extern function getPath(req: Request): string
+export extern function get_path(req: Request): string
 
 //   - リクエストのHTTPメソッド（GET, POSTなど）を取得します。
-export extern function getMethod(req: Request): string
+export extern function get_method(req: Request): string

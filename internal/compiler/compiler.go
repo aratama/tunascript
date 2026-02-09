@@ -64,8 +64,8 @@ func (c *Compiler) Compile(entry string) (*Result, error) {
 	if err := c.loadRecursive(abs); err != nil {
 		return nil, err
 	}
-	if c.needsServerModule() {
-		if err := c.loadBuiltinModule("server"); err != nil {
+	if c.needsSqliteModule() {
+		if err := c.loadBuiltinModule("sqlite"); err != nil {
 			return nil, err
 		}
 	}
@@ -124,7 +124,7 @@ func (c *Compiler) loadBuiltinModule(name string) error {
 		return nil
 	}
 	if c.moduleNeedsHostBridge(name) {
-		if err := c.loadBuiltinModule("host"); err != nil {
+		if err := c.loadBuiltinModule("interop"); err != nil {
 			return err
 		}
 	}
@@ -293,19 +293,19 @@ func findLibDir(startDir string) (string, bool) {
 	return "", false
 }
 
-func (c *Compiler) needsServerModule() bool {
+func (c *Compiler) needsSqliteModule() bool {
 	for _, mod := range c.Modules {
-		if mod == nil || mod.Path == "server" || mod.Path == "host" {
+		if mod == nil || mod.Path == "sqlite" || mod.Path == "server" || mod.Path == "host" {
 			continue
 		}
-		if moduleNeedsServer(mod) {
+		if moduleNeedsSqlite(mod) {
 			return true
 		}
 	}
 	return false
 }
 
-func moduleNeedsServer(mod *ast.Module) bool {
+func moduleNeedsSqlite(mod *ast.Module) bool {
 	if mod == nil {
 		return false
 	}
@@ -313,152 +313,152 @@ func moduleNeedsServer(mod *ast.Module) bool {
 		if _, ok := decl.(*ast.TableDecl); ok {
 			return true
 		}
-		if declNeedsServer(decl) {
+		if declNeedsSqlite(decl) {
 			return true
 		}
 	}
 	return false
 }
 
-func declNeedsServer(decl ast.Decl) bool {
+func declNeedsSqlite(decl ast.Decl) bool {
 	switch d := decl.(type) {
 	case *ast.ConstDecl:
-		return exprNeedsServer(d.Init)
+		return exprNeedsSqlite(d.Init)
 	case *ast.FuncDecl:
-		return blockNeedsServer(d.Body)
+		return blockNeedsSqlite(d.Body)
 	default:
 		return false
 	}
 }
 
-func blockNeedsServer(block *ast.BlockStmt) bool {
+func blockNeedsSqlite(block *ast.BlockStmt) bool {
 	if block == nil {
 		return false
 	}
 	for _, stmt := range block.Stmts {
-		if stmtNeedsServer(stmt) {
+		if stmtNeedsSqlite(stmt) {
 			return true
 		}
 	}
 	return false
 }
 
-func stmtNeedsServer(stmt ast.Stmt) bool {
+func stmtNeedsSqlite(stmt ast.Stmt) bool {
 	switch s := stmt.(type) {
 	case *ast.ConstStmt:
-		return exprNeedsServer(s.Init)
+		return exprNeedsSqlite(s.Init)
 	case *ast.DestructureStmt:
-		return exprNeedsServer(s.Init)
+		return exprNeedsSqlite(s.Init)
 	case *ast.ObjectDestructureStmt:
-		return exprNeedsServer(s.Init)
+		return exprNeedsSqlite(s.Init)
 	case *ast.ExprStmt:
-		return exprNeedsServer(s.Expr)
+		return exprNeedsSqlite(s.Expr)
 	case *ast.IfStmt:
-		return exprNeedsServer(s.Cond) || blockNeedsServer(s.Then) || blockNeedsServer(s.Else)
+		return exprNeedsSqlite(s.Cond) || blockNeedsSqlite(s.Then) || blockNeedsSqlite(s.Else)
 	case *ast.ForOfStmt:
-		return exprNeedsServer(s.Iter) || blockNeedsServer(s.Body)
+		return exprNeedsSqlite(s.Iter) || blockNeedsSqlite(s.Body)
 	case *ast.ReturnStmt:
-		return exprNeedsServer(s.Value)
+		return exprNeedsSqlite(s.Value)
 	case *ast.BlockStmt:
-		return blockNeedsServer(s)
+		return blockNeedsSqlite(s)
 	default:
 		return false
 	}
 }
 
-func exprNeedsServer(expr ast.Expr) bool {
+func exprNeedsSqlite(expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case *ast.SQLExpr:
 		return true
 	case *ast.TemplateLit:
 		for _, ex := range e.Exprs {
-			if exprNeedsServer(ex) {
+			if exprNeedsSqlite(ex) {
 				return true
 			}
 		}
 	case *ast.ArrayLit:
 		for _, entry := range e.Entries {
-			if exprNeedsServer(entry.Value) {
+			if exprNeedsSqlite(entry.Value) {
 				return true
 			}
 		}
 	case *ast.ObjectLit:
 		for _, entry := range e.Entries {
-			if exprNeedsServer(entry.Value) {
+			if exprNeedsSqlite(entry.Value) {
 				return true
 			}
 		}
 	case *ast.CallExpr:
-		if exprNeedsServer(e.Callee) {
+		if exprNeedsSqlite(e.Callee) {
 			return true
 		}
 		for _, arg := range e.Args {
-			if exprNeedsServer(arg) {
+			if exprNeedsSqlite(arg) {
 				return true
 			}
 		}
 	case *ast.MemberExpr:
-		return exprNeedsServer(e.Object)
+		return exprNeedsSqlite(e.Object)
 	case *ast.IndexExpr:
-		return exprNeedsServer(e.Array) || exprNeedsServer(e.Index)
+		return exprNeedsSqlite(e.Array) || exprNeedsSqlite(e.Index)
 	case *ast.TryExpr:
-		return exprNeedsServer(e.Expr)
+		return exprNeedsSqlite(e.Expr)
 	case *ast.UnaryExpr:
-		return exprNeedsServer(e.Expr)
+		return exprNeedsSqlite(e.Expr)
 	case *ast.AsExpr:
-		return exprNeedsServer(e.Expr)
+		return exprNeedsSqlite(e.Expr)
 	case *ast.BinaryExpr:
-		return exprNeedsServer(e.Left) || exprNeedsServer(e.Right)
+		return exprNeedsSqlite(e.Left) || exprNeedsSqlite(e.Right)
 	case *ast.IfExpr:
-		return exprNeedsServer(e.Cond) || exprNeedsServer(e.Then) || exprNeedsServer(e.Else)
+		return exprNeedsSqlite(e.Cond) || exprNeedsSqlite(e.Then) || exprNeedsSqlite(e.Else)
 	case *ast.SwitchExpr:
-		if exprNeedsServer(e.Value) {
+		if exprNeedsSqlite(e.Value) {
 			return true
 		}
 		for _, c := range e.Cases {
-			if exprNeedsServer(c.Pattern) || exprNeedsServer(c.Body) {
+			if exprNeedsSqlite(c.Pattern) || exprNeedsSqlite(c.Body) {
 				return true
 			}
 		}
-		return exprNeedsServer(e.Default)
+		return exprNeedsSqlite(e.Default)
 	case *ast.BlockExpr:
 		for _, stmt := range e.Stmts {
-			if stmtNeedsServer(stmt) {
+			if stmtNeedsSqlite(stmt) {
 				return true
 			}
 		}
 	case *ast.ArrowFunc:
 		if e.Expr != nil {
-			return exprNeedsServer(e.Expr)
+			return exprNeedsSqlite(e.Expr)
 		}
-		return blockNeedsServer(e.Body)
+		return blockNeedsSqlite(e.Body)
 	case *ast.JSXElement:
-		return jsxElementNeedsServer(e)
+		return jsxElementNeedsSqlite(e)
 	case *ast.JSXFragment:
-		return jsxFragmentNeedsServer(e)
+		return jsxFragmentNeedsSqlite(e)
 	default:
 		return false
 	}
 	return false
 }
 
-func jsxElementNeedsServer(elem *ast.JSXElement) bool {
+func jsxElementNeedsSqlite(elem *ast.JSXElement) bool {
 	if elem == nil {
 		return false
 	}
 	for _, attr := range elem.Attributes {
-		if attr.Value != nil && exprNeedsServer(attr.Value) {
+		if attr.Value != nil && exprNeedsSqlite(attr.Value) {
 			return true
 		}
 	}
 	for _, child := range elem.Children {
 		switch child.Kind {
 		case ast.JSXChildElement:
-			if jsxElementNeedsServer(child.Element) {
+			if jsxElementNeedsSqlite(child.Element) {
 				return true
 			}
 		case ast.JSXChildExpr:
-			if exprNeedsServer(child.Expr) {
+			if exprNeedsSqlite(child.Expr) {
 				return true
 			}
 		}
@@ -466,18 +466,18 @@ func jsxElementNeedsServer(elem *ast.JSXElement) bool {
 	return false
 }
 
-func jsxFragmentNeedsServer(frag *ast.JSXFragment) bool {
+func jsxFragmentNeedsSqlite(frag *ast.JSXFragment) bool {
 	if frag == nil {
 		return false
 	}
 	for _, child := range frag.Children {
 		switch child.Kind {
 		case ast.JSXChildElement:
-			if jsxElementNeedsServer(child.Element) {
+			if jsxElementNeedsSqlite(child.Element) {
 				return true
 			}
 		case ast.JSXChildExpr:
-			if exprNeedsServer(child.Expr) {
+			if exprNeedsSqlite(child.Expr) {
 				return true
 			}
 		}
@@ -527,9 +527,9 @@ func (c *Compiler) resolveImport(baseDir, spec string) (string, error) {
 
 func (c *Compiler) moduleNeedsHostBridge(name string) bool {
 	switch name {
-	case "server", "json", "runtime":
+	case "server", "runtime", "sqlite":
 		return true
-	case "http", "file", "sqlite":
+	case "http", "file":
 		return c.backend == BackendHost
 	default:
 		return false

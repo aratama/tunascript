@@ -1,4 +1,4 @@
-;; Host bridge helpers used by server.wat (GC backend).
+;; Interop bridge helpers used by server.wat (GC backend).
 ;; These functions convert values between GC anyref and host externref.
 
 (import "host" "val_from_i64" (func $host.val_from_i64 (param i64) (result externref)))
@@ -25,7 +25,7 @@
 (import "host" "obj_set" (func $host.obj_set (param externref externref externref)))
 (import "host" "obj_keys" (func $host.obj_keys (param externref) (result externref)))
 
-(func $host.to_host (param $value anyref) (result externref)
+(func $interop.to_host (param $value anyref) (result externref)
   (local $kind i32)
   (local $len i32)
   (local $ptr i32)
@@ -71,7 +71,7 @@
           (call $host.arr_set
             (local.get $out)
             (local.get $i)
-            (call $host.to_host (local.get $val)))
+            (call $interop.to_host (local.get $val)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $loop)
         )
@@ -92,8 +92,8 @@
           (local.set $val (call $prelude.obj_get (local.get $value) (local.get $key)))
           (call $host.obj_set
             (local.get $out)
-            (call $host.to_host (local.get $key))
-            (call $host.to_host (local.get $val)))
+            (call $interop.to_host (local.get $key))
+            (call $interop.to_host (local.get $val)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $loop)
         )
@@ -115,7 +115,7 @@
   (call $host.val_undefined)
 )
 
-(func $host.to_gc (param $value externref) (result anyref)
+(func $interop.to_gc (param $value externref) (result anyref)
   (local $kind i32)
   (local $len i32)
   (local $ptr i32)
@@ -162,7 +162,7 @@
           (call $prelude.arr_set
             (local.get $out)
             (local.get $i)
-            (call $host.to_gc (local.get $val)))
+            (call $interop.to_gc (local.get $val)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $loop)
         )
@@ -183,8 +183,8 @@
           (local.set $val (call $host.obj_get (local.get $value) (local.get $key)))
           (call $prelude.obj_set
             (local.get $out)
-            (call $host.to_gc (local.get $key))
-            (call $host.to_gc (local.get $val)))
+            (call $interop.to_gc (local.get $key))
+            (call $interop.to_gc (local.get $val)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $loop)
         )
