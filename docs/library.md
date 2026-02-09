@@ -14,7 +14,7 @@ A1（純粋TunaScript）とA2（WAT実装）の基本APIです。
 
 - A1: `fallback`, `then`
 - A2: `log`, `to_string`, `string_length` ほか内部の低レベル関数
-- 整数プリミティブ型は `i64`（通常用途）と `i32`（低レベルextern用途）です。
+- 数値プリミティブ型は `i64`（64bit整数）、`i32`（32bit整数・低レベルextern用途）、`f64`（64bit浮動小数点）です。
 
 `error(message)` は `prelude` ではなく言語組み込みの特殊関数です（import不要）。戻り値は `{ type: "error", message: string, stacktrace: string[] }` です。
 

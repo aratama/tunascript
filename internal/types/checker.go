@@ -1095,7 +1095,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 				return nil
 			}
 			if !isTemplateStringConvertible(partType) {
-				c.errorf(part.GetSpan(), "template interpolation must be string, i64, number, or boolean")
+				c.errorf(part.GetSpan(), "template interpolation must be string, i64, f64, or boolean")
 				return nil
 			}
 		}
@@ -1130,7 +1130,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			return nil
 		}
 		if inner.Kind != KindI64 && inner.Kind != KindF64 {
-			c.errorf(e.Span, "number required")
+			c.errorf(e.Span, "i64 or f64 required")
 			return nil
 		}
 		c.ExprTypes[expr] = inner
@@ -1467,12 +1467,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			if paramType == nil {
 				continue
 			}
-			// Parameters must be primitive types (string, i64, number, bool)
+			// Parameters must be primitive types (string, i64, f64, bool)
 			switch paramType.Kind {
 			case KindString, KindI64, KindF64, KindBool:
 				// OK
 			default:
-				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, i64, number, or bool)")
+				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, i64, f64, or bool)")
 			}
 		}
 		// Validate SQL query against table definitions
@@ -1664,7 +1664,7 @@ func (c *Checker) checkJSXChild(env *Env, child *ast.JSXChild) {
 			c.checkExpr(env, child.Element, String())
 		}
 	case ast.JSXChildExpr:
-		// Expression must return a primitive type (string, number, bool) or array of strings
+		// Expression must return a primitive type (string, i64, f64, bool) or array of strings
 		if child.Expr != nil {
 			exprType := c.checkExpr(env, child.Expr, nil)
 			if exprType == nil {
@@ -1677,7 +1677,7 @@ func (c *Checker) checkJSXChild(env *Env, child *ast.JSXChild) {
 				}
 			}
 			if exprType.Kind != KindString && exprType.Kind != KindI64 && exprType.Kind != KindF64 && exprType.Kind != KindBool {
-				c.errorf(child.Span, "JSX expression must return a primitive type (string, number, or bool)")
+				c.errorf(child.Span, "JSX expression must return a primitive type (string, i64, f64, or bool)")
 			}
 		}
 	}
@@ -1704,7 +1704,7 @@ func (c *Checker) checkBinary(e *ast.BinaryExpr, left, right *Type) *Type {
 		if left.Kind == KindF64 && right.Kind == KindF64 {
 			return F64()
 		}
-		c.errorf(e.Span, "number required")
+		c.errorf(e.Span, "i64 or f64 required")
 		return nil
 	case "==", "!=":
 		if !typesEqual(baseType(left), baseType(right)) {
@@ -1719,7 +1719,7 @@ func (c *Checker) checkBinary(e *ast.BinaryExpr, left, right *Type) *Type {
 		if left.Kind == KindF64 && right.Kind == KindF64 {
 			return Bool()
 		}
-		c.errorf(e.Span, "number required")
+		c.errorf(e.Span, "i64 or f64 required")
 		return nil
 	case "&", "|":
 		if left.Kind == KindBool && right.Kind == KindBool {
@@ -2499,7 +2499,7 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			return c.recordType(expr, Null())
 		case "undefined":
 			return c.recordType(expr, Undefined())
-		case "number":
+		case "f64":
 			return c.recordType(expr, Number())
 		default:
 			if aliasType, ok := mod.TypeAliases[t.Name]; ok {
@@ -2736,7 +2736,7 @@ func typeNameForError(t *Type) string {
 	case KindI32:
 		return "i32"
 	case KindF64:
-		return "number"
+		return "f64"
 	case KindBool:
 		return "boolean"
 	case KindString:

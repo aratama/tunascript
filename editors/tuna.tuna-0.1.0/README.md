@@ -22,7 +22,7 @@ TunaScriptのソースコードに対するシンタックスハイライトを�
 
 ### 型
 
-- プリミティブ: `i64`, `i32`, `number`, `boolean`, `string`, `void`
+- プリミティブ: `i64`, `i32`, `f64`, `boolean`, `string`, `void`
 - SQLテーブル定義用: `INTEGER`, `TEXT`, `REAL`, `BLOB` など
 
 ### その他

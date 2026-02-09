@@ -741,7 +741,7 @@ func TestTypeErrors(t *testing.T) {
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
   const a: i64 = 1
-  const b: number = 1.0
+  const b: f64 = 1.0
   if (a == b) { log("x"); }
 }
 `)

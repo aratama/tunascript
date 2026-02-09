@@ -1,4 +1,4 @@
-type RawValue = i64 | number | boolean | string | json | null | undefined
+type RawValue = i64 | f64 | boolean | string | json | null | undefined
 type Response = { body: string, contentType: string }
 
 // -----------------------------------------------------------------------------
@@ -26,7 +26,7 @@ export function then<T, U>(value: T | error, fn: (v: T) => U | error): U | error
 // `error(message)` は言語組み込みの特殊関数です（import不要）。
 
 export extern function log<T>(value: T): void
-export extern function to_string(value: i64 | number | boolean | string): string
+export extern function to_string(value: i64 | f64 | boolean | string): string
 export extern function string_length(str: string): i64
 
 extern function str_from_utf8(ptr: i32, length: i32): string
@@ -36,12 +36,12 @@ extern function str_eq(a: string, b: string): boolean
 extern function str_len(str: string): i64
 
 extern function val_from_i64(v: i64): RawValue
-extern function val_from_f64(v: number): RawValue
+extern function val_from_f64(v: f64): RawValue
 extern function val_from_bool(v: boolean): RawValue
 extern function val_null(): null
 extern function val_undefined(): undefined
 extern function val_to_i64(value: RawValue): i64
-extern function val_to_f64(value: RawValue): number
+extern function val_to_f64(value: RawValue): f64
 extern function val_to_bool(value: RawValue): boolean
 extern function val_kind(value: RawValue): i32
 extern function val_eq(a: RawValue, b: RawValue): boolean

@@ -1,4 +1,4 @@
-type RawValue = i64 | number | boolean | string | json | null | undefined
+type RawValue = i64 | f64 | boolean | string | json | null | undefined
 type SQLRows = Map<string>[]
 
 extern function sql_exec(queryPtr: i32, queryLen: i32): SQLRows

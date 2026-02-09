@@ -52,7 +52,7 @@
 (data $d_false "false")
 (data $d_null "null")
 (data $d_undefined "undefined")
-(data $d_number "[number]")
+(data $d_number "[f64]")
 (data $d_array "[array]")
 (data $d_object "[object]")
 (data $d_value "[value]")
@@ -143,9 +143,9 @@
 
 (func $prelude._new_const_number (result anyref)
   (local $ptr i32)
-  (local.set $ptr (call $prelude._alloc (i32.const 8)))
-  (memory.init $d_number (local.get $ptr) (i32.const 0) (i32.const 8))
-  (struct.new $Str (local.get $ptr) (i32.const 8))
+  (local.set $ptr (call $prelude._alloc (i32.const 5)))
+  (memory.init $d_number (local.get $ptr) (i32.const 0) (i32.const 5))
+  (struct.new $Str (local.get $ptr) (i32.const 5))
 )
 
 (func $prelude._new_const_array (result anyref)

@@ -1,7 +1,7 @@
 import { log, to_string } from "prelude"
 import { toJSON, decode } from "json"
 
-type Pair = { a: number, b: number }
+type Pair = { a: f64, b: f64 }
 
 export function main(): void | error {
   const parsed = toJSON(`{"a":10,"b":20}`)?

@@ -42,12 +42,12 @@
 (data $json_d_string_literal_mismatch "string literal mismatch")
 (data $json_d_boolean_expected "boolean expected")
 (data $json_d_boolean_literal_mismatch "boolean literal mismatch")
-(data $json_d_invalid_number "invalid number")
+(data $json_d_invalid_number "invalid f64")
 (data $json_d_integer_expected "i64 expected")
 (data $json_d_integer_out_of_range "i64 out of range")
 (data $json_d_integer_literal_mismatch "i64 literal mismatch")
-(data $json_d_number_expected "number expected")
-(data $json_d_number_literal_mismatch "number literal mismatch")
+(data $json_d_number_expected "f64 expected")
+(data $json_d_number_literal_mismatch "f64 literal mismatch")
 (data $json_d_array_expected "array expected")
 (data $json_d_tuple_length_mismatch "tuple length mismatch")
 (data $json_d_missing_field "missing field")
@@ -148,9 +148,9 @@
 
 (func $json._msg_invalid_number (result anyref)
   (local $ptr i32)
-  (local.set $ptr (call $prelude._alloc (i32.const 14)))
-  (memory.init $json_d_invalid_number (local.get $ptr) (i32.const 0) (i32.const 14))
-  (call $prelude._new_string_owned (local.get $ptr) (i32.const 14))
+  (local.set $ptr (call $prelude._alloc (i32.const 11)))
+  (memory.init $json_d_invalid_number (local.get $ptr) (i32.const 0) (i32.const 11))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 11))
 )
 
 (func $json._msg_integer_expected (result anyref)
@@ -176,16 +176,16 @@
 
 (func $json._msg_number_expected (result anyref)
   (local $ptr i32)
-  (local.set $ptr (call $prelude._alloc (i32.const 15)))
-  (memory.init $json_d_number_expected (local.get $ptr) (i32.const 0) (i32.const 15))
-  (call $prelude._new_string_owned (local.get $ptr) (i32.const 15))
+  (local.set $ptr (call $prelude._alloc (i32.const 12)))
+  (memory.init $json_d_number_expected (local.get $ptr) (i32.const 0) (i32.const 12))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 12))
 )
 
 (func $json._msg_number_literal_mismatch (result anyref)
   (local $ptr i32)
-  (local.set $ptr (call $prelude._alloc (i32.const 23)))
-  (memory.init $json_d_number_literal_mismatch (local.get $ptr) (i32.const 0) (i32.const 23))
-  (call $prelude._new_string_owned (local.get $ptr) (i32.const 23))
+  (local.set $ptr (call $prelude._alloc (i32.const 20)))
+  (memory.init $json_d_number_literal_mismatch (local.get $ptr) (i32.const 0) (i32.const 20))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 20))
 )
 
 (func $json._msg_array_expected (result anyref)
@@ -1498,6 +1498,15 @@
               (i32.eq (local.get $b2) (i32.const 52))))
         (then
           (return (i32.const 6))
+        )
+      )
+      (if (i32.and
+            (i32.eq (local.get $b0) (i32.const 102))
+            (i32.and
+              (i32.eq (local.get $b1) (i32.const 54))
+              (i32.eq (local.get $b2) (i32.const 52))))
+        (then
+          (return (i32.const 7))
         )
       )
     )
@@ -3408,7 +3417,7 @@
     )
   )
 
-  ;; number
+  ;; f64
   (if (i32.eq (local.get $kind) (i32.const 7))
     (then
       (local.set $k (call $prelude.val_kind (local.get $value)))

@@ -5,7 +5,7 @@
 import { log, to_string } from "prelude"
 import { parse } from "json"
 
-type Person = { name: string, age: number }
+type Person = { name: string, age: f64 }
 
 export function main(): void | error {
   const decoded = parse<Person>(`{"name":"Alice","age":30}`)?

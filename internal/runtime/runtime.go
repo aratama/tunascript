@@ -829,7 +829,7 @@ func (r *Runtime) valToF64(handle *Value) (float64, error) {
 		return 0, err
 	}
 	if v.Kind != KindF64 {
-		return 0, errors.New("not number")
+		return 0, errors.New("not f64")
 	}
 	return v.F64, nil
 }

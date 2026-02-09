@@ -629,7 +629,7 @@ func typeExprNumericOnly(t ast.TypeExpr) bool {
 	}
 	if named, ok := t.(*ast.NamedType); ok {
 		switch named.Name {
-		case "i64", "number", "boolean", "i32":
+		case "i64", "f64", "boolean", "i32":
 			return true
 		default:
 			return false
