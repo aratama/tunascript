@@ -268,9 +268,9 @@ func typeToTypeExpr(t *ttypes.Type) ast.TypeExpr {
 	}
 	switch t.Kind {
 	case ttypes.KindI64:
-		return &ast.NamedType{Name: "integer"}
+		return &ast.NamedType{Name: "i64"}
 	case ttypes.KindI32:
-		return &ast.NamedType{Name: "short"}
+		return &ast.NamedType{Name: "i32"}
 	case ttypes.KindF64:
 		return &ast.NamedType{Name: "number"}
 	case ttypes.KindBool:

@@ -1095,7 +1095,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 				return nil
 			}
 			if !isTemplateStringConvertible(partType) {
-				c.errorf(part.GetSpan(), "template interpolation must be string, integer, number, or boolean")
+				c.errorf(part.GetSpan(), "template interpolation must be string, i64, number, or boolean")
 				return nil
 			}
 		}
@@ -1375,7 +1375,7 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 		idxType := c.checkExpr(env, e.Index, I64())
 		if idxType == nil || idxType.Kind != KindI64 {
-			c.errorf(e.Index.GetSpan(), "index must be integer")
+			c.errorf(e.Index.GetSpan(), "index must be i64")
 			return nil
 		}
 		if arrType.Kind == KindArray {
@@ -1467,12 +1467,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			if paramType == nil {
 				continue
 			}
-			// Parameters must be primitive types (string, integer, number, bool)
+			// Parameters must be primitive types (string, i64, number, bool)
 			switch paramType.Kind {
 			case KindString, KindI64, KindF64, KindBool:
 				// OK
 			default:
-				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, integer, number, or bool)")
+				c.errorf(param.GetSpan(), "SQL parameter must be a primitive type (string, i64, number, or bool)")
 			}
 		}
 		// Validate SQL query against table definitions
@@ -2481,9 +2481,9 @@ func (c *Checker) resolveTypeRec(expr ast.TypeExpr, mod *ModuleInfo, typeParams 
 			}
 		}
 		switch t.Name {
-		case "integer":
+		case "i64":
 			return c.recordType(expr, I64())
-		case "short":
+		case "i32":
 			return c.recordType(expr, I32())
 		case "error":
 			return c.recordType(expr, resultErrorType())
@@ -2732,9 +2732,9 @@ func typeNameForError(t *Type) string {
 	}
 	switch t.Kind {
 	case KindI64:
-		return "integer"
+		return "i64"
 	case KindI32:
-		return "short"
+		return "i32"
 	case KindF64:
 		return "number"
 	case KindBool:

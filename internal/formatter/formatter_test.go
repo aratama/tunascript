@@ -65,7 +65,7 @@ func TestFormatModuleWithCommentsAfterAnnotate(t *testing.T) {
 	if !strings.Contains(out, "// keep") {
 		t.Fatalf("formatted output is missing comment\n%s", out)
 	}
-	if !strings.Contains(out, "const value: integer = 1") {
+	if !strings.Contains(out, "const value: i64 = 1") {
 		t.Fatalf("type annotation is missing after annotate format\n%s", out)
 	}
 }

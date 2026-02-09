@@ -2,20 +2,20 @@ import { log, to_string, fallback } from "prelude"
 import { stringify } from "json"
 
 // 失敗する可能性のある関数は T | error を返します
-function pick(values: integer[], index: integer): integer | error {
+function pick(values: i64[], index: i64): i64 | error {
 
   // 配列インデックス演算子も T | error を返します
   // 最も基本的な方法は、switchでエラーに応じて分岐することです
-  const foo: integer = switch(values[index]){
-    case value as integer: value
+  const foo: i64 = switch(values[index]){
+    case value as i64: value
     case e as error: return e
   }
 
   // ?演算子は、エラー時には即座に関数から脱出してエラーを返すシンタックスシュガーです
-  const value: integer = values[index]?
+  const value: i64 = values[index]?
 
   // fallback関数を使うと、エラー時にデフォルト値に置き換えることもできます
-  const bar: integer = values[index].fallback(0)
+  const bar: i64 = values[index].fallback(0)
 
   // error関数を使うと明示的にエラーを返すことができます
   const e = error("index out of bounds")
@@ -25,10 +25,10 @@ function pick(values: integer[], index: integer): integer | error {
   return e
 }
 
-function describe_pick(values: integer[], index: integer): string {
+function describe_pick(values: i64[], index: i64): string {
   const picked = pick(values, index)
   return switch (picked) {
-    case value as integer: "value[" + to_string(index) + "] = " + to_string(value)
+    case value as i64: "value[" + to_string(index) + "] = " + to_string(value)
     case e as error: "value[" + to_string(index) + "] error: " + e.message
   }
 }

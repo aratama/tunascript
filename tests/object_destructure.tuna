@@ -12,8 +12,8 @@ export function main(): void {
   log("Age: " + to_string(age))
 
   // 型注釈付きのdestructuring
-  const person2: { city: string, zip: integer } = { "city": "Tokyo", "zip": 1000001 }
-  const { city: string, zip: integer } = person2
+  const person2: { city: string, zip: i64 } = { "city": "Tokyo", "zip": 1000001 }
+  const { city: string, zip: i64 } = person2
   log("City: " + city)
   log("Zip: " + to_string(zip))
 }

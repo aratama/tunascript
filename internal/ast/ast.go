@@ -278,7 +278,7 @@ func (*TemplateLit) exprNode()       {}
 func (e *TemplateLit) GetSpan() Span { return e.Span }
 
 // ArrayPatternExpr represents a destructuring binding pattern used in switch-as patterns:
-// case [a, b] as [integer, string]: ...
+// case [a, b] as [i64, string]: ...
 type ArrayPatternExpr struct {
 	Names []string
 	Types []TypeExpr

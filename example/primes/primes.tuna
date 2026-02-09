@@ -1,14 +1,14 @@
 import { log, to_string } from "prelude"
 import { range } from "array"
 
-function gcd(a: integer, b: integer): integer {
+function gcd(a: i64, b: i64): i64 {
   if (b == 0) {
     return a
   }
   return gcd(b, a % b)
 }
 
-function is_prime(n: integer, nums: integer[]): boolean {
+function is_prime(n: i64, nums: i64[]): boolean {
   if (n < 2) {
     return false
   }

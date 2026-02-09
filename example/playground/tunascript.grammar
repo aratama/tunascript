@@ -21,7 +21,7 @@
 
   BuiltinType {
     (
-      "string" | "number" | "boolean" | "integer" | "json" | "void" |
+      "string" | "number" | "boolean" | "i64" | "i32" | "json" | "void" |
       "TEXT" | "INTEGER" | "REAL" | "BLOB" | "PRIMARY" | "KEY" | "AUTOINCREMENT" |
       "NOT" | "NULL" | "DEFAULT" | "CURRENT_TIMESTAMP"
     ) ![A-Za-z0-9_]

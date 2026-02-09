@@ -1,4 +1,4 @@
-type RawValue = integer | number | boolean | string | json | null | undefined
+type RawValue = i64 | number | boolean | string | json | null | undefined
 type Response = { body: string, contentType: string }
 
 // -----------------------------------------------------------------------------
@@ -26,35 +26,35 @@ export function then<T, U>(value: T | error, fn: (v: T) => U | error): U | error
 // `error(message)` は言語組み込みの特殊関数です（import不要）。
 
 export extern function log<T>(value: T): void
-export extern function to_string(value: integer | number | boolean | string): string
-export extern function string_length(str: string): integer
+export extern function to_string(value: i64 | number | boolean | string): string
+export extern function string_length(str: string): i64
 
-extern function str_from_utf8(ptr: short, length: short): string
-extern function intern_string(ptr: short, length: short): string
+extern function str_from_utf8(ptr: i32, length: i32): string
+extern function intern_string(ptr: i32, length: i32): string
 extern function str_concat(a: string, b: string): string
 extern function str_eq(a: string, b: string): boolean
-extern function str_len(str: string): integer
+extern function str_len(str: string): i64
 
-extern function val_from_i64(v: integer): RawValue
+extern function val_from_i64(v: i64): RawValue
 extern function val_from_f64(v: number): RawValue
 extern function val_from_bool(v: boolean): RawValue
 extern function val_null(): null
 extern function val_undefined(): undefined
-extern function val_to_i64(value: RawValue): integer
+extern function val_to_i64(value: RawValue): i64
 extern function val_to_f64(value: RawValue): number
 extern function val_to_bool(value: RawValue): boolean
-extern function val_kind(value: RawValue): short
+extern function val_kind(value: RawValue): i32
 extern function val_eq(a: RawValue, b: RawValue): boolean
 
-extern function obj_new(count: short): RawValue
+extern function obj_new(count: i32): RawValue
 extern function obj_set(obj: RawValue, key: string, value: RawValue): void
 extern function obj_get(obj: RawValue, key: string): RawValue
 
-extern function arr_new(count: short): RawValue
-extern function arr_set(arr: RawValue, index: short, value: RawValue): void
-extern function arr_get(arr: RawValue, index: short): RawValue
-extern function arr_get_result(arr: RawValue, index: short): RawValue
-extern function arr_len(arr: RawValue): short
+extern function arr_new(count: i32): RawValue
+extern function arr_set(arr: RawValue, index: i32, value: RawValue): void
+extern function arr_get(arr: RawValue, index: i32): RawValue
+extern function arr_get_result(arr: RawValue, index: i32): RawValue
+extern function arr_len(arr: RawValue): i32
 extern function arr_join(arr: RawValue): string
 extern function call_fn(fn: string, args: RawValue): RawValue
 extern function escape_html_attr(value: string): string

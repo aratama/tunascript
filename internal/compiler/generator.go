@@ -224,7 +224,7 @@ func decodeSchemaFromType(t *types.Type) (*decodeSchema, error) {
 
 	switch t.Kind {
 	case types.KindI64:
-		return &decodeSchema{Kind: "integer"}, nil
+		return &decodeSchema{Kind: "i64"}, nil
 	case types.KindF64:
 		return &decodeSchema{Kind: "number"}, nil
 	case types.KindBool:
@@ -289,7 +289,7 @@ func decodeSchemaFromType(t *types.Type) (*decodeSchema, error) {
 func schemaKindForTypeKind(kind types.Kind) string {
 	switch kind {
 	case types.KindI64:
-		return "integer"
+		return "i64"
 	case types.KindF64:
 		return "number"
 	case types.KindBool:

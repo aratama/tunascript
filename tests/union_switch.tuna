@@ -1,11 +1,11 @@
-// expect: v is integer: 42
+// expect: v is i64: 42
 // expect: v is string: hello
 
 import { log, to_string } from "prelude"
 
-function describe(v: integer | string): string {
+function describe(v: i64 | string): string {
   const message = switch (v) {
-    case int as integer: "v is integer: " + to_string(int)
+    case int as i64: "v is i64: " + to_string(int)
     case str as string: "v is string: " + str
   }
   return message

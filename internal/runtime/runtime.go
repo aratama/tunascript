@@ -818,7 +818,7 @@ func (r *Runtime) valToI64(handle *Value) (int64, error) {
 		return 0, err
 	}
 	if v.Kind != KindI64 {
-		return 0, errors.New("not integer")
+		return 0, errors.New("not i64")
 	}
 	return v.I64, nil
 }

@@ -115,12 +115,12 @@ func TestBackendGCArrayAndObject(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const base: { x: integer } = { "x": 41 }
-  const obj: { x: integer, y: string } = { ...base, "y": "ok" }
-  const xs: integer[] = [1, 2, 3]
+  const base: { x: i64 } = { "x": 41 }
+  const obj: { x: i64, y: string } = { ...base, "y": "ok" }
+  const xs: i64[] = [1, 2, 3]
   log(to_string(obj.x + 1))
   log(obj.y)
-  for (const x: integer of xs) {
+  for (const x: i64 of xs) {
     log(to_string(x))
   }
 }
@@ -156,11 +156,11 @@ func TestBackendGCHigherOrderCall(t *testing.T) {
 	out := compileAndRunWithBackend(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 
-function apply(v: integer, fn: (integer) => integer): integer {
+function apply(v: i64, fn: (i64) => i64): i64 {
   return fn(v)
 }
 
-function add2(v: integer): integer {
+function add2(v: i64): i64 {
   return v + 2
 }
 
@@ -180,10 +180,10 @@ func TestBackendGCArrayIndexError(t *testing.T) {
 		"main.ts": `import { log } from "prelude"
 
 export function main(): void {
-  const xs: integer[] = [1, 2]
-  const v: integer | error = xs[9]
+  const xs: i64[] = [1, 2]
+  const v: i64 | error = xs[9]
   switch (v) {
-    case n as integer: log("ok")
+    case n as i64: log("ok")
     case e as error: log(e.message)
   }
 }
@@ -215,19 +215,19 @@ func TestBackendGCMapReduceLength(t *testing.T) {
 		"main.ts": `import { log, to_string } from "prelude"
 import { map, reduce, length } from "array"
 
-function double(n: integer): integer {
+function double(n: i64): i64 {
   return n * 2
 }
 
-function sumValues(acc: integer, v: integer): integer {
+function sumValues(acc: i64, v: i64): i64 {
   return acc + v
 }
 
 export function main(): void {
-  const xs: integer[] = [1, 2, 3]
-  const doubled: integer[] = map(xs, double)
-  const total: integer = reduce(doubled, sumValues, 0)
-  const size: integer = length(doubled)
+  const xs: i64[] = [1, 2, 3]
+  const doubled: i64[] = map(xs, double)
+  const total: i64 = reduce(doubled, sumValues, 0)
+  const size: i64 = length(doubled)
   log(to_string(total))
   log(to_string(size))
 }
@@ -297,9 +297,9 @@ func TestBackendGCTupleIndex(t *testing.T) {
 		"main.ts": `import { log, to_string } from "prelude"
 
 export function main(): void {
-  const t: [integer, string] = [1, "a"]
+  const t: [i64, string] = [1, "a"]
   const v0 = switch (t[0]) {
-    case n as integer: to_string(n)
+    case n as i64: to_string(n)
     case e as error: e.message
   }
   const v1 = switch (t[1]) {
@@ -352,7 +352,7 @@ func TestArithmeticAndString(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const a: integer = 40 + 2
+  const a: i64 = 40 + 2
   log(to_string(a))
   const s: string = "ab" + "cd"
   log(s)
@@ -369,8 +369,8 @@ func TestPreludeExternStringLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string, string_length } from "prelude"
 export function main(): void {
-  const asciiLen: integer = string_length("hello")
-  const utfLen: integer = string_length("こんにちは")
+  const asciiLen: i64 = string_length("hello")
+  const utfLen: i64 = string_length("こんにちは")
   log(to_string(asciiLen))
   log(to_string(utfLen))
 }
@@ -386,27 +386,27 @@ func TestPreludeAndThen(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string, then } from "prelude"
 
-function parseValue(text: string): integer | error {
+function parseValue(text: string): i64 | error {
   if (text == "bad") {
     return error("boom")
   }
   return 20
 }
 
-function plusOne(v: integer): integer | error {
+function plusOne(v: i64): i64 | error {
   return v + 1
 }
 
 export function main(): void {
-  const ok: integer | error = then(parseValue("ok"), plusOne)
-  const ng: integer | error = parseValue("bad").then(plusOne)
+  const ok: i64 | error = then(parseValue("ok"), plusOne)
+  const ng: i64 | error = parseValue("bad").then(plusOne)
 
   const okText: string = switch (ok) {
-    case v as integer: to_string(v)
+    case v as i64: to_string(v)
     case e as error: e.message
   }
   const ngText: string = switch (ng) {
-    case v as integer: to_string(v)
+    case v as i64: to_string(v)
     case e as error: e.message
   }
   log(okText)
@@ -424,15 +424,15 @@ func TestHigherOrderFunctionVariableCall(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 
-function apply(v: integer, fn: (integer) => integer): integer {
+function apply(v: i64, fn: (i64) => i64): i64 {
   return fn(v)
 }
 
-function inc(v: integer): integer {
+function inc(v: i64): i64 {
   return v + 1
 }
 
-function add2(v: integer): integer {
+function add2(v: i64): i64 {
   return v + 2
 }
 
@@ -453,17 +453,17 @@ func TestMapWithFunctionVariable(t *testing.T) {
 		"main.ts": `import { log, to_string } from "prelude"
 import { map } from "array"
 
-function applyMap(xs: integer[], fn: (integer) => integer): integer[] {
+function applyMap(xs: i64[], fn: (i64) => i64): i64[] {
   return map(xs, fn)
 }
 
-function add3(x: integer): integer {
+function add3(x: i64): i64 {
   return x + 3
 }
 
 export function main(): void {
-  const ys: integer[] = applyMap([1, 2, 3], add3)
-  for (const y: integer of ys) {
+  const ys: i64[] = applyMap([1, 2, 3], add3)
+  for (const y: i64 of ys) {
     log(to_string(y))
   }
 }
@@ -480,8 +480,8 @@ func TestObjectSpreadAndStringify(t *testing.T) {
 		"main.ts": `import { log } from "prelude"
 import { stringify } from "json"
 export function main(): void {
-  const a: { x: integer, y: integer } = { "x": 1, "y": 2 }
-  const b: { x: integer, y: integer } = { ...a, "x": 1 }
+  const a: { x: i64, y: i64 } = { "x": 1, "y": 2 }
+  const b: { x: i64, y: i64 } = { ...a, "x": 1 }
   log(stringify(b))
 }
 `,
@@ -496,8 +496,8 @@ func TestArrayForOf(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const xs: integer[] = [1, 2, 3]
-  for (const x: integer of xs) {
+  const xs: i64[] = [1, 2, 3]
+  for (const x: i64 of xs) {
     log(to_string(x))
   }
 }
@@ -514,8 +514,8 @@ func TestPreludeRange(t *testing.T) {
 		"main.ts": `import { log, to_string } from "prelude"
 import { range } from "array"
 export function main(): void {
-  const xs: integer[] = range(0, 4)
-  for (const x: integer of xs) {
+  const xs: i64[] = range(0, 4)
+  for (const x: i64 of xs) {
     log(to_string(x))
   }
 }
@@ -530,12 +530,12 @@ export function main(): void {
 func TestFunctionDeclaration(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
-function add(a: integer, b: integer): integer {
+function add(a: i64, b: i64): i64 {
   return a + b
 }
 
 export function main(): void {
-  const v: integer = add(1, 2)
+  const v: i64 = add(1, 2)
   log(to_string(v))
 }
 `,
@@ -550,9 +550,9 @@ func TestArraySpread(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const base: integer[] = [2, 3]
-  const xs: integer[] = [1, ...base, 4]
-  for (const x: integer of xs) {
+  const base: i64[] = [2, 3]
+  const xs: i64[] = [1, ...base, 4]
+  for (const x: i64 of xs) {
     log(to_string(x))
   }
 }
@@ -568,19 +568,19 @@ func TestPreludeMapReduceLength(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 import { map, reduce, length } from "array"
-function double(n: integer): integer {
+function double(n: i64): i64 {
   return n * 2
 }
 
-function sumValues(acc: integer, v: integer): integer {
+function sumValues(acc: i64, v: i64): i64 {
   return acc + v
 }
 
 export function main(): void {
-  const xs: integer[] = [1, 2, 3]
-  const doubled: integer[] = map(xs, double)
-  const total: integer = reduce(doubled, sumValues, 0)
-  const size: integer = length(doubled)
+  const xs: i64[] = [1, 2, 3]
+  const doubled: i64[] = map(xs, double)
+  const total: i64 = reduce(doubled, sumValues, 0)
+  const size: i64 = length(doubled)
   log(to_string(total))
   log(to_string(size))
 }
@@ -596,9 +596,9 @@ func TestTupleIndex(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const t: [integer, string] = [1, "a"]
+  const t: [i64, string] = [1, "a"]
   const v0 = switch (t[0]) {
-    case n as integer: to_string(n)
+    case n as i64: to_string(n)
     case e as error: e.message
   }
   const v1 = switch (t[1]) {
@@ -640,7 +640,7 @@ export function main(): void {
 func TestTernaryOperatorIsSyntaxError(t *testing.T) {
 	compileExpectError(t, `import { log, to_string } from "prelude"
 export function main(): void {
-  const x: integer = true ? 1 : 2
+  const x: i64 = true ? 1 : 2
   log(to_string(x))
 }
 `)
@@ -665,11 +665,11 @@ export function main(): void {
 
 func TestModuleImport(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"lib.ts": `export function add(a: integer, b: integer): integer { return a + b }`,
+		"lib.ts": `export function add(a: i64, b: i64): i64 { return a + b }`,
 		"main.ts": `import { add } from "./lib"
 import { log, to_string } from "prelude"
 export function main(): void {
-  const v: integer = add(20, 22)
+  const v: i64 = add(20, 22)
   log(to_string(v))
 }
 `,
@@ -709,7 +709,7 @@ func TestLineHeadParenIsNotCall(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const n: integer = 1
+  const n: i64 = 1
   (2)
   log(to_string(n))
 }
@@ -725,7 +725,7 @@ func TestLineHeadBracketIsNotIndexAccess(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"
 export function main(): void {
-  const n: integer = 1
+  const n: i64 = 1
   [2]
   log(to_string(n))
 }
@@ -740,7 +740,7 @@ export function main(): void {
 func TestTypeErrors(t *testing.T) {
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const a: integer = 1
+  const a: i64 = 1
   const b: number = 1.0
   if (a == b) { log("x"); }
 }
@@ -748,7 +748,7 @@ export function main(): void {
 
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const a: integer = 1
+  const a: i64 = 1
   const s: string = "a" + a
   log(s)
 }
@@ -759,7 +759,7 @@ import { toJSON } from "json"
 	export function main(): void {
 	  const v: json = toJSON("{\"a\":1}")
 	  switch (v) {
-	    case v as integer: {} 
+	    case v as i64: {} 
 	  }
 	  log("x")
 	}
@@ -767,27 +767,27 @@ import { toJSON } from "json"
 
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const t: [integer, integer] = [1, 2]
-  for (const x: integer of t) {} 
+  const t: [i64, i64] = [1, 2]
+  for (const x: i64 of t) {} 
   log("x")
 }
 `)
 
 	compileExpectError(t, `import { log } from "prelude"
 export function main(): void {
-  const a: { x: integer } = { "x": "invalid" }
+  const a: { x: i64 } = { "x": "invalid" }
   log("x")
 }
 `)
 }
 
 func TestArgumentTypeMismatchShowsExpectedAndFound(t *testing.T) {
-	compileExpectErrorContains(t, `export function takeInt(x: integer): void {}
+	compileExpectErrorContains(t, `export function takeInt(x: i64): void {}
 export function main(): void {
   const s: string = "x"
   takeInt(s)
 }
-`, "argument type mismatch: expect integer, found string")
+`, "argument type mismatch: expect i64, found string")
 }
 
 func TestSQLCreateAndSelect(t *testing.T) {

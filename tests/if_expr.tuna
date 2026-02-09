@@ -15,30 +15,30 @@ export function main(): void {
   const d = if (false) { 42 } else { "42" }
 
   const e = if (true) {
-    const base: integer = 40
+    const base: i64 = 40
     base + 2
   } else {
     0
   }
 
   const f = if (true) {
-    const x: integer = 1
+    const x: i64 = 1
   }
 
   const aStr: string = switch (a) {
-    case a as integer: to_string(a)
+    case a as i64: to_string(a)
     case a as undefined: "undefined"
   }
   const bStr: string = switch (b) {
-    case b as integer: to_string(b)
+    case b as i64: to_string(b)
     case b as undefined: "undefined"
   }
   const cStr: string = switch (c) {
-    case c as integer: to_string(c)
+    case c as i64: to_string(c)
     case c as string: c
   }
   const dStr: string = switch (d) {
-    case d as integer: to_string(d)
+    case d as i64: to_string(d)
     case d as string: d
   }
 

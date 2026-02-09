@@ -1,8 +1,8 @@
 import { log, to_string } from "prelude"
 
-function describe(result: integer | string): string {
+function describe(result: i64 | string): string {
   return switch (result) {
-    case code as integer: "success code: " + to_string(code)
+    case code as i64: "success code: " + to_string(code)
     case reason as string: "error reason: " + reason
   }
 }

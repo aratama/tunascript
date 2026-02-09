@@ -112,24 +112,24 @@ func TestBackendHostArrayMapFilterReduce(t *testing.T) {
 	src := `import { log, to_string } from "prelude"
 import { map, filter, reduce, length } from "array"
 
-function double(n: integer): integer {
+function double(n: i64): i64 {
   return n * 2
 }
 
-function atLeastSix(n: integer): boolean {
+function atLeastSix(n: i64): boolean {
   return n >= 6
 }
 
-function sumValues(acc: integer, v: integer): integer {
+function sumValues(acc: i64, v: i64): i64 {
   return acc + v
 }
 
 export function main(): void {
-  const xs: integer[] = [1, 2, 3, 4]
-  const doubled: integer[] = map(xs, double)
-  const filtered: integer[] = filter(doubled, atLeastSix)
-  const total: integer = reduce(filtered, sumValues, 0)
-  const size: integer = length(filtered)
+  const xs: i64[] = [1, 2, 3, 4]
+  const doubled: i64[] = map(xs, double)
+  const filtered: i64[] = filter(doubled, atLeastSix)
+  const total: i64 = reduce(filtered, sumValues, 0)
+  const size: i64 = length(filtered)
   log(to_string(total))
   log(to_string(size))
 }

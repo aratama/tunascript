@@ -15,7 +15,7 @@ create_table playground_sources {
   updated_at TEXT NOT NULL
 }
 
-const MAX_SOURCE_SIZE_BYTES: integer = 10240
+const MAX_SOURCE_SIZE_BYTES: i64 = 10240
 const DEFAULT_SOURCE_PATH: string = "example/playground/sample_todo.tuna"
 const SAMPLE_JSON_DECODE_SOURCE_PATH: string = "example/playground/sample_json_decode.tuna"
 const SAMPLE_UNION_SWITCH_SOURCE_PATH: string = "example/playground/sample_union_switch.tuna"

@@ -1,10 +1,10 @@
 
-//  - `start` 以上 `end` **以下**の連続した `integer` を格納した配列を返します（`range(2, 5)` は `[2, 3, 4, 5]`）。
+//  - `start` 以上 `end` **以下**の連続した `i64` を格納した配列を返します（`range(2, 5)` は `[2, 3, 4, 5]`）。
 //  - `end < start` などで範囲が不正な場合は空配列 `[]` を返します。
-export extern function range(start: integer, end: integer): integer[]
+export extern function range(start: i64, end: i64): i64[]
 
 //  - 配列の長さを返します。
-export extern function length<T>(array: T[]): integer
+export extern function length<T>(array: T[]): i64
 
 // - 添字アクセス `xs[i]` は `T | error` を返します。
 //   - 範囲外アクセス時は `{ type: "error", message: "index out of range", stacktrace: string[] }` を返します。

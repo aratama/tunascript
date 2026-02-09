@@ -4,13 +4,13 @@ import { log } from "prelude"
 import { stringify } from "json"
 import { map, filter, reduce } from "array"
 
-const nums: integer[] = [1, 2, 3, 4]
+const nums: i64[] = [1, 2, 3, 4]
 
 const genericMap: <T>(arr: T[], fn: (n: T) => T) => T[] = map
 
-const numericMap: (arr: integer[], fn: (n: integer) => integer) => integer[] = genericMap
+const numericMap: (arr: i64[], fn: (n: i64) => i64) => i64[] = genericMap
 
-const doubled: integer[] = numericMap(nums, function (n: integer): integer {
+const doubled: i64[] = numericMap(nums, function (n: i64): i64 {
   return n * 2
 })
 

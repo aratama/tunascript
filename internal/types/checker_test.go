@@ -16,17 +16,17 @@ func TestMapInferenceFromArrayLiteral(t *testing.T) {
 	const src = `
 import { map } from "array"
 
-function double(value: integer): integer {
+function double(value: i64): i64 {
   return value * 2
 }
 
-function triple(value: integer): integer {
+function triple(value: i64): i64 {
   return value * 3
 }
 
-const nums: integer[] = [1, 2, 3]
-const doubled: integer[] = nums.map(double)
-const tripled: integer[] = map(nums, triple)
+const nums: i64[] = [1, 2, 3]
+const doubled: i64[] = nums.map(double)
+const tripled: i64[] = map(nums, triple)
 `
 
 	mod := mustParseModule(t, "map_array_literal.tuna", src)
@@ -44,20 +44,20 @@ func TestMapInferenceHandlesObjectAndStringResults(t *testing.T) {
 import { to_string } from "prelude"
 import { map } from "array"
 
-function wrap(item: { value: integer }): { value: integer } {
+function wrap(item: { value: i64 }): { value: i64 } {
   return { "value": item.value }
 }
 
-function label(item: { value: integer }): string {
+function label(item: { value: i64 }): string {
   return to_string(item.value)
 }
 
-const raw: { value: integer }[] = [
+const raw: { value: i64 }[] = [
   { "value": 1 },
   { "value": 2 }
 ]
 
-const wrapped: { value: integer }[] = map(raw, wrap)
+const wrapped: { value: i64 }[] = map(raw, wrap)
 const labels: string[] = raw.map(label)
 `
 
@@ -75,13 +75,13 @@ func TestReduceInferenceFromRange(t *testing.T) {
 	const src = `
 import { reduce, range } from "array"
 
-function sumValues(acc: integer, value: integer): integer {
+function sumValues(acc: i64, value: i64): i64 {
   return acc + value
 }
 
-const nums: integer[] = range(1, 5)
-const sum: integer = nums.reduce(sumValues, 0)
-const sum2: integer = reduce(nums, sumValues, 0)
+const nums: i64[] = range(1, 5)
+const sum: i64 = nums.reduce(sumValues, 0)
+const sum2: i64 = reduce(nums, sumValues, 0)
 `
 
 	mod := mustParseModule(t, "reduce_infer.tuna", src)
@@ -98,13 +98,13 @@ func TestFilterInferenceFromRange(t *testing.T) {
 	const src = `
 import { filter, range } from "array"
 
-function isEven(value: integer): boolean {
+function isEven(value: i64): boolean {
   return value % 2 == 0
 }
 
-const nums: integer[] = range(1, 6)
-const evens: integer[] = nums.filter(isEven)
-const evens2: integer[] = filter(nums, isEven)
+const nums: i64[] = range(1, 6)
+const evens: i64[] = nums.filter(isEven)
+const evens2: i64[] = filter(nums, isEven)
 `
 
 	mod := mustParseModule(t, "filter_infer.tuna", src)
@@ -144,9 +144,9 @@ const fromError: string = fallback(error("boom"), "")
 
 func TestExternFunctionDeclaration(t *testing.T) {
 	const src = `
-extern function string_length(str: string): integer
+extern function string_length(str: string): i64
 
-const n: integer = string_length("hello")
+const n: i64 = string_length("hello")
 `
 
 	mod := mustParseModule(t, "extern_decl.tuna", src)
@@ -162,9 +162,9 @@ const n: integer = string_length("hello")
 
 func TestExternFunctionDeclarationInPrelude(t *testing.T) {
 	const src = `
-export extern function string_length(str: string): integer
+export extern function string_length(str: string): i64
 
-const n: integer = string_length("hello")
+const n: i64 = string_length("hello")
 `
 
 	mod := mustParseModule(t, "prelude", src)
@@ -176,7 +176,7 @@ const n: integer = string_length("hello")
 
 func TestExternFunctionDeclarationShortTypeInPrelude(t *testing.T) {
 	const src = `
-export extern function rawLen(ptr: short, len: short): short
+export extern function rawLen(ptr: i32, len: i32): i32
 `
 
 	mod := mustParseModule(t, "prelude", src)
@@ -190,18 +190,18 @@ export extern function rawLen(ptr: short, len: short): short
 		t.Fatalf("expected 2 params, got %d", len(sym.Type.Params))
 	}
 	if sym.Type.Params[0].Kind != KindI32 || sym.Type.Params[1].Kind != KindI32 {
-		t.Fatalf("expected short params, got %v and %v", sym.Type.Params[0].Kind, sym.Type.Params[1].Kind)
+		t.Fatalf("expected i32 params, got %v and %v", sym.Type.Params[0].Kind, sym.Type.Params[1].Kind)
 	}
 	if sym.Type.Ret == nil || sym.Type.Ret.Kind != KindI32 {
-		t.Fatalf("expected short return, got %v", sym.Type.Ret)
+		t.Fatalf("expected i32 return, got %v", sym.Type.Ret)
 	}
 }
 
 func TestUnionSwitchAs(t *testing.T) {
 	const src = `
-const v: integer | string = 42
+const v: i64 | string = 42
 const msg: string = switch (v) {
-  case v as integer: "int"
+  case v as i64: "int"
   case v as string: "str"
 }
 `
@@ -226,8 +226,8 @@ const msg: string = switch (v) {
 
 func TestIfExprTypeInference(t *testing.T) {
 	const src = `
-const a: integer | undefined = if (true) { 42 }
-const b: integer | string = if (true) { 42 } else { "42" }
+const a: i64 | undefined = if (true) { 42 }
+const b: i64 | string = if (true) { 42 } else { "42" }
 `
 
 	mod := mustParseModule(t, "if_expr.tuna", src)
@@ -244,12 +244,12 @@ const b: integer | string = if (true) { 42 } else { "42" }
 
 func TestShadowingIsCompileError(t *testing.T) {
 	const src = `
-const x: integer = 1
+const x: i64 = 1
 
-function f(x: integer): void {
-  const y: integer = 2
+function f(x: i64): void {
+  const y: i64 = 2
   if (true) {
-    const y: integer = 3
+    const y: i64 = 3
   }
 }
 `
@@ -269,9 +269,9 @@ function f(x: integer): void {
 
 func TestSwitchAsSameNameAsSwitchTargetIsNotShadowing(t *testing.T) {
 	const src = `
-const x: integer | string = 1
+const x: i64 | string = 1
 const msg: string = switch (x) {
-  case x as integer: "int"
+  case x as i64: "int"
   case x as string: x
 }
 `
@@ -284,10 +284,10 @@ const msg: string = switch (x) {
 
 func TestSwitchAsDifferentNameShadowingIsCompileError(t *testing.T) {
 	const src = `
-const x: integer | string = 1
-const y: integer = 100
+const x: i64 | string = 1
+const y: i64 = 100
 const msg: string = switch (x) {
-  case y as integer: "int"
+  case y as i64: "int"
   case s as string: s
 }
 `
