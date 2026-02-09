@@ -1,4 +1,4 @@
-import { log, to_string, fallback } from "prelude"
+import { log, to_string, fallback, error } from "prelude"
 
 // 失敗する可能性のある関数は T | error を返します
 function pick(values: integer[], index: integer): integer | error {
@@ -16,7 +16,8 @@ function pick(values: integer[], index: integer): integer | error {
   // fallback関数を使うと、エラー時にデフォルト値に置き換えることもできます
   const bar: integer = values[index].fallback(0)
 
-  return value
+  // error関数を使うと明示的にエラーを返すことができます
+  return error("index out of bounds")
 }
 
 function describe_pick(values: integer[], index: integer): string {
