@@ -135,7 +135,8 @@ const status: "error" = "error";
 - 異なる型の比較・暗黙変換は行いません。
 - `integer` と `number` の比較は **コンパイルエラー** になります。
 - `short` と `integer` / `number` の暗黙変換は行いません。
-- `parse` は `string` をJSONとしてパースし、`json | error` を返します（組み込みライブラリ参照）。
+- `toJSON` は `string` をJSONとしてパースし、`json | error` を返します（組み込みライブラリ参照）。
+- `parse<T>` は `toJSON` と `decode<T>` を組み合わせ、JSON文字列を `T | error` として返します。
 - 配列とオブジェクトはすべてイミュータブルであり、生成後に要素を書き換える術は提供しません。
 
 ## 3. 変数
@@ -470,7 +471,7 @@ line2`;
 - アクセスは `obj.foo` のみです。
 - イミュータブルです。
 - スプレッド: `{ ...obj, prop: value }` です。
-- 比較はすべてのプロパティが `==` で等しいときに等しいです。`stringify` は保持順で出力します（`parse` で生成したオブジェクトはキー辞書順です）。
+- 比較はすべてのプロパティが `==` で等しいときに等しいです。`stringify` は保持順で出力します（`toJSON` で生成したオブジェクトはキー辞書順です）。
 
 ## 9. 文
 
@@ -491,7 +492,7 @@ line2`;
 - `import { log } from "prelude"` です。
 - `import { get_args, get_env, gc } from "server"` です（ホスト依存）。
 - `import { db_open, sqlQuery } from "sqlite"` です（ホスト依存）。
-- `import { parse, stringify, decode } from "json"` です。
+- `import { toJSON, stringify, decode, parse } from "json"` です。
 - `import { range, length, map, filter, reduce } from "array"` です。
 - `import { run_formatter, run_sandbox } from "runtime"` です。
 - `import style from "./style.css"` のようにテキストファイルを `string` として読み込めます。

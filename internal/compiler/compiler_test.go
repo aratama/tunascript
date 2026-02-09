@@ -243,13 +243,13 @@ func TestBackendGCJSONBridgeDoesNotImportHostJSONFuncs(t *testing.T) {
 	ensureLibDirEnv(t)
 	dir := t.TempDir()
 	entryPath := filepath.Join(dir, "main.tuna")
-	src := `import { parse, decode } from "json"
+	src := `import { toJSON, decode } from "json"
 import { log } from "prelude"
 
 type User = { name: string }
 
 export function main(): void {
-  const p = parse("{\"name\":\"ok\"}")
+  const p = toJSON("{\"name\":\"ok\"}")
   switch (p) {
     case e as error: {
       log(e.message)
@@ -280,11 +280,13 @@ export function main(): void {
 
 	if strings.Contains(res.Wat, `(import "host" "json_stringify"`) ||
 		strings.Contains(res.Wat, `(import "host" "json_parse"`) ||
+		strings.Contains(res.Wat, `(import "host" "json_toJSON"`) ||
 		strings.Contains(res.Wat, `(import "host" "json_decode"`) {
 		t.Fatalf("json bridge should not import host::json_* directly")
 	}
 	if strings.Contains(res.Wat, `(import "json" "stringify"`) ||
 		strings.Contains(res.Wat, `(import "json" "parse"`) ||
+		strings.Contains(res.Wat, `(import "json" "toJSON"`) ||
 		strings.Contains(res.Wat, `(import "json" "decode"`) {
 		t.Fatalf("json module should be inlined WAT without json:: imports")
 	}
@@ -617,9 +619,9 @@ export function main(): void {
 func TestParseStringify(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log } from "prelude"
-import { parse, stringify } from "json"
+import { toJSON, stringify } from "json"
 export function main(): void {
-  const parsed = parse("{\"a\":1,\"b\":\"x\"}")
+  const parsed = toJSON("{\"a\":1,\"b\":\"x\"}")
   switch (parsed) {
     case err as error:
       log(err.message)
@@ -753,9 +755,9 @@ export function main(): void {
 `)
 
 	compileExpectError(t, `import { log } from "prelude"
-import { parse } from "json"
+import { toJSON } from "json"
 	export function main(): void {
-	  const v: json = parse("{\"a\":1}")
+	  const v: json = toJSON("{\"a\":1}")
 	  switch (v) {
 	    case v as integer: {} 
 	  }

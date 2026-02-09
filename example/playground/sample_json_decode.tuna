@@ -1,21 +1,30 @@
 import { log, to_string } from "prelude"
-import { parse, decode, stringify } from "json"
+import { parse, stringify } from "json"
 import { length } from "array"
 
 type Task = { title: string, done: boolean, tags: string[] }
 
-function status_text(done: boolean): string {
-  return if (done) { "done" } else { "todo" }
-}
-
 export function main(): void | error {
-  const payload = `{"title":"Write API docs","done":false,"tags":["backend","json"]}`
-  const parsed = parse(payload)?
-  const task = decode<Task>(parsed)?
+  // バッククオートで任意の複数行に文字列リテラルを記述できます
+  const payload = `{"title":
+    "Write API docs",
+    "done":false,"tags":["backend","json"]
+    }`
+
+  // parse関数で任意の型にパースできます
+  const task = parse<Task>(payload)?
 
   log("decoded: ok")
+
   log("title: " + task.title)
-  log("status: " + status_text(task.done))
-  log("tag count: " + to_string(length(task.tags)))
+
+  // ifは式になっています(三項演算子はありません)
+  log("status: " + if (task.done) { "done" } else { "todo" })
+
+  // length関数で配列の要素数を取得できます
+  // 任意の関数はドット記法で呼び出せます。これは to_string(length(task.tags)) と同じです
+  log("tag count: " + task.tags.length().to_string())
+
+  // stringify関数でJSON文字列にシリアライズできます
   log("normalized: " + stringify(task))
 }

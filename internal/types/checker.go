@@ -1837,15 +1837,15 @@ func (c *Checker) checkCallWithSymbol(env *Env, sym *Symbol, call *ast.CallExpr,
 			if placeholder := placeholders[name]; placeholder != nil {
 				bindings[placeholder] = argType
 			}
-			if c.isDecodeSymbol(sym) {
+			if c.isDecodeLikeSymbol(sym) {
 				if !isDecodableType(argType, nil) {
-					c.errorf(call.Span, "decode target type not supported")
+					c.errorf(call.Span, "%s target type not supported", sym.Name)
 					return nil
 				}
 			}
 		}
-	} else if c.isDecodeSymbol(sym) && len(sig.TypeParams) > 0 {
-		c.errorf(call.Span, "decode expects 1 type argument")
+	} else if c.isDecodeLikeSymbol(sym) && len(sig.TypeParams) > 0 {
+		c.errorf(call.Span, "%s expects 1 type argument", sym.Name)
 		return nil
 	}
 
@@ -3144,6 +3144,7 @@ func (c *Checker) extractSelectColumns(query string) []string {
 var intrinsicFuncNames = map[string]bool{
 	"log":               true,
 	"stringify":         true,
+	"toJSON":            true,
 	"parse":             true,
 	"decode":            true,
 	"to_string":         true,
@@ -3177,6 +3178,7 @@ var intrinsicFuncNames = map[string]bool{
 
 var intrinsicValueDenied = map[string]bool{
 	"add_route": true,
+	"parse":     true,
 	"decode":    true,
 	"range":     true,
 	"sqlQuery":  true,
@@ -3216,8 +3218,11 @@ func (c *Checker) isIntrinsicValueAllowed(sym *Symbol) bool {
 	return !intrinsicValueDenied[sym.Name]
 }
 
-func (c *Checker) isDecodeSymbol(sym *Symbol) bool {
-	if sym == nil || sym.Name != "decode" {
+func (c *Checker) isDecodeLikeSymbol(sym *Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if sym.Name != "decode" && sym.Name != "parse" {
 		return false
 	}
 	mod := c.symbolModule[sym]

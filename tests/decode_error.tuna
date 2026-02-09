@@ -2,12 +2,12 @@
 // expect: $.age: missing field
 
 import { log } from "prelude"
-import { parse, decode } from "json"
+import { toJSON, decode } from "json"
 
 type Person = { name: string, age: number }
 
 export function main(): void {
-  const parsed = parse("{\"name\":\"Alice\"}")
+  const parsed = toJSON("{\"name\":\"Alice\"}")
   switch (parsed) {
     case err as error: {
       log("error")

@@ -3,13 +3,12 @@
 // expect: 30
 
 import { log, to_string } from "prelude"
-import { parse, decode } from "json"
+import { parse } from "json"
 
 type Person = { name: string, age: number }
 
 export function main(): void | error {
-  const parsed = parse(`{"name":"Alice","age":30}`)?
-  const decoded = decode<Person>(parsed)?
+  const decoded = parse<Person>(`{"name":"Alice","age":30}`)?
   log("ok")
   log(decoded.name)
   log(to_string(decoded.age))

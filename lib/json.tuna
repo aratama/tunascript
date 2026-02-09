@@ -1,5 +1,8 @@
+export extern function parse<T>(s: string): T | error
+
 export extern function stringify<T>(value: T): string
 
-export extern function parse(s: string): json | error
+export extern function toJSON(s: string): json | error
 
 export extern function decode<T>(json: json): T | error
+

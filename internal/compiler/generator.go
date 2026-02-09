@@ -481,7 +481,7 @@ func (g *Generator) collectStringsExpr(expr ast.Expr) {
 			g.collectStringsExpr(arg)
 		}
 		if ident, ok := e.Callee.(*ast.IdentExpr); ok && len(e.TypeArgs) == 1 {
-			if sym := resolveSymbolAlias(g.checker.IdentSymbols[ident]); sym != nil && sym.Name == "decode" && g.symModulePath[sym] == "json" {
+			if sym := resolveSymbolAlias(g.checker.IdentSymbols[ident]); sym != nil && (sym.Name == "decode" || sym.Name == "parse") && g.symModulePath[sym] == "json" {
 				targetType := g.checker.TypeExprTypes[e.TypeArgs[0]]
 				if targetType != nil {
 					g.internString(decodeSchemaString(targetType))
@@ -3028,11 +3028,22 @@ func (f *funcEmitter) emitBuiltinCall(module, name string, call *ast.CallExpr, t
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
 		f.emitBoxIfPrimitive(f.g.checker.ExprTypes[arg])
 		f.emit(fmt.Sprintf("(call $%s.stringify)", module))
+	case "toJSON":
+		arg := call.Args[0]
+		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		f.emit(fmt.Sprintf("(call $%s.toJSON)", module))
+		f.emitUnboxIfPrimitive(t)
 	case "parse":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
+		var schemaStr string
+		if len(call.TypeArgs) > 0 {
+			if targetType := f.g.checker.TypeExprTypes[call.TypeArgs[0]]; targetType != nil {
+				schemaStr = decodeSchemaString(targetType)
+			}
+		}
+		f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(schemaStr)))
 		f.emit(fmt.Sprintf("(call $%s.parse)", module))
-		f.emitUnboxIfPrimitive(t)
 	case "decode":
 		arg := call.Args[0]
 		f.emitExpr(arg, f.g.checker.ExprTypes[arg])
@@ -4105,6 +4116,7 @@ func elemType(t *types.Type) *types.Type {
 var intrinsicFuncNames = map[string]bool{
 	"log":               true,
 	"stringify":         true,
+	"toJSON":            true,
 	"parse":             true,
 	"decode":            true,
 	"to_string":         true,
@@ -4151,6 +4163,7 @@ var noImportIntrinsicNames = map[string]bool{
 
 var intrinsicValueDenied = map[string]bool{
 	"add_route": true,
+	"parse":     true,
 	"decode":    true,
 	"range":     true,
 	"sqlQuery":  true,

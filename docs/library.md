@@ -28,8 +28,8 @@ A1（純粋TunaScript）とA2（WAT実装）の基本APIです。
 
 ## json（バックエンド依存）
 
-- `stringify`, `parse`, `decode`
-- `--backend=gc`: `stringify` / `parse` / `decode` はWAT実装で Wasm 内完結。
+- `stringify`, `toJSON`, `decode`, `parse`（`parse<T>` は `toJSON` + `decode<T>` の合成API）
+- `--backend=gc`: `stringify` / `toJSON` / `decode` / `parse` はWAT実装で Wasm 内完結。
 - `--backend=host`: 既存のホスト実装を利用します。
 
 ## http（バックエンド依存）

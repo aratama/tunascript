@@ -3,12 +3,12 @@
 // expect: {}
 
 import { log } from "prelude"
-import { stringify, parse, decode } from "json"
+import { stringify, toJSON, decode } from "json"
 
 type Person = { name: string | undefined }
 
 export function main(): void {
-  const parsed = parse("{}")
+  const parsed = toJSON("{}")
   switch (parsed) {
     case err as error: {
       log("error")

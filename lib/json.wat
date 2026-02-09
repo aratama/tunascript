@@ -1,5 +1,5 @@
 ;; JSON module for GC backend.
-;; stringify/parse/decode are implemented in WAT.
+;; stringify/toJSON/parse/decode are implemented in WAT.
 
 (global $json_out_ptr (mut i32) (i32.const 0))
 (global $json_out_len (mut i32) (i32.const 0))
@@ -16,7 +16,7 @@
 (data $json_d_type "type")
 (data $json_d_error "error")
 (data $json_d_message "message")
-(data $json_d_parse_expects_string "parse expects string")
+(data $json_d_toJSON_expects_string "toJSON expects string")
 (data $json_d_invalid_json "invalid json")
 (data $json_d_decode_expects_schema_string "decode expects schema string")
 (data $json_d_invalid_schema "invalid schema")
@@ -76,11 +76,11 @@
   (call $prelude._new_string_owned (local.get $ptr) (i32.const 7))
 )
 
-(func $json._msg_parse_expects_string (result anyref)
+(func $json._msg_toJSON_expects_string (result anyref)
   (local $ptr i32)
-  (local.set $ptr (call $prelude._alloc (i32.const 20)))
-  (memory.init $json_d_parse_expects_string (local.get $ptr) (i32.const 0) (i32.const 20))
-  (call $prelude._new_string_owned (local.get $ptr) (i32.const 20))
+  (local.set $ptr (call $prelude._alloc (i32.const 21)))
+  (memory.init $json_d_toJSON_expects_string (local.get $ptr) (i32.const 0) (i32.const 21))
+  (call $prelude._new_string_owned (local.get $ptr) (i32.const 21))
 )
 
 (func $json._msg_invalid_json (result anyref)
@@ -2672,7 +2672,7 @@
     )
   )
 
-  ;; Keep parse output deterministic: object keys are sorted.
+  ;; Keep toJSON output deterministic: object keys are sorted.
   (local.set $i (i32.const 0))
   (block $sort_i_done
     (loop $sort_i
@@ -2721,7 +2721,7 @@
   (local.get $obj)
 )
 
-(func $json.parse (param $text anyref) (result anyref)
+(func $json.toJSON (param $text anyref) (result anyref)
   (local $kind i32)
   (local $ptr i32)
   (local $len i32)
@@ -2731,7 +2731,7 @@
   (local.set $kind (call $prelude.val_kind (local.get $text)))
   (if (i32.ne (local.get $kind) (i32.const 3))
     (then
-      (return (call $json._error_from_msg (call $json._msg_parse_expects_string)))
+      (return (call $json._error_from_msg (call $json._msg_toJSON_expects_string)))
     )
   )
 
@@ -2765,6 +2765,19 @@
   )
 
   (local.get $value)
+)
+
+(func $json.parse (param $text anyref) (param $schema anyref) (result anyref)
+  (local $parsed anyref)
+
+  (local.set $parsed (call $json.toJSON (local.get $text)))
+  (if (call $json._is_error_object (local.get $parsed))
+    (then
+      (return (local.get $parsed))
+    )
+  )
+
+  (call $json.decode (local.get $parsed) (local.get $schema))
 )
 
 (func $json._decode_array (param $value anyref) (param $schema anyref) (param $path anyref) (result anyref)
@@ -3548,7 +3561,7 @@
     )
   )
 
-  (local.set $schema_parsed (call $json.parse (local.get $schema)))
+  (local.set $schema_parsed (call $json.toJSON (local.get $schema)))
   (if (call $json._is_error_object (local.get $schema_parsed))
     (then
       (return (call $json._error_from_msg (call $json._msg_invalid_schema)))
