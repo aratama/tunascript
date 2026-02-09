@@ -178,7 +178,7 @@ func formatCmd(args []string) {
 				fmt.Fprintf(os.Stderr, "%s: %v\n", file, err)
 				os.Exit(1)
 			}
-			formatted = f.FormatModule(mod)
+			formatted = f.FormatModuleWithComments(mod, p.Comments())
 		} else {
 			formatted, err = f.Format(file, string(src))
 			if err != nil {

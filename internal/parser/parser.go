@@ -43,6 +43,10 @@ func (p *Parser) ParseModule() (*ast.Module, error) {
 	return mod, nil
 }
 
+func (p *Parser) Comments() []lexer.Comment {
+	return p.lex.Comments()
+}
+
 func (p *Parser) parseImport() ast.ImportDecl {
 	start := p.curr.Pos
 	p.expect(lexer.TokenImport)
@@ -454,8 +458,8 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 		}
 		stmts = append(stmts, p.parseStmt())
 	}
-	p.expect(lexer.TokenRBrace)
-	end := p.curr.Pos
+	rbrace := p.expect(lexer.TokenRBrace)
+	end := rbrace.Pos
 	return &ast.BlockStmt{Stmts: stmts, Span: spanFrom(start, end)}
 }
 
@@ -988,8 +992,8 @@ func (p *Parser) parseBlockExpr() ast.Expr {
 	for p.curr.Kind != lexer.TokenRBrace && p.curr.Kind != lexer.TokenEOF {
 		stmts = append(stmts, p.parseStmt())
 	}
-	p.expect(lexer.TokenRBrace)
-	end := p.curr.Pos
+	rbrace := p.expect(lexer.TokenRBrace)
+	end := rbrace.Pos
 	return &ast.BlockExpr{Stmts: stmts, Span: spanFrom(start, end)}
 }
 

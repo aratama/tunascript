@@ -5,13 +5,16 @@ import (
 	"strings"
 
 	"tuna/internal/ast"
+	"tuna/internal/lexer"
 	"tuna/internal/parser"
 )
 
 // Formatter formats TunaScript source code
 type Formatter struct {
-	indent int
-	buf    strings.Builder
+	indent     int
+	buf        strings.Builder
+	comments   []lexer.Comment
+	commentIdx int
 }
 
 // New creates a new Formatter
@@ -26,16 +29,23 @@ func (f *Formatter) Format(path, src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return f.FormatModule(mod), nil
+	return f.FormatModuleWithComments(mod, p.Comments()), nil
 }
 
 // FormatModule formats an AST module
 func (f *Formatter) FormatModule(mod *ast.Module) string {
+	return f.FormatModuleWithComments(mod, nil)
+}
+
+// FormatModuleWithComments formats an AST module and preserves comments.
+func (f *Formatter) FormatModuleWithComments(mod *ast.Module, comments []lexer.Comment) string {
 	f.buf.Reset()
 	f.indent = 0
+	f.setComments(comments)
 
 	// Format imports
 	for i, imp := range mod.Imports {
+		f.emitCommentsBeforePos(imp.Span.Start)
 		f.formatImport(imp)
 		if i < len(mod.Imports)-1 {
 			f.buf.WriteString("\n")
@@ -48,11 +58,13 @@ func (f *Formatter) FormatModule(mod *ast.Module) string {
 
 	// Format declarations
 	for i, decl := range mod.Decls {
+		f.emitCommentsBeforePos(decl.GetSpan().Start)
 		f.formatDecl(decl)
 		if i < len(mod.Decls)-1 {
 			f.buf.WriteString("\n")
 		}
 	}
+	f.emitRemainingComments()
 
 	return f.buf.String()
 }
@@ -63,6 +75,88 @@ func (f *Formatter) writeIndent() {
 	}
 }
 
+func (f *Formatter) setComments(comments []lexer.Comment) {
+	f.commentIdx = 0
+	if len(comments) == 0 {
+		f.comments = nil
+		return
+	}
+	f.comments = make([]lexer.Comment, len(comments))
+	copy(f.comments, comments)
+}
+
+func (f *Formatter) emitCommentsBeforePos(pos ast.Position) {
+	for f.commentIdx < len(f.comments) {
+		comment := f.comments[f.commentIdx]
+		if comment.Pos.Line > pos.Line || (comment.Pos.Line == pos.Line && comment.Pos.Col >= pos.Col) {
+			return
+		}
+		f.writeComment(comment)
+		f.commentIdx++
+	}
+}
+
+func (f *Formatter) emitCommentsUpToLine(line int) {
+	for f.commentIdx < len(f.comments) && f.comments[f.commentIdx].Pos.Line <= line {
+		f.writeComment(f.comments[f.commentIdx])
+		f.commentIdx++
+	}
+}
+
+func (f *Formatter) emitRemainingComments() {
+	for f.commentIdx < len(f.comments) {
+		f.writeComment(f.comments[f.commentIdx])
+		f.commentIdx++
+	}
+}
+
+func (f *Formatter) writeInlineCommentsForLine(line int) {
+	for f.commentIdx < len(f.comments) {
+		comment := f.comments[f.commentIdx]
+		if !comment.Inline || comment.Pos.Line != line {
+			return
+		}
+		text := f.normalizeCommentText(comment)
+		if text == "" || strings.Contains(text, "\n") {
+			return
+		}
+		f.buf.WriteString(" ")
+		f.buf.WriteString(text)
+		f.commentIdx++
+	}
+}
+
+func (f *Formatter) normalizeCommentText(comment lexer.Comment) string {
+	text := strings.TrimSpace(comment.Text)
+	if text == "" {
+		return ""
+	}
+	if comment.Kind == lexer.CommentLine {
+		body := strings.TrimSpace(strings.TrimPrefix(text, "//"))
+		if body == "" {
+			return "//"
+		}
+		return "// " + body
+	}
+	return text
+}
+
+func (f *Formatter) writeComment(comment lexer.Comment) {
+	text := f.normalizeCommentText(comment)
+	if text == "" {
+		return
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			f.buf.WriteString("\n")
+		}
+		f.writeIndent()
+		f.buf.WriteString(strings.TrimRight(line, " \t"))
+	}
+	f.buf.WriteString("\n")
+}
+
 func (f *Formatter) formatImport(imp ast.ImportDecl) {
 	f.buf.WriteString("import ")
 	if imp.DefaultName != "" {
@@ -70,7 +164,9 @@ func (f *Formatter) formatImport(imp ast.ImportDecl) {
 		if len(imp.Items) == 0 {
 			f.buf.WriteString(" from \"")
 			f.buf.WriteString(imp.From)
-			f.buf.WriteString("\"\n")
+			f.buf.WriteString("\"")
+			f.writeInlineCommentsForLine(imp.Span.Start.Line)
+			f.buf.WriteString("\n")
 			return
 		}
 		f.buf.WriteString(", ")
@@ -87,7 +183,9 @@ func (f *Formatter) formatImport(imp ast.ImportDecl) {
 	}
 	f.buf.WriteString(" } from \"")
 	f.buf.WriteString(imp.From)
-	f.buf.WriteString("\"\n")
+	f.buf.WriteString("\"")
+	f.writeInlineCommentsForLine(imp.Span.Start.Line)
+	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatDecl(decl ast.Decl) {
@@ -116,6 +214,7 @@ func (f *Formatter) formatConstDecl(d *ast.ConstDecl) {
 	f.formatType(d.Type)
 	f.buf.WriteString(" = ")
 	f.formatExpr(d.Init)
+	f.writeInlineCommentsForLine(d.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -180,6 +279,7 @@ func (f *Formatter) formatExternFuncDecl(d *ast.ExternFuncDecl) {
 	}
 	f.buf.WriteString("): ")
 	f.formatType(d.Ret)
+	f.writeInlineCommentsForLine(d.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -227,6 +327,7 @@ func (f *Formatter) formatTypeAliasDecl(d *ast.TypeAliasDecl) {
 	}
 	f.buf.WriteString(" = ")
 	f.formatType(d.Type)
+	f.writeInlineCommentsForLine(d.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -236,12 +337,14 @@ func (f *Formatter) formatBlockStmt(block *ast.BlockStmt) {
 	for _, stmt := range block.Stmts {
 		f.formatStmt(stmt)
 	}
+	f.emitCommentsUpToLine(block.Span.End.Line)
 	f.indent--
 	f.writeIndent()
 	f.buf.WriteString("}")
 }
 
 func (f *Formatter) formatStmt(stmt ast.Stmt) {
+	f.emitCommentsBeforePos(stmt.GetSpan().Start)
 	switch s := stmt.(type) {
 	case *ast.ConstStmt:
 		f.formatConstStmt(s)
@@ -274,6 +377,7 @@ func (f *Formatter) formatConstStmt(s *ast.ConstStmt) {
 	}
 	f.buf.WriteString(" = ")
 	f.formatExpr(s.Init)
+	f.writeInlineCommentsForLine(s.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -292,6 +396,7 @@ func (f *Formatter) formatDestructureStmt(s *ast.DestructureStmt) {
 	}
 	f.buf.WriteString("] = ")
 	f.formatExpr(s.Init)
+	f.writeInlineCommentsForLine(s.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -310,12 +415,14 @@ func (f *Formatter) formatObjectDestructureStmt(s *ast.ObjectDestructureStmt) {
 	}
 	f.buf.WriteString(" } = ")
 	f.formatExpr(s.Init)
+	f.writeInlineCommentsForLine(s.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
 func (f *Formatter) formatExprStmt(s *ast.ExprStmt) {
 	f.writeIndent()
 	f.formatExpr(s.Expr)
+	f.writeInlineCommentsForLine(s.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -386,6 +493,7 @@ func (f *Formatter) formatReturnStmt(s *ast.ReturnStmt) {
 		f.buf.WriteString(" ")
 		f.formatExpr(s.Value)
 	}
+	f.writeInlineCommentsForLine(s.Span.Start.Line)
 	f.buf.WriteString("\n")
 }
 
@@ -834,6 +942,7 @@ func (f *Formatter) formatBlockExpr(e *ast.BlockExpr) {
 	for _, stmt := range e.Stmts {
 		f.formatStmt(stmt)
 	}
+	f.emitCommentsUpToLine(e.Span.End.Line)
 	f.indent--
 	f.writeIndent()
 	f.buf.WriteString("}")

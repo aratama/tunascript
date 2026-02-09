@@ -85,6 +85,21 @@ type Position struct {
 	Col  int
 }
 
+type CommentKind int
+
+const (
+	CommentLine CommentKind = iota
+	CommentBlock
+)
+
+type Comment struct {
+	Kind   CommentKind
+	Text   string
+	Pos    Position
+	End    Position
+	Inline bool
+}
+
 type Token struct {
 	Kind      TokenKind
 	Text      string

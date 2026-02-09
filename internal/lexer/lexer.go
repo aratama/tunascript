@@ -7,11 +7,12 @@ import (
 )
 
 type Lexer struct {
-	src    string
-	pos    int
-	line   int
-	col    int
-	peeked *Token
+	src      string
+	pos      int
+	line     int
+	col      int
+	peeked   *Token
+	comments []Comment
 }
 
 func New(src string) *Lexer {
@@ -26,6 +27,16 @@ func (l *Lexer) GetSource() string {
 // GetBytePosition returns the current byte position in the source
 func (l *Lexer) GetBytePosition() int {
 	return l.pos
+}
+
+// Comments returns all comments encountered during lexing in source order.
+func (l *Lexer) Comments() []Comment {
+	if len(l.comments) == 0 {
+		return nil
+	}
+	out := make([]Comment, len(l.comments))
+	copy(out, l.comments)
+	return out
 }
 
 func (l *Lexer) Next() Token {
@@ -226,14 +237,28 @@ func (l *Lexer) skipSpace() {
 		}
 		ch := l.peek()
 		if ch == '/' && l.peekN(1) == '/' {
+			startByte := l.pos
+			startPos := Position{Line: l.line, Col: l.col}
+			inline := l.hasCodeBeforeInLine(startByte)
 			l.advance()
 			l.advance()
 			for !l.eof() && l.peek() != '\n' {
 				l.advance()
 			}
+			endPos := Position{Line: l.line, Col: l.col}
+			l.comments = append(l.comments, Comment{
+				Kind:   CommentLine,
+				Text:   l.src[startByte:l.pos],
+				Pos:    startPos,
+				End:    endPos,
+				Inline: inline,
+			})
 			continue
 		}
 		if ch == '/' && l.peekN(1) == '*' {
+			startByte := l.pos
+			startPos := Position{Line: l.line, Col: l.col}
+			inline := l.hasCodeBeforeInLine(startByte)
 			l.advance()
 			l.advance()
 			for !l.eof() {
@@ -244,6 +269,14 @@ func (l *Lexer) skipSpace() {
 				}
 				l.advance()
 			}
+			endPos := Position{Line: l.line, Col: l.col}
+			l.comments = append(l.comments, Comment{
+				Kind:   CommentBlock,
+				Text:   l.src[startByte:l.pos],
+				Pos:    startPos,
+				End:    endPos,
+				Inline: inline,
+			})
 			continue
 		}
 		if unicode.IsSpace(ch) {
@@ -252,6 +285,19 @@ func (l *Lexer) skipSpace() {
 		}
 		return
 	}
+}
+
+func (l *Lexer) hasCodeBeforeInLine(commentStart int) bool {
+	for i := commentStart - 1; i >= 0; i-- {
+		ch := l.src[i]
+		if ch == '\n' || ch == '\r' {
+			return false
+		}
+		if ch != ' ' && ch != '\t' {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Lexer) readIdent() string {
