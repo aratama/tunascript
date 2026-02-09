@@ -37,6 +37,8 @@ type Generator struct {
 
 	tableDefs []*ast.TableDecl
 
+	lambdaTraceContext map[*ast.ArrowFunc]traceContext
+
 	// HTTP handler functions that need to be exported
 	httpHandlerFuncs   map[*types.Symbol]bool
 	httpHandlerLambdas map[*ast.ArrowFunc]bool
@@ -55,11 +57,17 @@ type lambdaInfo struct {
 	name string
 }
 
+type traceContext struct {
+	modulePath string
+	function   string
+}
+
 func NewGenerator(checker *types.Checker) *Generator {
 	return &Generator{
 		checker:            checker,
 		backend:            BackendGC,
 		lambdaFuncs:        map[*ast.ArrowFunc]*lambdaInfo{},
+		lambdaTraceContext: map[*ast.ArrowFunc]traceContext{},
 		httpHandlerFuncs:   map[*types.Symbol]bool{},
 		httpHandlerLambdas: map[*ast.ArrowFunc]bool{},
 	}
@@ -122,6 +130,7 @@ func (g *Generator) collectStrings() {
 			g.collectStringsDecl(decl)
 		}
 	}
+	g.collectTraceFrameStrings()
 	g.internAllFunctionValueNames()
 	g.internString("")
 	// Built-in error handling relies on these strings even if user code doesn't reference them directly.
@@ -619,6 +628,189 @@ func (g *Generator) collectStringsType(t ast.TypeExpr) {
 		}
 		g.collectStringsType(tt.Ret)
 	}
+}
+
+func (g *Generator) collectTraceFrameStrings() {
+	g.lambdaTraceContext = map[*ast.ArrowFunc]traceContext{}
+	for _, mod := range g.modules {
+		modulePath := mod.AST.Path
+		for _, decl := range mod.AST.Decls {
+			g.collectTraceDecl(modulePath, decl)
+		}
+	}
+}
+
+func (g *Generator) collectTraceDecl(modulePath string, decl ast.Decl) {
+	switch d := decl.(type) {
+	case *ast.ConstDecl:
+		if fn, ok := d.Init.(*ast.ArrowFunc); ok {
+			ctx := traceContext{modulePath: modulePath, function: d.Name}
+			g.setLambdaTraceContext(fn, ctx)
+			g.collectTraceArrow(fn, ctx)
+			return
+		}
+		g.collectTraceExpr(traceContext{modulePath: modulePath, function: "<init>"}, d.Init)
+	case *ast.FuncDecl:
+		g.collectTraceBlock(traceContext{modulePath: modulePath, function: d.Name}, d.Body)
+	}
+}
+
+func (g *Generator) setLambdaTraceContext(fn *ast.ArrowFunc, ctx traceContext) {
+	if fn == nil {
+		return
+	}
+	if _, exists := g.lambdaTraceContext[fn]; exists {
+		return
+	}
+	g.lambdaTraceContext[fn] = ctx
+}
+
+func (g *Generator) collectTraceArrow(fn *ast.ArrowFunc, parent traceContext) {
+	if fn == nil {
+		return
+	}
+	ctx := parent
+	if ctx.function == "" {
+		ctx.function = fmt.Sprintf("<lambda@%d:%d>", fn.Span.Start.Line, fn.Span.Start.Col)
+	}
+	g.setLambdaTraceContext(fn, ctx)
+	if fn.Body != nil {
+		g.collectTraceBlock(ctx, fn.Body)
+	}
+	if fn.Expr != nil {
+		g.collectTraceExpr(ctx, fn.Expr)
+	}
+}
+
+func (g *Generator) collectTraceBlock(ctx traceContext, block *ast.BlockStmt) {
+	if block == nil {
+		return
+	}
+	for _, stmt := range block.Stmts {
+		g.collectTraceStmt(ctx, stmt)
+	}
+}
+
+func (g *Generator) collectTraceStmt(ctx traceContext, stmt ast.Stmt) {
+	switch s := stmt.(type) {
+	case *ast.ConstStmt:
+		g.collectTraceExpr(ctx, s.Init)
+	case *ast.DestructureStmt:
+		g.collectTraceExpr(ctx, s.Init)
+	case *ast.ObjectDestructureStmt:
+		g.collectTraceExpr(ctx, s.Init)
+	case *ast.ExprStmt:
+		g.collectTraceExpr(ctx, s.Expr)
+	case *ast.ReturnStmt:
+		g.collectTraceExpr(ctx, s.Value)
+	case *ast.IfStmt:
+		g.collectTraceExpr(ctx, s.Cond)
+		g.collectTraceBlock(ctx, s.Then)
+		if s.Else != nil {
+			g.collectTraceBlock(ctx, s.Else)
+		}
+	case *ast.ForOfStmt:
+		g.collectTraceExpr(ctx, s.Iter)
+		g.collectTraceBlock(ctx, s.Body)
+	case *ast.BlockStmt:
+		g.collectTraceBlock(ctx, s)
+	}
+}
+
+func (g *Generator) collectTraceExpr(ctx traceContext, expr ast.Expr) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		g.internString(g.traceFrameString(ctx.modulePath, ctx.function, e.Span))
+		g.collectTraceExpr(ctx, e.Callee)
+		for _, arg := range e.Args {
+			g.collectTraceExpr(ctx, arg)
+		}
+	case *ast.TemplateLit:
+		for _, part := range e.Exprs {
+			g.collectTraceExpr(ctx, part)
+		}
+	case *ast.SQLExpr:
+		for _, param := range e.Params {
+			g.collectTraceExpr(ctx, param)
+		}
+	case *ast.ObjectLit:
+		for _, entry := range e.Entries {
+			g.collectTraceExpr(ctx, entry.Value)
+		}
+	case *ast.ArrayLit:
+		for _, entry := range e.Entries {
+			g.collectTraceExpr(ctx, entry.Value)
+		}
+	case *ast.MemberExpr:
+		g.collectTraceExpr(ctx, e.Object)
+	case *ast.IndexExpr:
+		g.collectTraceExpr(ctx, e.Array)
+		g.collectTraceExpr(ctx, e.Index)
+	case *ast.TryExpr:
+		g.collectTraceExpr(ctx, e.Expr)
+	case *ast.UnaryExpr:
+		g.collectTraceExpr(ctx, e.Expr)
+	case *ast.AsExpr:
+		g.collectTraceExpr(ctx, e.Expr)
+	case *ast.BinaryExpr:
+		g.collectTraceExpr(ctx, e.Left)
+		g.collectTraceExpr(ctx, e.Right)
+	case *ast.IfExpr:
+		g.collectTraceExpr(ctx, e.Cond)
+		g.collectTraceExpr(ctx, e.Then)
+		g.collectTraceExpr(ctx, e.Else)
+	case *ast.SwitchExpr:
+		g.collectTraceExpr(ctx, e.Value)
+		for _, cas := range e.Cases {
+			g.collectTraceExpr(ctx, cas.Pattern)
+			g.collectTraceExpr(ctx, cas.Body)
+		}
+		g.collectTraceExpr(ctx, e.Default)
+	case *ast.BlockExpr:
+		for _, stmt := range e.Stmts {
+			g.collectTraceStmt(ctx, stmt)
+		}
+	case *ast.ArrowFunc:
+		lambdaCtx := traceContext{
+			modulePath: ctx.modulePath,
+			function:   fmt.Sprintf("<lambda@%d:%d>", e.Span.Start.Line, e.Span.Start.Col),
+		}
+		g.collectTraceArrow(e, lambdaCtx)
+	case *ast.JSXElement:
+		for _, attr := range e.Attributes {
+			g.collectTraceExpr(ctx, attr.Value)
+		}
+		for _, child := range e.Children {
+			if child.Kind == ast.JSXChildExpr {
+				g.collectTraceExpr(ctx, child.Expr)
+			}
+			if child.Kind == ast.JSXChildElement && child.Element != nil {
+				g.collectTraceExpr(ctx, child.Element)
+			}
+		}
+	case *ast.JSXFragment:
+		for _, child := range e.Children {
+			if child.Kind == ast.JSXChildExpr {
+				g.collectTraceExpr(ctx, child.Expr)
+			}
+			if child.Kind == ast.JSXChildElement && child.Element != nil {
+				g.collectTraceExpr(ctx, child.Element)
+			}
+		}
+	}
+}
+
+func (g *Generator) traceFrameString(modulePath, function string, span ast.Span) string {
+	if modulePath == "" {
+		modulePath = "<module>"
+	}
+	if function == "" {
+		function = "<function>"
+	}
+	return fmt.Sprintf("%s:%s:%d:%d", modulePath, function, span.Start.Line, span.Start.Col)
 }
 
 func (g *Generator) internString(value string) {
@@ -1184,7 +1376,7 @@ func (g *Generator) emitFunctions(w *watBuilder, entry string) {
 }
 
 func (g *Generator) emitInit(w *watBuilder) {
-	emitter := newFuncEmitter(g, types.Void())
+	emitter := newFuncEmitter(g, types.Void(), traceContext{modulePath: "<init>", function: "<init>"})
 	for _, d := range g.stringData {
 		emitter.emit(fmt.Sprintf("(i32.const %d)", d.offset))
 		emitter.emit(fmt.Sprintf("(i32.const %d)", d.length))
@@ -1374,7 +1566,8 @@ func (g *Generator) emitFuncBody(w *watBuilder, sym *types.Symbol, params []ast.
 		g.emitWrapper(w, sym, funcType)
 	}
 
-	emitter := newFuncEmitter(g, funcType.Ret)
+	traceCtx := traceContext{modulePath: g.symModulePath[sym], function: sym.Name}
+	emitter := newFuncEmitter(g, funcType.Ret, traceCtx)
 	for i, p := range params {
 		localName := emitter.addParam(p.Name, funcType.Params[i])
 		emitter.bindLocal(p.Name, localName)
@@ -1485,7 +1678,11 @@ func (g *Generator) emitLambdaFuncs(w *watBuilder) {
 func (g *Generator) emitLambda(w *watBuilder, info *lambdaInfo) {
 	fn := info.fn
 	funcType := info.typ
-	emitter := newFuncEmitter(g, funcType.Ret)
+	traceCtx, ok := g.lambdaTraceContext[fn]
+	if !ok {
+		traceCtx = traceContext{modulePath: "<lambda>", function: info.name}
+	}
+	emitter := newFuncEmitter(g, funcType.Ret, traceCtx)
 	for i, p := range fn.Params {
 		localName := emitter.addParam(p.Name, funcType.Params[i])
 		emitter.bindLocal(p.Name, localName)
@@ -1693,7 +1890,8 @@ func (g *Generator) emitIntrinsicFunctionValueWrapper(w *watBuilder, sym *types.
 	}
 
 	refTy := g.refType()
-	emitter := newFuncEmitter(g, fnType.Ret)
+	traceCtx := traceContext{modulePath: g.symModulePath[sym], function: sym.Name + "_fnvalue"}
+	emitter := newFuncEmitter(g, fnType.Ret, traceCtx)
 	argExprs := make([]ast.Expr, len(fnType.Params))
 
 	for i, param := range fnType.Params {
@@ -1887,6 +2085,7 @@ type localInfo struct {
 type funcEmitter struct {
 	g      *Generator
 	ret    *types.Type
+	trace  traceContext
 	params []localInfo
 	locals []localInfo
 	body   []string
@@ -1894,8 +2093,8 @@ type funcEmitter struct {
 	scopes []map[string]string
 }
 
-func newFuncEmitter(g *Generator, ret *types.Type) *funcEmitter {
-	return &funcEmitter{g: g, ret: ret, scopes: []map[string]string{{}}}
+func newFuncEmitter(g *Generator, ret *types.Type, trace traceContext) *funcEmitter {
+	return &funcEmitter{g: g, ret: ret, trace: trace, scopes: []map[string]string{{}}}
 }
 
 func (f *funcEmitter) signature() string {
@@ -1953,6 +2152,20 @@ func (f *funcEmitter) lookup(name string) (string, bool) {
 
 func (f *funcEmitter) emit(line string) {
 	f.body = append(f.body, strings.Repeat("  ", f.indent)+line)
+}
+
+func (f *funcEmitter) traceFrameString(span ast.Span) string {
+	return f.g.traceFrameString(f.trace.modulePath, f.trace.function, span)
+}
+
+func (f *funcEmitter) emitTracePush(span ast.Span) {
+	frame := f.traceFrameString(span)
+	f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(frame)))
+	f.emit("(call $prelude.trace_push)")
+}
+
+func (f *funcEmitter) emitTracePop() {
+	f.emit("(call $prelude.trace_pop)")
 }
 
 func (f *funcEmitter) emitBlock(block *ast.BlockStmt) {
@@ -2447,10 +2660,14 @@ func splitResultMembers(t *types.Type) (success *types.Type, err *types.Type) {
 		}
 		typeProp := member.PropType("type")
 		msgProp := member.PropType("message")
-		if typeProp == nil || msgProp == nil {
+		traceProp := member.PropType("stacktrace")
+		if typeProp == nil || msgProp == nil || traceProp == nil {
 			return false
 		}
-		return typeProp.Equals(types.LiteralString("error")) && msgProp.AssignableTo(types.String())
+		if !typeProp.Equals(types.LiteralString("error")) || !msgProp.AssignableTo(types.String()) {
+			return false
+		}
+		return traceProp.AssignableTo(types.NewArray(types.String()))
 	}
 	var successMembers []*types.Type
 	var errMembers []*types.Type
@@ -2863,12 +3080,15 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 	if !ok {
 		calleeType := f.g.checker.ExprTypes[call.Callee]
 		if calleeType != nil && calleeType.Kind == types.KindFunc {
-			f.emitFunctionValueCallExpr(call.Callee, calleeType, call.Args, t)
+			f.emitFunctionValueCallExpr(call.Callee, calleeType, call.Args, t, call.Span)
 		}
 		return
 	}
 	sym := resolveSymbolAlias(f.g.checker.IdentSymbols[ident])
 	if sym == nil {
+		if ident.Name == "error" {
+			f.emitBuiltinErrorCall(call)
+		}
 		return
 	}
 	if sym.Type == nil || sym.Type.Kind != types.KindFunc {
@@ -2886,16 +3106,38 @@ func (f *funcEmitter) emitCallExpr(call *ast.CallExpr, t *types.Type) {
 				f.emitCoerce(argType, sym.Type.Params[i])
 			}
 		}
+		f.emitTracePush(call.Span)
+		if sym.Type.Ret == nil || sym.Type.Ret.Kind == types.KindVoid {
+			f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(sym)))
+			f.emitTracePop()
+			return
+		}
+		retLocal := f.addLocalRaw(wasmType(sym.Type.Ret))
 		f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(sym)))
+		f.emit(fmt.Sprintf("(local.set %s)", retLocal))
+		f.emitTracePop()
+		f.emit(fmt.Sprintf("(local.get %s)", retLocal))
 		if sym.Type.Ret != nil && sym.Type.Ret.Kind == types.KindTypeParam {
 			f.emitUnboxIfPrimitive(t)
 		}
 		return
 	}
-	f.emitFunctionValueCallExpr(call.Callee, sym.Type, call.Args, t)
+	f.emitFunctionValueCallExpr(call.Callee, sym.Type, call.Args, t, call.Span)
 }
 
-func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.Type, args []ast.Expr, t *types.Type) {
+func (f *funcEmitter) emitBuiltinErrorCall(call *ast.CallExpr) {
+	if len(call.Args) != 1 {
+		return
+	}
+	arg := call.Args[0]
+	argType := f.g.checker.ExprTypes[arg]
+	f.emitExpr(arg, argType)
+	f.emitCoerce(argType, types.String())
+	f.emit(fmt.Sprintf("(global.get %s)", f.g.stringGlobal(f.traceFrameString(call.Span))))
+	f.emit("(call $prelude.error_with_frame)")
+}
+
+func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.Type, args []ast.Expr, t *types.Type, span ast.Span) {
 	fnLocal := f.addLocalRaw(f.g.refType())
 	argsLocal := f.addLocalRaw(f.g.refType())
 
@@ -2923,15 +3165,21 @@ func (f *funcEmitter) emitFunctionValueCallExpr(callee ast.Expr, fnType *types.T
 
 	f.emit(fmt.Sprintf("(local.get %s)", fnLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+	f.emitTracePush(span)
 	f.emit("(call $prelude.call_fn)")
 	if t != nil && t.Kind == types.KindVoid {
+		f.emitTracePop()
 		f.emit("drop")
 		return
 	}
+	resultLocal := f.addLocalRaw(f.g.refType())
+	f.emit(fmt.Sprintf("(local.set %s)", resultLocal))
+	f.emitTracePop()
+	f.emit(fmt.Sprintf("(local.get %s)", resultLocal))
 	f.emitUnboxIfPrimitive(t)
 }
 
-func (f *funcEmitter) emitFunctionValueCallFromBoxedLocals(fnLocal string, argLocals []string) {
+func (f *funcEmitter) emitFunctionValueCallFromBoxedLocals(fnLocal string, argLocals []string, span ast.Span) {
 	argsLocal := f.addLocalRaw(f.g.refType())
 	f.emit(fmt.Sprintf("(i32.const %d)", len(argLocals)))
 	f.emit("(call $prelude.arr_new)")
@@ -2944,7 +3192,12 @@ func (f *funcEmitter) emitFunctionValueCallFromBoxedLocals(fnLocal string, argLo
 	}
 	f.emit(fmt.Sprintf("(local.get %s)", fnLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", argsLocal))
+	f.emitTracePush(span)
 	f.emit("(call $prelude.call_fn)")
+	resultLocal := f.addLocalRaw(f.g.refType())
+	f.emit(fmt.Sprintf("(local.set %s)", resultLocal))
+	f.emitTracePop()
+	f.emit(fmt.Sprintf("(local.get %s)", resultLocal))
 }
 
 // emitMethodCallExpr emits code for method-style calls: obj.func(args) => func(obj, args)
@@ -2992,7 +3245,17 @@ func (f *funcEmitter) emitMethodCallExpr(call *ast.CallExpr, member *ast.MemberE
 		}
 	}
 
+	f.emitTracePush(call.Span)
+	if targetSym.Type.Ret == nil || targetSym.Type.Ret.Kind == types.KindVoid {
+		f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(targetSym)))
+		f.emitTracePop()
+		return
+	}
+	retLocal := f.addLocalRaw(wasmType(targetSym.Type.Ret))
 	f.emit(fmt.Sprintf("(call %s)", f.g.funcCallName(targetSym)))
+	f.emit(fmt.Sprintf("(local.set %s)", retLocal))
+	f.emitTracePop()
+	f.emit(fmt.Sprintf("(local.get %s)", retLocal))
 	if targetSym.Type.Ret != nil && targetSym.Type.Ret.Kind == types.KindTypeParam {
 		f.emitUnboxIfPrimitive(t)
 	}
@@ -3444,13 +3707,18 @@ func (f *funcEmitter) emitMap(call *ast.CallExpr, t *types.Type) {
 	f.emit("(call $prelude.arr_get)")
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
 	if useIndirect {
-		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal}, call.Span)
 	} else {
 		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
 		if len(fnType.Params) > 0 {
 			f.emitUnboxIfPrimitive(fnType.Params[0])
 		}
+		f.emitTracePush(call.Span)
+		retLocal := f.addLocalRaw(wasmType(fnType.Ret))
 		f.emit(fmt.Sprintf("(call %s)", fnName))
+		f.emit(fmt.Sprintf("(local.set %s)", retLocal))
+		f.emitTracePop()
+		f.emit(fmt.Sprintf("(local.get %s)", retLocal))
 		f.emitBoxIfPrimitive(fnType.Ret)
 	}
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
@@ -3518,14 +3786,19 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	f.emit("(call $prelude.arr_get)")
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
 	if useIndirect {
-		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal}, call.Span)
 		f.emitUnboxIfPrimitive(types.Bool())
 	} else {
 		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
 		if len(fnType.Params) > 0 {
 			f.emitUnboxIfPrimitive(fnType.Params[0])
 		}
+		f.emitTracePush(call.Span)
+		predLocal := f.addLocalRaw(wasmType(fnType.Ret))
 		f.emit(fmt.Sprintf("(call %s)", fnName))
+		f.emit(fmt.Sprintf("(local.set %s)", predLocal))
+		f.emitTracePop()
+		f.emit(fmt.Sprintf("(local.get %s)", predLocal))
 	}
 	f.emit("(if")
 	f.indent++
@@ -3570,14 +3843,19 @@ func (f *funcEmitter) emitFilter(call *ast.CallExpr, t *types.Type) {
 	f.emit("(call $prelude.arr_get)")
 	f.emit(fmt.Sprintf("(local.set %s)", valueLocal))
 	if useIndirect {
-		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal})
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{valueLocal}, call.Span)
 		f.emitUnboxIfPrimitive(types.Bool())
 	} else {
 		f.emit(fmt.Sprintf("(local.get %s)", valueLocal))
 		if len(fnType.Params) > 0 {
 			f.emitUnboxIfPrimitive(fnType.Params[0])
 		}
+		f.emitTracePush(call.Span)
+		predLocal := f.addLocalRaw(wasmType(fnType.Ret))
 		f.emit(fmt.Sprintf("(call %s)", fnName))
+		f.emit(fmt.Sprintf("(local.set %s)", predLocal))
+		f.emitTracePop()
+		f.emit(fmt.Sprintf("(local.get %s)", predLocal))
 	}
 	f.emit("(if")
 	f.indent++
@@ -3660,7 +3938,7 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 		f.emit(fmt.Sprintf("(local.get %s)", idxLocal))
 		f.emit("(call $prelude.arr_get)")
 		f.emit(fmt.Sprintf("(local.set %s)", valueHandleLocal))
-		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{accHandleLocal, valueHandleLocal})
+		f.emitFunctionValueCallFromBoxedLocals(fnLocal, []string{accHandleLocal, valueHandleLocal}, call.Span)
 		f.emitUnboxIfPrimitive(accType)
 	} else {
 		f.emit(fmt.Sprintf("(local.get %s)", accLocal))
@@ -3670,7 +3948,12 @@ func (f *funcEmitter) emitReduce(call *ast.CallExpr, t *types.Type) {
 		if len(fnType.Params) > 1 {
 			f.emitUnboxIfPrimitive(fnType.Params[1])
 		}
+		f.emitTracePush(call.Span)
+		retLocal := f.addLocalRaw(wasmType(fnType.Ret))
 		f.emit(fmt.Sprintf("(call %s)", fnName))
+		f.emit(fmt.Sprintf("(local.set %s)", retLocal))
+		f.emitTracePop()
+		f.emit(fmt.Sprintf("(local.get %s)", retLocal))
 	}
 	f.emit(fmt.Sprintf("(local.set %s)", accLocal))
 	f.emit(fmt.Sprintf("(local.get %s)", idxLocal))

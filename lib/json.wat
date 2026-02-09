@@ -333,17 +333,7 @@
 )
 
 (func $json._error_from_msg (param $msg anyref) (result anyref)
-  (local $obj anyref)
-  (local.set $obj (call $prelude.obj_new (i32.const 2)))
-  (call $prelude.obj_set
-    (local.get $obj)
-    (call $json._str_type)
-    (call $json._str_error))
-  (call $prelude.obj_set
-    (local.get $obj)
-    (call $json._str_message)
-    (local.get $msg))
-  (local.get $obj)
+  (call $prelude.error (local.get $msg))
 )
 
 (func $json._out_reset

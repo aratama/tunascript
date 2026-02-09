@@ -1923,11 +1923,36 @@ func (c *Checker) checkCall(env *Env, call *ast.CallExpr, expected *Type) *Type 
 	}
 	sym := env.lookup(ident.Name)
 	if sym == nil {
+		if ident.Name == "error" {
+			return c.checkBuiltinErrorCall(env, call)
+		}
 		c.errorf(call.Span, "undefined: %s", ident.Name)
 		return nil
 	}
 	c.IdentSymbols[ident] = sym
 	return c.checkCallWithSymbol(env, sym, call, expected)
+}
+
+func (c *Checker) checkBuiltinErrorCall(env *Env, call *ast.CallExpr) *Type {
+	if len(call.TypeArgs) > 0 {
+		c.errorf(call.Span, "error does not accept type arguments")
+		return nil
+	}
+	if len(call.Args) != 1 {
+		c.errorf(call.Span, "argument count mismatch")
+		return nil
+	}
+	argType := c.checkExpr(env, call.Args[0], String())
+	if argType == nil {
+		return nil
+	}
+	if !argType.AssignableTo(String()) {
+		c.errorf(call.Span, "argument type mismatch: expect %s, found %s", typeNameForError(String()), typeNameForError(argType))
+		return nil
+	}
+	retType := resultErrorType()
+	c.ExprTypes[call] = retType
+	return retType
 }
 
 func normalizeTypeParamBinding(typ *Type) *Type {
@@ -3235,6 +3260,7 @@ func (c *Checker) isDecodeLikeSymbol(sym *Symbol) bool {
 func resultErrorType() *Type {
 	return NewObject([]Prop{
 		{Name: "message", Type: String()},
+		{Name: "stacktrace", Type: NewArray(String())},
 		{Name: "type", Type: LiteralString("error")},
 	})
 }
@@ -3245,13 +3271,17 @@ func isResultErrorType(t *Type) bool {
 	}
 	typ := t.PropType("type")
 	msg := t.PropType("message")
-	if typ == nil || msg == nil {
+	trace := t.PropType("stacktrace")
+	if typ == nil || msg == nil || trace == nil {
 		return false
 	}
 	if !typ.Equals(LiteralString("error")) {
 		return false
 	}
-	return msg.AssignableTo(String())
+	if !msg.AssignableTo(String()) {
+		return false
+	}
+	return trace.AssignableTo(NewArray(String()))
 }
 
 func splitResultType(t *Type) (success *Type, err *Type) {

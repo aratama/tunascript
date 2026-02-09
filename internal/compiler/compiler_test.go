@@ -384,7 +384,7 @@ export function main(): void {
 
 func TestPreludeAndThen(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
-		"main.ts": `import { log, to_string, then, error } from "prelude"
+		"main.ts": `import { log, to_string, then } from "prelude"
 
 function parseValue(text: string): integer | error {
   if (text == "bad") {

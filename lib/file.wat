@@ -65,11 +65,7 @@
 )
 
 (func $file._error (param $msg anyref) (result anyref)
-  (local $obj anyref)
-  (local.set $obj (call $prelude.obj_new (i32.const 2)))
-  (call $prelude.obj_set (local.get $obj) (call $file._str_type) (call $file._str_error))
-  (call $prelude.obj_set (local.get $obj) (call $file._str_message) (local.get $msg))
-  (local.get $obj)
+  (call $prelude.error (local.get $msg))
 )
 
 (func $file.read_text (param $path anyref) (result anyref)

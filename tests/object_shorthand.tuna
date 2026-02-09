@@ -5,8 +5,9 @@ import { log } from "prelude"
 
 export function main(): void {
   const message: string = "hello"
+  const stacktrace: string[] = []
   const obj = { message }
-  const err: error = { "type": "error", message }
+  const err: error = { "type": "error", message, stacktrace }
   log(obj.message)
   log(err.message)
 }

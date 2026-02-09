@@ -12,8 +12,10 @@
 
 A1（純粋TunaScript）とA2（WAT実装）の基本APIです。
 
-- A1: `fallback`, `then`, `error`
+- A1: `fallback`, `then`
 - A2: `log`, `to_string`, `string_length` ほか内部の低レベル関数
+
+`error(message)` は `prelude` ではなく言語組み込みの特殊関数です（import不要）。戻り値は `{ type: "error", message: string, stacktrace: string[] }` です。
 
 `log` は `wasi_snapshot_preview1.fd_write`（fd=1）を使用します。
 

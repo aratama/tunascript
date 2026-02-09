@@ -7,7 +7,7 @@ export extern function range(start: integer, end: integer): integer[]
 export extern function length<T>(array: T[]): integer
 
 // - 添字アクセス `xs[i]` は `T | error` を返します。
-//   - 範囲外アクセス時は `{ type: "error", message: "index out of range" }` を返します。
+//   - 範囲外アクセス時は `{ type: "error", message: "index out of range", stacktrace: string[] }` を返します。
 
 //  - 型変数 `T` / `S` を使って `xs` の各要素を `fn` で変換します。
 export extern function map<T, S>(xs: T[], fn: (value: T) => S): S[]

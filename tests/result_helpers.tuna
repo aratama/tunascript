@@ -2,8 +2,9 @@
 // expect: ready
 // expect: error
 // expect: oops
+// expect: trace
 
-import { log, error } from "prelude"
+import { log } from "prelude"
 
 export function main(): void {
   const a: string | error = "ready"
@@ -27,6 +28,14 @@ export function main(): void {
     case b as error: {
       log("error")
       log(b.message)
+      const hasFrame: boolean = switch (b.stacktrace[0]) {
+        case frame as string: true
+        case e as error: false
+      }
+      switch (hasFrame) {
+        case true: log("trace")
+        case false: log("no-trace")
+      }
     }
   }
 }

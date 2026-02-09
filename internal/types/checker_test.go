@@ -123,10 +123,10 @@ function fallback<T>(value: T | error, defaultValue: T): T {
   return defaultValue
 }
 
-const maybeOk: string | error = { "type": "error", "message": "bad" }
+const maybeOk: string | error = error("bad")
 const resolved: string = maybeOk.fallback("")
 const fromValue: string = fallback("hello", "")
-const fromError: string = fallback({ "type": "error", "message": "boom" }, "")
+const fromError: string = fallback(error("boom"), "")
 `
 
 	mod := mustParseModule(t, "fallback_method_infer.tuna", src)

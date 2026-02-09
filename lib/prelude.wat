@@ -40,7 +40,9 @@
 (global $const_type_key (mut anyref) (ref.null any))
 (global $const_error_value (mut anyref) (ref.null any))
 (global $const_message_key (mut anyref) (ref.null any))
+(global $const_stacktrace_key (mut anyref) (ref.null any))
 (global $const_index_out_of_range (mut anyref) (ref.null any))
+(global $trace_stack (mut anyref) (ref.null any))
 
 ;; Reusable scratch buffer used by conversions to reduce temporary allocations.
 (global $scratch_ptr (mut i32) (i32.const 0))
@@ -61,6 +63,7 @@
 (data $d_type_key "type")
 (data $d_error_value "error")
 (data $d_message_key "message")
+(data $d_stacktrace_key "stacktrace")
 (data $d_index_out_of_range "index out of range")
 (data $d_html_amp "&amp;")
 (data $d_html_lt "&lt;")
@@ -215,6 +218,13 @@
   (struct.new $Str (local.get $ptr) (i32.const 7))
 )
 
+(func $prelude._new_const_stacktrace_key (result anyref)
+  (local $ptr i32)
+  (local.set $ptr (call $prelude._alloc (i32.const 10)))
+  (memory.init $d_stacktrace_key (local.get $ptr) (i32.const 0) (i32.const 10))
+  (struct.new $Str (local.get $ptr) (i32.const 10))
+)
+
 (func $prelude._new_const_index_out_of_range (result anyref)
   (local $ptr i32)
   (local.set $ptr (call $prelude._alloc (i32.const 18)))
@@ -246,7 +256,9 @@
       (global.set $const_type_key (call $prelude._new_const_type_key))
       (global.set $const_error_value (call $prelude._new_const_error_value))
       (global.set $const_message_key (call $prelude._new_const_message_key))
+      (global.set $const_stacktrace_key (call $prelude._new_const_stacktrace_key))
       (global.set $const_index_out_of_range (call $prelude._new_const_index_out_of_range))
+      (global.set $trace_stack (call $prelude.arr_new (i32.const 0)))
 
       (global.set $io_buf (call $prelude._alloc (i32.const 12)))
     )
@@ -1085,6 +1097,144 @@
   (local.get $out)
 )
 
+(func $prelude._trace_snapshot_with_current (param $current anyref) (result anyref)
+  (local $stack anyref)
+  (local $depth i32)
+  (local $include_current i32)
+  (local $out anyref)
+  (local $out_idx i32)
+  (local $i i32)
+
+  (call $prelude._ensure_runtime)
+  (local.set $stack (global.get $trace_stack))
+  (local.set $depth (call $prelude.arr_len (local.get $stack)))
+  (local.set $include_current (i32.const 1))
+  (if (call $prelude.str_eq (local.get $current) (global.get $const_empty))
+    (then
+      (local.set $include_current (i32.const 0))
+    )
+  )
+  (local.set $out
+    (call $prelude.arr_new
+      (i32.add (local.get $depth) (local.get $include_current))))
+  (local.set $out_idx (i32.const 0))
+
+  (if (local.get $include_current)
+    (then
+      (call $prelude.arr_set
+        (local.get $out)
+        (i32.const 0)
+        (local.get $current))
+      (local.set $out_idx (i32.const 1))
+    )
+  )
+
+  (local.set $i (i32.sub (local.get $depth) (i32.const 1)))
+  (block $done
+    (loop $loop
+      (br_if $done (i32.lt_s (local.get $i) (i32.const 0)))
+      (call $prelude.arr_set
+        (local.get $out)
+        (local.get $out_idx)
+        (call $prelude.arr_get (local.get $stack) (local.get $i)))
+      (local.set $out_idx (i32.add (local.get $out_idx) (i32.const 1)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $loop)
+    )
+  )
+  (local.get $out)
+)
+
+(func $prelude.trace_push (param $frame anyref)
+  (local $old anyref)
+  (local $next anyref)
+  (local $len i32)
+  (local $i i32)
+
+  (call $prelude._ensure_runtime)
+  (local.set $old (global.get $trace_stack))
+  (local.set $len (call $prelude.arr_len (local.get $old)))
+  (local.set $next (call $prelude.arr_new (i32.add (local.get $len) (i32.const 1))))
+  (local.set $i (i32.const 0))
+
+  (block $done
+    (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (call $prelude.arr_set
+        (local.get $next)
+        (local.get $i)
+        (call $prelude.arr_get (local.get $old) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)
+    )
+  )
+
+  (call $prelude.arr_set (local.get $next) (local.get $len) (local.get $frame))
+  (global.set $trace_stack (local.get $next))
+)
+
+(func $prelude.trace_pop
+  (local $old anyref)
+  (local $next anyref)
+  (local $len i32)
+  (local $i i32)
+
+  (call $prelude._ensure_runtime)
+  (local.set $old (global.get $trace_stack))
+  (local.set $len (call $prelude.arr_len (local.get $old)))
+  (if (i32.eqz (local.get $len))
+    (then
+      (return)
+    )
+  )
+  (local.set $next (call $prelude.arr_new (i32.sub (local.get $len) (i32.const 1))))
+  (local.set $i (i32.const 0))
+
+  (block $done
+    (loop $loop
+      (br_if $done (i32.ge_u (local.get $i) (i32.sub (local.get $len) (i32.const 1))))
+      (call $prelude.arr_set
+        (local.get $next)
+        (local.get $i)
+        (call $prelude.arr_get (local.get $old) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $loop)
+    )
+  )
+
+  (global.set $trace_stack (local.get $next))
+)
+
+(func $prelude._make_error (param $message anyref) (param $stacktrace anyref) (result anyref)
+  (local $err anyref)
+  (local.set $err (call $prelude.obj_new (i32.const 3)))
+  (call $prelude.obj_set
+    (local.get $err)
+    (global.get $const_type_key)
+    (global.get $const_error_value))
+  (call $prelude.obj_set
+    (local.get $err)
+    (global.get $const_message_key)
+    (local.get $message))
+  (call $prelude.obj_set
+    (local.get $err)
+    (global.get $const_stacktrace_key)
+    (local.get $stacktrace))
+  (local.get $err)
+)
+
+(func $prelude.error (param $message anyref) (result anyref)
+  (call $prelude._make_error
+    (local.get $message)
+    (call $prelude._trace_snapshot_with_current (global.get $const_empty)))
+)
+
+(func $prelude.error_with_frame (param $message anyref) (param $frame anyref) (result anyref)
+  (call $prelude._make_error
+    (local.get $message)
+    (call $prelude._trace_snapshot_with_current (local.get $frame)))
+)
+
 (func $prelude.arr_new (param $count i32) (result anyref)
   (local $len i32)
   (local.set $len (local.get $count))
@@ -1138,7 +1288,6 @@
   (local $typed (ref $Arr))
   (local $len i32)
   (local $data (ref null $ArrData))
-  (local $err anyref)
   (call $prelude._ensure_runtime)
   (local.set $typed (ref.cast (ref $Arr) (local.get $arr)))
   (local.set $len (struct.get $Arr 1 (local.get $typed)))
@@ -1147,16 +1296,7 @@
       (i32.lt_s (local.get $index) (i32.const 0))
       (i32.ge_u (local.get $index) (local.get $len)))
     (then
-      (local.set $err (call $prelude.obj_new (i32.const 2)))
-      (call $prelude.obj_set
-        (local.get $err)
-        (global.get $const_type_key)
-        (global.get $const_error_value))
-      (call $prelude.obj_set
-        (local.get $err)
-        (global.get $const_message_key)
-        (global.get $const_index_out_of_range))
-      (return (local.get $err))
+      (return (call $prelude.error (global.get $const_index_out_of_range)))
     )
   )
   (local.set $data (struct.get $Arr 0 (local.get $typed)))

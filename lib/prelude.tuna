@@ -22,11 +22,8 @@ export function then<T, U>(value: T | error, fn: (v: T) => U | error): U | error
   }
 }
 
-export function error(message: string): error {
-  return { "type": "error", message }
-}
-
 // A2: GCバックエンドでは純粋Wasm実装されるextern境界
+// `error(message)` は言語組み込みの特殊関数です（import不要）。
 
 export extern function log<T>(value: T): void
 export extern function to_string(value: integer | number | boolean | string): string

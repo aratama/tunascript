@@ -1006,8 +1006,9 @@ func (r *Runtime) strCopy(caller *wasmtime.Caller, handle *Value, ptr int32, len
 
 func (r *Runtime) decodeError(message string) *Value {
 	props := map[string]*Value{
-		"message": r.newValue(Value{Kind: KindString, Str: message}),
-		"type":    r.newValue(Value{Kind: KindString, Str: "error"}),
+		"message":    r.newValue(Value{Kind: KindString, Str: message}),
+		"stacktrace": r.newValue(Value{Kind: KindArray, Arr: &Array{Elems: []*Value{}}}),
+		"type":       r.newValue(Value{Kind: KindString, Str: "error"}),
 	}
 	return r.newValue(Value{Kind: KindObject, Obj: &Object{Order: sortedKeys(props), Props: props}})
 }
