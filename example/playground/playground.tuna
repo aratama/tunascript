@@ -1,6 +1,6 @@
 import { log, fallback } from "prelude"
 import { get_args, get_env } from "server"
-import { length } from "array"
+import { length, map } from "array"
 import { run_formatter, run_sandbox, type SandboxResult } from "runtime"
 import { create_server, add_route, listen, response_html, response_redirect, type JSX, type Request, type Response } from "http"
 import { db_open } from "sqlite"
@@ -16,19 +16,17 @@ create_table playground_sources {
 }
 
 const MAX_SOURCE_SIZE_BYTES: i64 = 10240
-const DEFAULT_SOURCE_PATH: string = "example/playground/sample_todo.tuna"
-const SAMPLE_JSON_DECODE_SOURCE_PATH: string = "example/playground/sample_json_decode.tuna"
-const SAMPLE_UNION_SWITCH_SOURCE_PATH: string = "example/playground/sample_union_switch.tuna"
-const SAMPLE_ERROR_PROPAGATION_SOURCE_PATH: string = "example/playground/sample_error_propagation.tuna"
+const DEFAULT_SOURCE_PATH: string = "example/playground/sample00_todo.tuna"
+const SAMPLE_SOURCE_PATHS: { id: string, title: string, path: string }[] = [
+  { id: "union-switch", title: "01 ユニオン型とswitch", path: "example/playground/sample01_union_switch.tuna" },
+  { id: "error-propagation", title: "02 ?演算子のエラーハンドリング", path: "example/playground/sample_error_propagation.tuna" },
+  { id: "json-decode", title: "03 JSONのパース", path: "example/playground/sample_json_decode.tuna" },
+]
 
 const DEFAULT_SOURCE: string = read_text(DEFAULT_SOURCE_PATH).fallback("")
-const SAMPLE_JSON_DECODE_SOURCE: string = read_text(SAMPLE_JSON_DECODE_SOURCE_PATH).fallback("")
-const SAMPLE_UNION_SWITCH_SOURCE: string = read_text(SAMPLE_UNION_SWITCH_SOURCE_PATH).fallback("")
-const SAMPLE_ERROR_PROPAGATION_SOURCE: string = read_text(SAMPLE_ERROR_PROPAGATION_SOURCE_PATH).fallback("")
-
-const SAMPLE_JSON_DECODE_PAGE_PATH: string = "/sample/json-decode"
-const SAMPLE_UNION_SWITCH_PAGE_PATH: string = "/sample/union-switch"
-const SAMPLE_ERROR_PROPAGATION_PAGE_PATH: string = "/sample/error-propagation"
+const SAMPLE_SOURCES: { id: string, title: string, path: string, source: string }[] = map(SAMPLE_SOURCE_PATHS, function (sample) {
+  return { id: sample.id, title: sample.title, path: sample.path, source: read_text(sample.path).fallback("") }
+})
 
 function layout(source: string, stdout: string, html: string, error: string, exitCode: string, run_path: string, page_path: string): JSX {
   return (
@@ -50,10 +48,10 @@ function layout(source: string, stdout: string, html: string, error: string, exi
                   <span class="sample-row">
                     <span class="sample-label">Sample</span>
                     <select class="sample-select" onchange="window.location.href=this.value">
-                      <option value="/" selected={page_path == "/"}>TODOリスト</option>
-                      <option value={SAMPLE_JSON_DECODE_PAGE_PATH} selected={page_path == SAMPLE_JSON_DECODE_PAGE_PATH}>JSONのパースとデコード</option>
-                      <option value={SAMPLE_UNION_SWITCH_PAGE_PATH} selected={page_path == SAMPLE_UNION_SWITCH_PAGE_PATH}>ユニオン型 + switch</option>
-                      <option value={SAMPLE_ERROR_PROPAGATION_PAGE_PATH} selected={page_path == SAMPLE_ERROR_PROPAGATION_PAGE_PATH}>?演算子のエラーハンドリング</option>
+                      {sample_option("/", "TODOリスト", page_path)}
+                      {sample_option("/sample/union-switch", "01 ユニオン型とswitch", page_path)}
+                      {sample_option("/sample/error-propagation", "02 ?演算子のエラーハンドリング", page_path)}
+                      {sample_option("/sample/json-decode", "03 JSONのパース", page_path)}
                     </select>
                   </span>
                 </span>
@@ -88,12 +86,24 @@ function layout(source: string, stdout: string, html: string, error: string, exi
   )
 }
 
+function sample_option(page: string, title: string, current: string): JSX {
+  return <option value={page} selected={current == page}>{title}</option>
+}
+
+function get_sample(sample: string): { id: string, title: string, path: string, source: string } | undefined {
+  for (const candidate of SAMPLE_SOURCES) {
+    if (candidate.id == sample) {
+      return candidate
+    }
+  }
+  return undefined
+}
+
 function get_sample_source(sample: string): string | undefined {
-  return switch (sample) {
-    case "json-decode": SAMPLE_JSON_DECODE_SOURCE
-    case "union-switch": SAMPLE_UNION_SWITCH_SOURCE
-    case "error-propagation": SAMPLE_ERROR_PROPAGATION_SOURCE
-    default: undefined
+  const matched = get_sample(sample)
+  return switch (matched) {
+    case matched as { id: string, title: string, path: string, source: string }: matched.source
+    case none as undefined: undefined
   }
 }
 
@@ -119,9 +129,9 @@ function handle_sample(req: Request): Response {
   const sample = req.query.sample
   const page_path = "/sample/" + sample
   const run_path = "/run/sample/" + sample
-  const source = get_sample_source(sample)
-  return switch (source) {
-    case source as string: run_source(source, run_path, page_path)
+  const matched = get_sample(sample)
+  return switch (matched) {
+    case matched as { id: string, title: string, path: string, source: string }: run_source(matched.source, run_path, page_path)
     case none as undefined: response_html(layout(DEFAULT_SOURCE, "", "", "sample not found: " + sample, "1", run_path, page_path))
   }
 }

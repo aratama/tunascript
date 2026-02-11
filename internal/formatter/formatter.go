@@ -181,6 +181,9 @@ func (f *Formatter) formatImport(imp ast.ImportDecl) {
 		}
 		f.buf.WriteString(item.Name)
 	}
+	if len(imp.Items) > 0 {
+		f.buf.WriteString(",")
+	}
 	f.buf.WriteString(" } from \"")
 	f.buf.WriteString(imp.From)
 	f.buf.WriteString("\"")
@@ -233,6 +236,7 @@ func (f *Formatter) formatFuncDecl(d *ast.FuncDecl) {
 			}
 			f.buf.WriteString(name)
 		}
+		f.buf.WriteString(",")
 		f.buf.WriteString(">")
 	}
 	f.buf.WriteString("(")
@@ -243,6 +247,9 @@ func (f *Formatter) formatFuncDecl(d *ast.FuncDecl) {
 		f.buf.WriteString(param.Name)
 		f.buf.WriteString(": ")
 		f.formatType(param.Type)
+	}
+	if len(d.Params) > 0 {
+		f.buf.WriteString(",")
 	}
 	f.buf.WriteString("): ")
 	f.formatType(d.Ret)
@@ -266,6 +273,7 @@ func (f *Formatter) formatExternFuncDecl(d *ast.ExternFuncDecl) {
 			}
 			f.buf.WriteString(name)
 		}
+		f.buf.WriteString(",")
 		f.buf.WriteString(">")
 	}
 	f.buf.WriteString("(")
@@ -276,6 +284,9 @@ func (f *Formatter) formatExternFuncDecl(d *ast.ExternFuncDecl) {
 		f.buf.WriteString(param.Name)
 		f.buf.WriteString(": ")
 		f.formatType(param.Type)
+	}
+	if len(d.Params) > 0 {
+		f.buf.WriteString(",")
 	}
 	f.buf.WriteString("): ")
 	f.formatType(d.Ret)
@@ -289,7 +300,7 @@ func (f *Formatter) formatTableDecl(d *ast.TableDecl) {
 	f.buf.WriteString(d.Name)
 	f.buf.WriteString(" {\n")
 	f.indent++
-	for i, col := range d.Columns {
+	for _, col := range d.Columns {
 		f.writeIndent()
 		f.buf.WriteString(col.Name)
 		f.buf.WriteString(" ")
@@ -298,9 +309,7 @@ func (f *Formatter) formatTableDecl(d *ast.TableDecl) {
 			f.buf.WriteString(" ")
 			f.buf.WriteString(col.Constraints)
 		}
-		if i < len(d.Columns)-1 {
-			f.buf.WriteString(",")
-		}
+		f.buf.WriteString(",")
 		f.buf.WriteString("\n")
 	}
 	f.indent--
@@ -323,6 +332,7 @@ func (f *Formatter) formatTypeAliasDecl(d *ast.TypeAliasDecl) {
 			}
 			f.buf.WriteString(name)
 		}
+		f.buf.WriteString(",")
 		f.buf.WriteString(">")
 	}
 	f.buf.WriteString(" = ")
@@ -394,6 +404,9 @@ func (f *Formatter) formatDestructureStmt(s *ast.DestructureStmt) {
 			f.formatType(s.Types[i])
 		}
 	}
+	if len(s.Names) > 0 {
+		f.buf.WriteString(",")
+	}
 	f.buf.WriteString("] = ")
 	f.formatExpr(s.Init)
 	f.writeInlineCommentsForLine(s.Span.Start.Line)
@@ -412,6 +425,9 @@ func (f *Formatter) formatObjectDestructureStmt(s *ast.ObjectDestructureStmt) {
 			f.buf.WriteString(": ")
 			f.formatType(s.Types[i])
 		}
+	}
+	if len(s.Keys) > 0 {
+		f.buf.WriteString(",")
 	}
 	f.buf.WriteString(" } = ")
 	f.formatExpr(s.Init)
@@ -461,6 +477,9 @@ func (f *Formatter) formatForOfStmt(s *ast.ForOfStmt) {
 				f.formatType(v.Types[i])
 			}
 		}
+		if len(v.Names) > 0 {
+			f.buf.WriteString(",")
+		}
 		f.buf.WriteString("]")
 	case *ast.ForOfObjectDestructureVar:
 		f.buf.WriteString("{ ")
@@ -473,6 +492,9 @@ func (f *Formatter) formatForOfStmt(s *ast.ForOfStmt) {
 				f.buf.WriteString(": ")
 				f.formatType(v.Types[i])
 			}
+		}
+		if len(v.Keys) > 0 {
+			f.buf.WriteString(",")
 		}
 		f.buf.WriteString(" }")
 	default:
@@ -766,6 +788,9 @@ func (f *Formatter) formatArrayLit(e *ast.ArrayLit) {
 		}
 		f.formatExpr(entry.Value)
 	}
+	if len(e.Entries) > 0 {
+		f.buf.WriteString(",")
+	}
 	f.buf.WriteString("]")
 }
 
@@ -813,6 +838,9 @@ func (f *Formatter) formatObjectLit(e *ast.ObjectLit) {
 			}
 		}
 	}
+	if len(e.Entries) > 0 {
+		f.buf.WriteString(",")
+	}
 	f.buf.WriteString(" }")
 }
 
@@ -844,14 +872,12 @@ func (f *Formatter) formatCallExpr(e *ast.CallExpr) {
 	if hasJSXArg {
 		f.buf.WriteString("\n")
 		f.indent++
-		for i, arg := range e.Args {
-			if i > 0 {
-				f.buf.WriteString(",\n")
-			}
+		for _, arg := range e.Args {
 			f.writeIndent()
 			f.formatExpr(arg)
+			f.buf.WriteString(",")
+			f.buf.WriteString("\n")
 		}
-		f.buf.WriteString("\n")
 		f.indent--
 		f.writeIndent()
 	} else {
@@ -860,6 +886,9 @@ func (f *Formatter) formatCallExpr(e *ast.CallExpr) {
 				f.buf.WriteString(", ")
 			}
 			f.formatExpr(arg)
+		}
+		if len(e.Args) > 0 {
+			f.buf.WriteString(",")
 		}
 	}
 
@@ -960,6 +989,9 @@ func (f *Formatter) formatArrowFunc(e *ast.ArrowFunc) {
 			f.formatType(param.Type)
 		}
 	}
+	if len(e.Params) > 0 {
+		f.buf.WriteString(",")
+	}
 	f.buf.WriteString(")")
 	if e.Ret != nil {
 		f.buf.WriteString(": ")
@@ -1032,6 +1064,9 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			}
 			f.formatType(arg)
 		}
+		if len(ty.Args) > 0 {
+			f.buf.WriteString(",")
+		}
 		f.buf.WriteString(">")
 	case *ast.LiteralType:
 		switch lit := ty.Value.(type) {
@@ -1069,6 +1104,9 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			}
 			f.formatType(elem)
 		}
+		if len(ty.Elems) > 0 {
+			f.buf.WriteString(",")
+		}
 		f.buf.WriteString("]")
 	case *ast.UnionType:
 		for i, member := range ty.Types {
@@ -1086,6 +1124,7 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 				}
 				f.buf.WriteString(name)
 			}
+			f.buf.WriteString(",")
 			f.buf.WriteString(">")
 		}
 		f.buf.WriteString("(")
@@ -1096,6 +1135,9 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			f.buf.WriteString(param.Name)
 			f.buf.WriteString(": ")
 			f.formatType(param.Type)
+		}
+		if len(ty.Params) > 0 {
+			f.buf.WriteString(",")
 		}
 		f.buf.WriteString(") => ")
 		f.formatType(ty.Ret)
@@ -1108,6 +1150,9 @@ func (f *Formatter) formatType(t ast.TypeExpr) {
 			f.formatObjectKey(prop.Key, prop.KeyQuoted)
 			f.buf.WriteString(": ")
 			f.formatType(prop.Type)
+		}
+		if len(ty.Props) > 0 {
+			f.buf.WriteString(",")
 		}
 		f.buf.WriteString(" }")
 	}

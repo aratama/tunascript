@@ -1,0 +1,20 @@
+import { log, to_string } from "prelude"
+
+// 整数型は i64/i32 があります
+// 浮動小数点数型は f64 のみあります
+// 文字列型は string です
+// 任意の型に対してユニオン型を定義できます
+type Data = i64 | string
+
+// コードは main 関数から実行されます
+export function main(): void {
+  
+  const data: Data = 42
+ 
+  // switch-as式でユニオン型の値に応じて分岐できます
+  // 型の自動変換はなく、数値を文字列にするには to_string 関数を明示的に呼びます
+  log(switch (data) {
+    case number as i64: "number " + to_string(number)
+    case text as string: "string: " + text
+  })
+}

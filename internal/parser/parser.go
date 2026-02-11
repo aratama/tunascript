@@ -350,6 +350,9 @@ func (p *Parser) parseArrayPatternNames() ([]string, []ast.TypeExpr) {
 			break
 		}
 		p.next()
+		if p.curr.Kind == lexer.TokenRBracket {
+			break
+		}
 	}
 
 	p.expect(lexer.TokenRBracket)
@@ -376,6 +379,9 @@ func (p *Parser) parseObjectPatternKeys() ([]string, []ast.TypeExpr) {
 			break
 		}
 		p.next()
+		if p.curr.Kind == lexer.TokenRBrace {
+			break
+		}
 	}
 
 	p.expect(lexer.TokenRBrace)
@@ -483,6 +489,9 @@ func (p *Parser) parseParamList() []ast.Param {
 				break
 			}
 			p.next()
+			if p.curr.Kind == lexer.TokenRParen {
+				break
+			}
 		}
 	}
 	p.expect(lexer.TokenRParen)
@@ -632,6 +641,9 @@ func (p *Parser) tryParseCallTypeArgs() ([]ast.TypeExpr, bool) {
 	args = append(args, p.parseType())
 	for p.curr.Kind == lexer.TokenComma {
 		p.next()
+		if p.curr.Kind == lexer.TokenGT {
+			break
+		}
 		args = append(args, p.parseType())
 	}
 	if p.curr.Kind != lexer.TokenGT {
@@ -828,6 +840,9 @@ func (p *Parser) parseArrayLit() ast.Expr {
 				break
 			}
 			p.next()
+			if p.curr.Kind == lexer.TokenRBracket {
+				break
+			}
 		}
 	}
 	p.expect(lexer.TokenRBracket)
@@ -884,6 +899,9 @@ func (p *Parser) parseObjectLit() ast.Expr {
 				break
 			}
 			p.next()
+			if p.curr.Kind == lexer.TokenRBrace {
+				break
+			}
 		}
 	}
 	p.expect(lexer.TokenRBrace)
@@ -1007,6 +1025,9 @@ func (p *Parser) parseArgs() []ast.Expr {
 				break
 			}
 			p.next()
+			if p.curr.Kind == lexer.TokenRParen {
+				break
+			}
 		}
 	}
 	p.expect(lexer.TokenRParen)
@@ -1062,6 +1083,9 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 					break
 				}
 				p.next()
+				if p.curr.Kind == lexer.TokenRBracket {
+					break
+				}
 			}
 		}
 		p.expect(lexer.TokenRBracket)
@@ -1114,6 +1138,9 @@ func (p *Parser) parseTypePrimary() ast.TypeExpr {
 					break
 				}
 				p.next()
+				if p.curr.Kind == lexer.TokenRBrace {
+					break
+				}
 			}
 		}
 		p.expect(lexer.TokenRBrace)
@@ -1167,6 +1194,9 @@ func (p *Parser) parseFuncTypeBody(start lexer.Position, typeParams []string) as
 				break
 			}
 			p.next()
+			if p.curr.Kind == lexer.TokenRParen {
+				break
+			}
 		}
 	}
 	p.expect(lexer.TokenRParen)
@@ -1206,6 +1236,9 @@ func (p *Parser) parseTypeParamList() []string {
 			break
 		}
 		p.next()
+		if p.curr.Kind == lexer.TokenGT {
+			break
+		}
 	}
 	p.expect(lexer.TokenGT)
 	return params
@@ -1233,11 +1266,18 @@ func (p *Parser) parseTypeApplication(base ast.TypeExpr) ast.TypeExpr {
 	var args []ast.TypeExpr
 	for {
 		p.next()
+		if p.curr.Kind == lexer.TokenGT {
+			p.err("type argument expected")
+			break
+		}
 		args = append(args, p.parseType())
 		if p.curr.Kind != lexer.TokenComma {
 			break
 		}
 		p.next()
+		if p.curr.Kind == lexer.TokenGT {
+			break
+		}
 	}
 	if p.curr.Kind != lexer.TokenGT {
 		p.err("expected '>' in generic type")

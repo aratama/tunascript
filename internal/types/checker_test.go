@@ -142,6 +142,26 @@ const fromError: string = fallback(error("boom"), "")
 	assertTypeKind(t, checker.ExprTypes[fromError.Init], KindString, "fromError")
 }
 
+func TestSwitchExpressionInferenceInGenericCall(t *testing.T) {
+	const src = `
+function passthrough<T>(value: T): T {
+  return value
+}
+
+const data: i64 | string = 42
+const msg: string = passthrough(switch (data) {
+  case num as i64: "number"
+  case text as string: "string"
+})
+`
+
+	mod := mustParseModule(t, "switch_generic_call_infer.tuna", src)
+	checker := runChecker(t, mod)
+
+	msg := findConstDecl(t, mod, "msg")
+	assertTypeKind(t, checker.ExprTypes[msg.Init], KindString, "msg")
+}
+
 func TestExternFunctionDeclaration(t *testing.T) {
 	const src = `
 extern function string_length(str: string): i64

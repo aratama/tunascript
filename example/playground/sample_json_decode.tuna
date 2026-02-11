@@ -27,4 +27,9 @@ export function main(): void | error {
 
   // stringify関数でJSON文字列にシリアライズできます
   log("normalized: " + stringify(task))
+
+
+  // TypeScriptのasとは異なり、実行時の型が一致しなければ分岐に入りません
+  
+
 }

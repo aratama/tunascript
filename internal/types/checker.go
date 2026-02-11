@@ -1203,6 +1203,12 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		if valueType == nil {
 			return nil
 		}
+		hasTypeParamExpected := expected != nil && typeContainsTypeParam(expected)
+		bodyExpected := expected
+		if hasTypeParamExpected {
+			// Defer constraints that include type parameters to call-site inference.
+			bodyExpected = nil
+		}
 
 		// Determine result type from cases
 		var resultType *Type
@@ -1309,18 +1315,26 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 			}
 
 			// Check body expression
-			bodyType := c.checkExpr(caseEnv, cas.Body, expected)
+			bodyType := c.checkExpr(caseEnv, cas.Body, bodyExpected)
 			if bodyType == nil {
 				continue
 			}
 			if block, ok := cas.Body.(*ast.BlockExpr); ok && blockExprReturns(block) {
 				continue
 			}
-			if expected != nil {
-				if !bodyType.AssignableTo(expected) {
+			if hasTypeParamExpected {
+				if resultType == nil {
+					resultType = bodyType
+				} else {
+					resultType = NewUnion([]*Type{resultType, bodyType})
+				}
+				continue
+			}
+			if bodyExpected != nil {
+				if !bodyType.AssignableTo(bodyExpected) {
 					c.errorf(cas.Body.GetSpan(), "switch case body type mismatch")
 				}
-				resultType = expected
+				resultType = bodyExpected
 			} else if resultType == nil {
 				resultType = bodyType
 			} else if !typesEqual(baseType(bodyType), baseType(resultType)) {
@@ -1329,15 +1343,21 @@ func (c *Checker) checkExpr(env *Env, expr ast.Expr, expected *Type) *Type {
 		}
 		// Check default case
 		if e.Default != nil {
-			defaultType := c.checkExpr(env, e.Default, expected)
+			defaultType := c.checkExpr(env, e.Default, bodyExpected)
 			if defaultType != nil {
 				if block, ok := e.Default.(*ast.BlockExpr); ok && blockExprReturns(block) {
 					// Default returns from the function; it does not participate in switch result typing.
-				} else if expected != nil {
-					if !defaultType.AssignableTo(expected) {
+				} else if hasTypeParamExpected {
+					if resultType == nil {
+						resultType = defaultType
+					} else {
+						resultType = NewUnion([]*Type{resultType, defaultType})
+					}
+				} else if bodyExpected != nil {
+					if !defaultType.AssignableTo(bodyExpected) {
 						c.errorf(e.Default.GetSpan(), "switch default type mismatch")
 					}
-					resultType = expected
+					resultType = bodyExpected
 				} else if resultType == nil {
 					resultType = defaultType
 				} else if !typesEqual(baseType(defaultType), baseType(resultType)) {

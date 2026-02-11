@@ -4,7 +4,7 @@ import { stringify } from "json"
 // 失敗する可能性のある関数は T | error を返します
 function pick(values: i64[], index: i64): i64 | error {
 
-  // 配列インデックス演算子も T | error を返します
+  // 配列インデックスアクセス演算子は T | error を返します
   // 最も基本的な方法は、switchでエラーに応じて分岐することです
   const foo: i64 = switch(values[index]){
     case value as i64: value
