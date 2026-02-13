@@ -705,6 +705,30 @@ export function main(): void {
 `)
 }
 
+func TestTrailingCommaInCallArgsIsSyntaxError(t *testing.T) {
+	compileExpectErrorContains(t, `import { log } from "prelude"
+export function main(): void {
+  log("hello", )
+}
+`, "trailing comma is not allowed in function arguments")
+}
+
+func TestTrailingCommaInArrayLiteralIsAllowed(t *testing.T) {
+	out := compileAndRun(t, map[string]string{
+		"main.ts": `import { log, to_string } from "prelude"
+import { length } from "array"
+export function main(): void {
+  const xs: i64[] = [1, 2,]
+  log(to_string(length(xs)))
+}
+`,
+	}, "main.ts")
+	want := "2\n"
+	if out != want {
+		t.Fatalf("output mismatch: %q", out)
+	}
+}
+
 func TestLineHeadParenIsNotCall(t *testing.T) {
 	out := compileAndRun(t, map[string]string{
 		"main.ts": `import { log, to_string } from "prelude"

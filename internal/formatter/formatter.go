@@ -778,6 +778,36 @@ func (f *Formatter) formatJSXChild(child ast.JSXChild) {
 }
 
 func (f *Formatter) formatArrayLit(e *ast.ArrayLit) {
+	if len(e.Entries) == 0 {
+		f.buf.WriteString("[]")
+		return
+	}
+
+	multiLine := false
+	firstLine := e.Entries[0].Span.Start.Line
+	for _, entry := range e.Entries {
+		if entry.Span.Start.Line != firstLine {
+			multiLine = true
+			break
+		}
+	}
+	if multiLine {
+		f.buf.WriteString("[\n")
+		f.indent++
+		for _, entry := range e.Entries {
+			f.writeIndent()
+			if entry.Kind == ast.ArraySpread {
+				f.buf.WriteString("...")
+			}
+			f.formatExpr(entry.Value)
+			f.buf.WriteString(",\n")
+		}
+		f.indent--
+		f.writeIndent()
+		f.buf.WriteString("]")
+		return
+	}
+
 	f.buf.WriteString("[")
 	for i, entry := range e.Entries {
 		if i > 0 {
@@ -787,9 +817,6 @@ func (f *Formatter) formatArrayLit(e *ast.ArrayLit) {
 			f.buf.WriteString("...")
 		}
 		f.formatExpr(entry.Value)
-	}
-	if len(e.Entries) > 0 {
-		f.buf.WriteString(",")
 	}
 	f.buf.WriteString("]")
 }
@@ -872,10 +899,12 @@ func (f *Formatter) formatCallExpr(e *ast.CallExpr) {
 	if hasJSXArg {
 		f.buf.WriteString("\n")
 		f.indent++
-		for _, arg := range e.Args {
+		for i, arg := range e.Args {
 			f.writeIndent()
 			f.formatExpr(arg)
-			f.buf.WriteString(",")
+			if i < len(e.Args)-1 {
+				f.buf.WriteString(",")
+			}
 			f.buf.WriteString("\n")
 		}
 		f.indent--
@@ -886,9 +915,6 @@ func (f *Formatter) formatCallExpr(e *ast.CallExpr) {
 				f.buf.WriteString(", ")
 			}
 			f.formatExpr(arg)
-		}
-		if len(e.Args) > 0 {
-			f.buf.WriteString(",")
 		}
 	}
 

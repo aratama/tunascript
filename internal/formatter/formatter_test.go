@@ -73,11 +73,15 @@ func TestFormatModuleWithCommentsAfterAnnotate(t *testing.T) {
 func TestFormatTrailingCommas(t *testing.T) {
 	src := `import { a, b, } from "mod"
 function main<T>(x: i64, y: i64,): void {
-  const arr = [1, 2,]
+  const arr = [
+    1,
+    2
+  ]
+  const inline = [1, 2,]
   const obj = { a: 1, b: 2, }
   const { a, } = obj
   const [x, y,] = arr
-  f(1, 2,)
+  f(1, 2)
 }
 `
 
@@ -89,11 +93,12 @@ function main<T>(x: i64, y: i64,): void {
 	wantParts := []string{
 		"import { a, b, } from \"mod\"",
 		"function main<T,>(x: i64, y: i64,): void",
-		"const arr = [1, 2,]",
+		"const arr = [\n    1,\n    2,\n  ]",
+		"const inline = [1, 2]",
 		"const obj = { a: 1, b: 2, }",
 		"const { a, } = obj",
 		"const [x, y,] = arr",
-		"f(1, 2,)",
+		"f(1, 2)",
 	}
 	for _, want := range wantParts {
 		if !strings.Contains(out, want) {

@@ -1026,6 +1026,7 @@ func (p *Parser) parseArgs() []ast.Expr {
 			}
 			p.next()
 			if p.curr.Kind == lexer.TokenRParen {
+				p.err("trailing comma is not allowed in function arguments")
 				break
 			}
 		}
