@@ -881,6 +881,16 @@ func isObjectPropShorthand(entry ast.ObjectEntry) bool {
 
 func (f *Formatter) formatCallExpr(e *ast.CallExpr) {
 	f.formatExpr(e.Callee)
+	if len(e.TypeArgs) > 0 {
+		f.buf.WriteString("<")
+		for i, typeArg := range e.TypeArgs {
+			if i > 0 {
+				f.buf.WriteString(", ")
+			}
+			f.formatType(typeArg)
+		}
+		f.buf.WriteString(">")
+	}
 	f.buf.WriteString("(")
 
 	// Check if any argument is a JSX element or fragment

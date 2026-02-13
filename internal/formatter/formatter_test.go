@@ -106,3 +106,21 @@ function main<T>(x: i64, y: i64,): void {
 		}
 	}
 }
+
+func TestFormatCallPreservesTypeArguments(t *testing.T) {
+	src := `import { parse } from "json"
+function main(payload: json): Task | error {
+  const task = parse<Task>(payload)?
+  return task
+}
+`
+
+	out, err := New().Format("sample.tuna", src)
+	if err != nil {
+		t.Fatalf("Format failed: %v", err)
+	}
+
+	if !strings.Contains(out, "parse<Task>(payload)?") {
+		t.Fatalf("formatted output should preserve call type arguments\n%s", out)
+	}
+}
