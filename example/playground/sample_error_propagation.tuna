@@ -20,7 +20,7 @@ function pick(values: i64[], index: i64): i64 | error {
   // error関数を使うと明示的にエラーを返すことができます
   const e = error("index out of bounds")
 
-  log(stringidy(e))
+  log(stringify(e))
 
   return e
 }
